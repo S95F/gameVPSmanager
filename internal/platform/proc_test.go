@@ -228,6 +228,23 @@ func TestCgroupProcsPath(t *testing.T) {
 	}
 }
 
+func TestCheckPIDRefusesGroupsAndInit(t *testing.T) {
+	// A pid read out of cgroup.procs reaches SignalProcess. A malformed read
+	// that yielded 0 would signal gvm's own group -- the runner killing itself
+	// and the game together -- and a negative one would signal a group the
+	// caller never named.
+	for _, pid := range []int{0, 1, -1, -41799} {
+		if err := checkPID(pid); err == nil {
+			t.Errorf("checkPID(%d) allowed the signal", pid)
+		}
+	}
+	for _, pid := range []int{2, 41799} {
+		if err := checkPID(pid); err != nil {
+			t.Errorf("checkPID(%d) = %v", pid, err)
+		}
+	}
+}
+
 func TestCheckPGIDRefusesTheCatastrophicTargets(t *testing.T) {
 	// kill(-0) hits gvm's own process group and kill(-1) hits every process
 	// the uid can reach; both are one typo away from a normal pgid.
@@ -312,6 +329,9 @@ func TestProcOperationsAreUnsupportedOffLinux(t *testing.T) {
 	}
 	if _, err := SelfCgroup(); !errors.Is(err, ErrNotSupported) {
 		t.Errorf("SelfCgroup: %v", err)
+	}
+	if _, err := ProcCgroup(1); !errors.Is(err, ErrNotSupported) {
+		t.Errorf("ProcCgroup: %v", err)
 	}
 	if _, err := CgroupProcs("/system.slice"); !errors.Is(err, ErrNotSupported) {
 		t.Errorf("CgroupProcs: %v", err)

@@ -21,8 +21,15 @@ func Alive(pid int, wantStartTicks uint64) (bool, error) {
 // SignalGroup is Linux-only: Windows has no process groups in kill(2)'s sense.
 func SignalGroup(pgid int, sig Signal) error { return Unsupported("kill(-pgid)") }
 
+// SignalProcess is Linux-only. The guard it wraps is in proc.go and is tested
+// on the development machine.
+func SignalProcess(pid int, sig Signal) error { return Unsupported("kill(pid)") }
+
 // SelfCgroup is Linux-only.
 func SelfCgroup() (string, error) { return "", Unsupported("cgroup v2") }
+
+// ProcCgroup is Linux-only.
+func ProcCgroup(pid int) (string, error) { return "", Unsupported("cgroup v2") }
 
 // CgroupProcs is Linux-only.
 func CgroupProcs(rel string) ([]int, error) { return nil, Unsupported("cgroup v2") }

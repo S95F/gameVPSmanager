@@ -69,11 +69,52 @@ func SignalGroup(pgid int, sig Signal) error {
 	return nil
 }
 
+// SignalProcess sends sig to one pid.
+//
+// It is the narrow counterpart of SignalGroup, for the two cases where a group
+// is the wrong target: a manifest step that declares `scope: process`, and the
+// cgroup sweep, which signals pids that escaped the group by calling setsid
+// and therefore have no relationship to the game's pgid at all.
+//
+// The caller is responsible for having verified the pid's identity first --
+// this function cannot know whether the pid it is handed is still the process
+// somebody pinned ten minutes ago.
+func SignalProcess(pid int, sig Signal) error {
+	if err := checkPID(pid); err != nil {
+		return err
+	}
+	if !sig.Known() {
+		return fmt.Errorf("platform: %s is not a signal gvm sends", sig)
+	}
+	if err := unix.Kill(pid, unix.Signal(sig)); err != nil {
+		return fmt.Errorf("platform: kill(%d, %s): %w", pid, sig, err)
+	}
+	return nil
+}
+
 // SelfCgroup is this process's path in the unified hierarchy, which for a
 // running unit is its own service cgroup -- the set of pids KillMode=mixed
 // would reap, and the set the last rung of the ladder has to empty itself.
 func SelfCgroup() (string, error) {
 	b, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return "", err
+	}
+	return ParseSelfCgroup(b)
+}
+
+// ProcCgroup is the unified-hierarchy path of an ARBITRARY process.
+//
+// It exists because /proc/self is the wrong answer for anything gvm did not
+// fork. `gvm run-shutdown` is invoked by gvmd or by a human, so the process
+// resolving a sweepable cgroup is usually not the game's parent, and a child
+// forked by a long-lived unit inherits that unit's cgroup along with its
+// INVOCATION_ID.
+func ProcCgroup(pid int) (string, error) {
+	if pid <= 0 {
+		return "", fmt.Errorf("platform: %d is not a pid", pid)
+	}
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cgroup")
 	if err != nil {
 		return "", err
 	}

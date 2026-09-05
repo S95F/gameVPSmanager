@@ -17,7 +17,31 @@ import (
 
 // ErrNotImplemented marks a command that is routed but not yet built. It
 // exits non-zero so a script cannot mistake an unbuilt phase for success.
-var ErrNotImplemented = errors.New("not implemented")
+var ErrNotImplemented = errors.New("not implemented yet")
+
+// ExitError lets a command choose the process exit status.
+//
+// It exists for `gvm run`, whose exit status is a contract with systemd rather
+// than a convention: section 7.8 gives 64 and 78 to failures that must NOT be
+// retried and 75 to the one that must, and after a clean stop the status is the
+// game's own, because that is what Restart=on-failure reads. Collapsing all of
+// those to 1 would turn a manifest pin mismatch into a restart loop.
+//
+// A nil Err exits quietly with Code: the runner has already said everything it
+// has to say, in the journal and in the shutdown report.
+type ExitError struct {
+	Code int
+	Err  error
+}
+
+func (e *ExitError) Error() string {
+	if e.Err == nil {
+		return fmt.Sprintf("exit status %d", e.Code)
+	}
+	return e.Err.Error()
+}
+
+func (e *ExitError) Unwrap() error { return e.Err }
 
 // Env is everything a command is allowed to touch, so tests can drive the
 // CLI without a real terminal or process environment.
@@ -66,7 +90,12 @@ var commands = []Command{
 
 	{Name: "gvmd", Group: "roles", Summary: "run the privileged verb gateway (root)", Hidden: true, Run: notImplemented},
 	{Name: "web", Group: "roles", Summary: "run the dashboard and API", Hidden: true, Run: notImplemented},
-	{Name: "run", Group: "roles", Summary: "supervise one instance", Hidden: true, Run: notImplemented},
+	{Name: "run", Group: "roles", Summary: "supervise one instance", Hidden: true, Run: runRun},
+	// The three roles below are invoked by the unit and by gvmd, never typed.
+	// run-shutdown in particular is the layer-3 recovery path of section 11.8:
+	// it exists to be run when the runner is already gone.
+	{Name: "run-prepare", Group: "roles", Summary: "chown the runtime directory (root, ExecStartPre)", Hidden: true, Run: runRunPrepare},
+	{Name: "run-shutdown", Group: "roles", Summary: "run a stopped instance's shutdown ladder from shutdown.json", Hidden: true, Run: runRunShutdown},
 
 	{Name: "game", Group: "manifests", Summary: "validate and inspect game manifests", Run: runGame},
 
@@ -77,7 +106,8 @@ var commands = []Command{
 	{Name: "restart", Group: "instances", Summary: "restart an instance", Run: notImplemented},
 	{Name: "status", Group: "instances", Summary: "show instance state", Run: notImplemented},
 	{Name: "list", Group: "instances", Summary: "list instances", Run: notImplemented},
-	{Name: "console", Group: "instances", Summary: "attach to an instance console", Run: notImplemented},
+	{Name: "console", Group: "instances", Summary: "attach to an instance console", Run: runConsole},
+	{Name: "control", Group: "instances", Summary: "inspect and drive an instance's control channel", Run: runControl},
 
 	{Name: "content", Group: "content", Summary: "manage mods and workshop items", Run: notImplemented},
 	{Name: "backup", Group: "operations", Summary: "archive an instance", Run: notImplemented},
@@ -148,9 +178,19 @@ func Main(ctx context.Context, env *Env) int {
 	}
 
 	if err := cmd.Run(ctx, env, env.Args[1:]); err != nil {
+		// The wrapped error is printed rather than a fixed sentence so that a
+		// half-built subcommand can say WHICH half: "gvm control probe" and
+		// "gvm web" are both unbuilt and an operator needs to tell them apart.
 		if errors.Is(err, ErrNotImplemented) {
-			fmt.Fprintf(env.Stderr, "gvm %s: not implemented yet\n", name)
+			fmt.Fprintf(env.Stderr, "gvm %s: %v\n", name, err)
 			return 3
+		}
+		var xe *ExitError
+		if errors.As(err, &xe) {
+			if xe.Err != nil {
+				fmt.Fprintf(env.Stderr, "gvm %s: %v\n", name, xe.Err)
+			}
+			return xe.Code
 		}
 		fmt.Fprintf(env.Stderr, "gvm %s: %v\n", name, err)
 		return 1

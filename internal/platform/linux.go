@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"sort"
+	"strconv"
 
 	"golang.org/x/sys/unix"
 )
@@ -60,6 +61,52 @@ func UserExists(name string) (bool, error) {
 		return false, fmt.Errorf("platform: lookup user %s: %w", name, err)
 	}
 	return true, nil
+}
+
+// GroupID resolves a group name to its gid. It is how the console socket
+// turns the name in D-10 into the number SO_PEERCRED speaks in.
+func GroupID(name string) (uint32, error) {
+	g, err := user.LookupGroup(name)
+	if err != nil {
+		return 0, fmt.Errorf("platform: lookup group %s: %w", name, err)
+	}
+	gid, err := strconv.ParseUint(g.Gid, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("platform: group %s has a non-numeric gid %q: %w", name, g.Gid, err)
+	}
+	return uint32(gid), nil
+}
+
+// PeerGroups resolves a uid to its account name and its full gid set.
+//
+// SO_PEERCRED reports only the peer's PRIMARY gid, and gvm-web's membership of
+// gvm-console is supplementary -- so peer credentials alone cannot answer the
+// question D-09's middle column asks, and this lookup is the other half.
+//
+// It reads the account database, not the peer's live credentials: a process
+// that dropped a supplementary group with setgroups(2) still looks like a
+// member here. That is the honest limit of the approach, and it is the same
+// one `gvm doctor`'s HOST-008 check is written against.
+func PeerGroups(uid uint32) (name string, gids []uint32, err error) {
+	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
+	if err != nil {
+		return "", nil, fmt.Errorf("platform: lookup uid %d: %w", uid, err)
+	}
+	ids, err := u.GroupIds()
+	if err != nil {
+		return u.Username, nil, fmt.Errorf("platform: group list for uid %d: %w", uid, err)
+	}
+	out := make([]uint32, 0, len(ids))
+	for _, s := range ids {
+		g, err := strconv.ParseUint(s, 10, 32)
+		if err != nil {
+			// A non-numeric gid is a broken account database entry, not a
+			// reason to drop every other membership on the floor.
+			continue
+		}
+		out = append(out, uint32(g))
+	}
+	return u.Username, out, nil
 }
 
 // GroupList returns the names of every group a user belongs to, primary

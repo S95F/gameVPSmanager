@@ -204,6 +204,23 @@ func cgroupProcsPath(rel string) (string, error) {
 	return path.Join(cgroupRoot, rel, "cgroup.procs"), nil
 }
 
+// checkPID rejects the pids that turn kill(2) into something other than
+// "signal this process": 0 signals the caller's own process group, negative
+// values signal a group, and 1 is init.
+//
+// It exists because the cgroup sweep of section 11.6's last rung signals pids
+// it read out of a file, and a malformed read that yielded 0 would have the
+// runner SIGKILL itself and every process it shares a group with.
+func checkPID(pid int) error {
+	switch {
+	case pid <= 0:
+		return fmt.Errorf("platform: %d is not a pid; SignalProcess never signals a group", pid)
+	case pid == 1:
+		return fmt.Errorf("platform: refusing to signal pid 1")
+	}
+	return nil
+}
+
 // checkPGID rejects the two process-group ids that turn kill(-pgid) into a
 // weapon: 0 signals the caller's own group, which for the runner means killing
 // itself and the game together and losing the shutdown report, and 1 signals

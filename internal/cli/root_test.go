@@ -29,14 +29,47 @@ func TestVersionSucceeds(t *testing.T) {
 }
 
 // An unbuilt phase must never look like success to a shell script.
+//
+// `run` and `console` left this list when Phase 4 built them. Moving a name out
+// as it is implemented is the point: weakening the assertion to "non-zero"
+// would keep passing for a command that had grown a usage error instead of a
+// working body.
 func TestUnimplementedCommandExitsNonZero(t *testing.T) {
-	for _, name := range []string{"gvmd", "web", "run", "apply", "adopt", "doctor"} {
+	for _, name := range []string{"gvmd", "web", "apply", "adopt", "doctor"} {
 		code, _, errb := run(t, name)
 		if code == 0 {
 			t.Errorf("%s: exit 0, want non-zero while unimplemented", name)
 		}
 		if !strings.Contains(errb, "not implemented") {
 			t.Errorf("%s: stderr = %q", name, errb)
+		}
+	}
+}
+
+// The other half of the same assertion: a verb this phase built must no longer
+// answer with the unbuilt sentinel, however it fails.
+func TestImplementedCommandsAreNotStubs(t *testing.T) {
+	for _, args := range [][]string{
+		{"run"}, {"run-prepare"}, {"run-shutdown"}, {"console"}, {"control"}, {"game"},
+	} {
+		_, _, errb := run(t, args...)
+		if strings.Contains(errb, "not implemented") {
+			t.Errorf("%v: still reports as unimplemented: %q", args, errb)
+		}
+	}
+}
+
+// The hidden roles the unit and gvmd invoke must be dispatchable by their exact
+// spelling: an ExecStartPre= that typoes one fails a unit start with "unknown
+// command", which is a boot failure nobody reads as a packaging bug.
+func TestRoleVerbsAreDispatchable(t *testing.T) {
+	for _, name := range []string{"run", "run-prepare", "run-shutdown"} {
+		c, ok := lookup(name)
+		if !ok {
+			t.Fatalf("%s is not dispatchable", name)
+		}
+		if !c.Hidden {
+			t.Errorf("%s is listed in usage; it is invoked by systemd, not typed", name)
 		}
 	}
 }

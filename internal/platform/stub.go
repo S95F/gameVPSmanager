@@ -23,3 +23,12 @@ func UserExists(name string) (bool, error) { return false, Unsupported("unix use
 
 // GroupList is Linux-only.
 func GroupList(name string) ([]string, error) { return nil, Unsupported("unix group list") }
+
+// GroupID is Linux-only. The console socket's authorization matrix takes the
+// gid as data precisely so it can be tested here without one.
+func GroupID(name string) (uint32, error) { return 0, Unsupported("unix group lookup") }
+
+// PeerGroups is Linux-only.
+func PeerGroups(uid uint32) (string, []uint32, error) {
+	return "", nil, Unsupported("unix account lookup")
+}

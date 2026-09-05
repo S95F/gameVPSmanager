@@ -122,6 +122,29 @@ func TestSignalGroupRefusesTheCatastrophicTargetsOnLinuxToo(t *testing.T) {
 	}
 }
 
+// ProcCgroup answers for an ARBITRARY pid, which is what lets a shutdown prove
+// the process it is about to signal is the game rather than whatever inherited
+// the caller's cgroup along with its INVOCATION_ID.
+func TestProcCgroupAgreesWithSelfCgroup(t *testing.T) {
+	if !isLinux() {
+		t.Skip("cgroups are Linux-only")
+	}
+	want, err := SelfCgroup()
+	if err != nil {
+		t.Skipf("no cgroup v2 entry for this process: %v", err)
+	}
+	got, err := ProcCgroup(os.Getpid())
+	if err != nil {
+		t.Fatalf("ProcCgroup(self) = %v", err)
+	}
+	if got != want {
+		t.Errorf("ProcCgroup(self) = %q, SelfCgroup = %q", got, want)
+	}
+	if _, err := ProcCgroup(0); err == nil {
+		t.Error("ProcCgroup accepted pid 0, which kill(2) reads as the caller's own group")
+	}
+}
+
 func TestSelfCgroupAndCgroupProcs(t *testing.T) {
 	if !isLinux() {
 		t.Skip("cgroups are Linux-only")
