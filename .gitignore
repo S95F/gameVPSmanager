@@ -14,7 +14,8 @@ coverage.html
 
 # Local state — never commit
 *.env
-!legacy/**/config.env
+# No negation for the vendored copy: it is config.env.example precisely so
+# that a real config.env can never be un-ignored back into a commit.
 config.local.*
 /data/
 /run/

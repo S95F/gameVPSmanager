@@ -29,5 +29,5 @@ with what the live server actually runs.
 
 ### Scrubbed
 
-`config.env` had a real join password in it; it has been replaced with a
+`config.env.example` (vendored as `.example`, never `.env`) had a real join password in it; it has been replaced with a
 placeholder. The live values stay on the server.
