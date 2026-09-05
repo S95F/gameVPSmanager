@@ -1,0 +1,31 @@
+# Build output
+/bin/
+/dist/
+gvm
+gvm.exe
+gvmd
+gvmd.exe
+*.test
+
+# Go
+/vendor/
+coverage.out
+coverage.html
+
+# Local state — never commit
+*.env
+!legacy/**/config.env
+config.local.*
+/data/
+/run/
+secrets.key
+*.pem
+*.key
+!**/*.go
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

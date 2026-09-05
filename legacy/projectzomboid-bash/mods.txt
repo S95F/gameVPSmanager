@@ -1,0 +1,50 @@
+# Workshop IDs from https://steamcommunity.com/sharedfiles/filedetails/?id=3795231359
+# One ID per line. Text after # is ignored.
+#
+# ORDER MATTERS. Libraries and frameworks must come first - anything that
+# depends on them loads after. Add new mods at the bottom unless they're a library.
+
+# --- Libraries / frameworks (must load first) ---
+3171167894   # that DAMN Library          (required by all KI5 vehicle mods)
+3508537032   # NeatUI Framework [B42]     (required by Neat Crafting / CleanUI)
+
+# --- Vehicles ---
+3435796523   # '88 Toyota Hilux
+3330403100   # Trailers!
+3281755175   # Vanilla vehicles animated
+
+# --- Gameplay ---
+3579640010   # ST Additions - Pry Open (crowbar mod)
+3629835761   # Ladders?! B42.20 SP/MP (Unofficial)
+3426448380   # Immersive Suicide [B42/B41]
+3774826484   # Jumbo Tree Indoor Fix
+3394588830   # [B42] Simple Flashlight on Belt!
+
+# --- UI / quality of life ---
+3437629766   # CleanUI [B42]
+3502080466   # Neat Crafting [B42]
+3682936016   # Equipment UI - STABLE +
+2866258937   # Mini Health Panel [B41/B42.20]
+2847184718   # Proximity Inventory B42.20+
+3290232938   # Smarter Storage
+3422220305   # Picking Meister
+2544353492   # Has Been Read
+3461263912   # Clean HotBar [B42]
+3536052310   # Neat Building [B42]        (needs NeatUI Framework, already at top)
+
+# --- Content / cosmetics ---
+3556702241   # Silent Hill Dynamic Music Replacement
+3401134276   # Vanilla Gear Expanded
+3783094058   # Vanilla Outfits Expanded
+3414634809   # Spongie's Character Customisation
+
+# --- Added from collection 2026-09-04 ---
+3675741487   # [J&G] Umbrella Corp Uniform [B42/41]
+3470422050   # KATTAJ1 Clothes Core [B41/B42MP]
+2684285534   # Spongie's Clothing
+2812326159   # Spongie's Open Jackets
+2503622437   # Skill Recovery Journal
+2896041179   # errorMagnifier
+3077900375   # Mod Update and Alert System
+3342191739   # Gyde's Trait Magazines [B42.20]
+3778511497   # Skully's Zombie Collision [B42.20+]

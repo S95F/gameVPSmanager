@@ -1,0 +1,39 @@
+[Unit]
+Description=Project Zomboid Dedicated Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__PZ_USER__
+Group=__PZ_USER__
+WorkingDirectory=__INSTALL_DIR__
+Environment=HOME=__PZ_HOME__
+Environment=LANG=en_US.UTF-8
+
+# screen keeps an attachable console so you can type admin commands:
+#   sudo -u __PZ_USER__ script -q /dev/null -c 'screen -r pzserver'
+ExecStart=/usr/bin/screen -DmS pzserver __INSTALL_DIR__/start-server.sh \
+    -cachedir=__DATA_DIR__ \
+    -servername __SERVER_NAME__ \
+    -Xmx__JVM_XMX__ -Xms__JVM_XMS__
+
+# Save, then quit through the console. A SIGKILL here is how worlds corrupt.
+ExecStop=/usr/bin/screen -p 0 -S pzserver -X eval "stuff 'save\\015'"
+ExecStop=/bin/sleep 10
+ExecStop=/usr/bin/screen -p 0 -S pzserver -X eval "stuff 'quit\\015'"
+
+# SIGCONT is a no-op, so systemd waits for the clean shutdown above instead of
+# terminating the JVM mid-save. SIGKILL still lands at TimeoutStopSec.
+KillSignal=SIGCONT
+SendSIGKILL=yes
+TimeoutStopSec=180
+
+Restart=on-failure
+RestartSec=20
+LimitNOFILE=100000
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

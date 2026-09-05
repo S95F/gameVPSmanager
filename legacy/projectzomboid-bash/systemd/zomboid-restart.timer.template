@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly restart of the Project Zomboid server
+
+[Timer]
+OnCalendar=__ON_CALENDAR__
+Persistent=false
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

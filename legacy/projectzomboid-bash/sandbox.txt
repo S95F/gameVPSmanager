@@ -1,0 +1,32 @@
+# Per-key difficulty overrides, applied on top of SANDBOX_PRESET (config.env)
+# or, with no preset, on top of the server's generated settings.
+#
+#   Key = value            top-level setting
+#   Section.Key = value    nested setting (raw Lua values: numbers, true/false)
+#
+# The full list of valid keys is the live file on the server:
+#   /home/pzserver/Zomboid/Server/servertest_SandboxVars.lua
+# A key that doesn't exist there is skipped with a warning, never invented.
+#
+# Applied by install.sh and rebuild.sh (both modes). Most settings take
+# effect from the next restart cycle; Start*/world-gen keys only shape a
+# freshly rebuilt world.
+#
+# Common knobs (values shown = the apocalypse-preset defaults):
+#
+# Zombies = 4                                # overall population: 1 insane ... 5 low
+# ZombieConfig.PopulationMultiplier = 0.65   # fine-grained scale on top of Zombies
+# ZombieConfig.PopulationPeakMultiplier = 1.5
+# ZombieConfig.PopulationPeakDay = 28
+# ZombieLore.Speed = 4
+# ZombieLore.SprinterPercentage = 0
+# ZombieLore.Strength = 2
+# ZombieLore.Toughness = 4
+# DayLength = 4
+# WaterShutModifier = 14                     # days until water dies
+# ElecShutModifier = 14                      # days until power dies
+# MultiplierConfig.Global = 1.0              # global XP multiplier
+# StarterKit = false
+# FoodLootNew = 0.8                          # loot factors, higher = more
+# WeaponLootNew = 0.6
+# AmmoLootNew = 0.6
