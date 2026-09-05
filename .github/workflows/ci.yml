@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Development happens on Windows and deployment is Linux-only, so both
+    # have to stay green. A Linux-only file that is not behind a build tag
+    # breaks the developer's own machine, and a Windows-only assumption
+    # breaks the only host that matters in production.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: gofmt
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l . | grep -v '^legacy/' || true)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test ./... -count=1 -race
+
+      - name: cross-compile the deploy target
+        shell: bash
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o /dev/null ./cmd/...
+          GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/...
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck the vendored bash suite
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          # The legacy tree is reference material, not shipped code: report
+          # findings without failing the build.
+          shellcheck -S warning legacy/projectzomboid-bash/*.sh \
+            legacy/projectzomboid-bash/lib/*.sh || true
