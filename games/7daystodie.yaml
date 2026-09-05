@@ -1,0 +1,266 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: 7daystodie
+  name: 7 Days to Die Dedicated Server
+  revision: 1
+  tags: [steam, survival, telnet]
+  doc: |
+    No Source RCON. The admin channel is a raw telnet line protocol on 8081,
+    which gvm implements in v1.1 -- until then every telnet rung of the shutdown
+    ladder fails and the console rung below it does the work, which is why both
+    are written out rather than one being assumed.
+
+    GameName names the save directory under SaveGameFolder, exactly the way
+    Project Zomboid's server_name does. Changing it orphans the world, so it is
+    immutable after creation.
+
+    startserver.sh takes -configfile and launches 7DaysToDieServer.x86_64 as a
+    child without exec, so signals go to the process group. sdtd.seed_config
+    copies the shipped serverconfig.xml into the data directory on install: the
+    file in the install tree is dpkg-like territory that a repair overwrites.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 294420      # the Valve wiki's "Linux: No" for this app is stale
+      anonymous: true
+      branch: public
+      platform: linux
+      validate_on: [install, repair]
+      sentinel: {path: 7DaysToDieServer.x86_64, executable: true}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: ./startserver.sh
+    cwd: "{{ .Install }}"
+    args:
+      - "-configfile={{ .Data }}/serverconfig.xml"
+      # UserDataFolder is argv rather than a config key because the shipped
+      # serverconfig.xml ships it COMMENTED OUT, and the xml codec refuses to
+      # invent a property rather than writing inside a comment and reporting
+      # success. Saves, serveradmin.xml and the logs all hang off this path.
+      - "-UserDataFolder={{ .Data }}"
+    env:
+      HOME: "{{ .Home }}"
+      LANG: en_US.UTF-8
+      TERM: dumb                 # keeps the Unity log's colour escapes out of the ring
+    console: {mode: pipe, charset: utf8, echo_input: true}
+    process_group: true
+    arch: native
+    jit: false
+    limits: {nofile: 65535, tasks_max: 4096}
+
+  readiness:
+    hard_deadline: 1800s         # random world generation is genuinely this slow
+    stall_timeout: 600s
+    progress: ["Generating World", "Loading", "StartGame"]
+    probes:
+      - {kind: log_marker, pattern: "StartGame done", timeout: 1800s}  # VERIFY via `gvm game try`
+      - {kind: a2s, port: game, after: log_marker, timeout: 120s, every: 5s}
+    fail_markers:
+      - {pattern: "(?i)address already in use", fatal: true,
+         hint: "another server holds this port; check `gvm doctor` and `ss -lntup`"}
+      - {pattern: "(?i)could not find or load", fatal: true,
+         hint: "install tree is incomplete; run `gvm update <name> --repair`"}
+
+  shutdown:
+    budget: 300s
+    extend_while_progressing: true
+    progress_window: 30s
+    steps:
+      # Telnet first, console second, on purpose: in this build the telnet rungs
+      # fail immediately and cost nothing, and in v1.1 they are the rung that
+      # works when a wedged console has stopped reading stdin.
+      - {via: control, send: "saveworld", wait: 45s}
+      - {via: console, send: "saveworld", wait: 45s}
+      - {via: control, send: "shutdown", wait: 10s}
+      - {via: console, send: "shutdown", wait: 10s}
+      - {via: wait_exit, wait: 120s}
+      - {via: signal, signal: SIGTERM, scope: process_group, wait: 30s}
+
+  control:
+    kind: telnet
+    port: telnet
+    password: "{{ .Secret.telnet_password }}"
+    # Telnet has no packet framing to terminate, so the idle-terminated reader
+    # is the honest description of it (D-07).
+    dialect: simple
+    available_only_when_ready: true
+    not_ready_reason: "the telnet console binds only after the world finishes generating"
+    min_poll: 60s
+
+  verbs:
+    save:      {console: "saveworld", control: "saveworld"}
+    stop:      {console: "shutdown",  control: "shutdown"}
+    players:   {console: "lp",        control: "lp"}
+    broadcast: {console: "say \"{{ .Msg }}\"",  control: "say \"{{ .Msg }}\""}
+    kick:      {console: "kick \"{{ .Player }}\" \"{{ .Reason }}\"",
+                control: "kick \"{{ .Player }}\" \"{{ .Reason }}\""}
+    ban:       {console: "ban add \"{{ .Player }}\" 1 year \"{{ .Reason }}\"",
+                control: "ban add \"{{ .Player }}\" 1 year \"{{ .Reason }}\""}
+
+  port_stride: {sdtd: 10, admin: 10}
+  ports:
+    - {name: game,   proto: both, default: 26900, group: sdtd, expose: public,
+       config_key: ServerPort, config_file: serverconfig,
+       note: "game traffic and the Steam A2S query both answer here"}
+    - {name: steam1, proto: udp, default: 26901, group: sdtd, expose: public,
+       note: "ServerPort+1, hardcoded in the engine; the group's stride is what
+              keeps the three contiguous when the allocator has to move them"}
+    - {name: steam2, proto: udp, default: 26902, group: sdtd, expose: public,
+       note: "ServerPort+2, hardcoded in the engine"}
+    - {name: telnet, proto: tcp, default: 8081, group: admin, expose: none,
+       bind: 127.0.0.1, config_key: TelnetPort, config_file: serverconfig,
+       note: "plaintext admin console; reach it with ssh -L 8081:127.0.0.1:8081"}
+    - {name: web,    proto: tcp, default: 8080, group: admin, expose: none,
+       config_key: WebDashboardPort, config_file: serverconfig,
+       note: "the game's own web dashboard, left off; the port is allocated so
+              enabling it later does not move telnet"}
+
+  config_files:
+    - name: serverconfig
+      path: "{{ .Data }}/serverconfig.xml"
+      format: xml_property_list
+      owner: gvm                 # the server reads this at boot and never writes it
+      create_if_missing: false   # seeded from the install tree by sdtd.seed_config
+      mode: "0640"
+      keys:
+        ServerName:           "{{ .Var.server_name }}"
+        ServerDescription:    "{{ .Var.server_description }}"
+        ServerPassword:       "{{ .Secret.join_password }}"
+        ServerMaxPlayerCount: "{{ .Var.max_players }}"
+        ServerVisibility:     "{{ .Var.visibility }}"
+        GameWorld:            "{{ .Var.game_world }}"
+        WorldGenSeed:         "{{ .Var.world_gen_seed }}"
+        WorldGenSize:         "{{ .Var.world_gen_size }}"
+        GameName:             "{{ .Var.game_name }}"
+        GameDifficulty:       "{{ .Var.game_difficulty }}"
+        DropOnDeath:          "{{ .Var.drop_on_death }}"
+        EACEnabled:           "{{ .Var.eac_enabled }}"
+        TelnetEnabled:        "true"
+        TelnetPassword:       "{{ .Secret.telnet_password }}"
+        WebDashboardEnabled:  "false"
+
+  content: []
+
+  hooks:
+    post_install: [steam.home_layout, steam.link_sdk, sdtd.seed_config]
+
+  backup:
+    include:
+      - "{{ .Data }}/Saves"
+      - "{{ .Data }}/serverconfig.xml"
+      - "{{ .Data }}/serveradmin.xml"
+    exclude:
+      - "{{ .Data }}/Logs/**"
+    world_paths:
+      - "{{ .Data }}/Saves"
+    destroy_protected:
+      - "{{ .Data }}/serveradmin.xml"
+      - "{{ .Data }}/serverconfig.xml"
+    freeze:
+      # Console, not telnet: the console is the channel this build actually has,
+      # and a freeze whose `before` cannot run is a backup taken mid-write.
+      before: {via: console, send: "saveworld", wait: 45s}
+      after:  none               # saveworld is a flush, not a mode toggle
+      lease_budget: 90s
+
+  vars:
+    game_name:
+      type: string
+      default: gvm
+      immutable: true
+      apply: rebuild
+      help: "Names the save directory under SaveGameFolder. Changing it orphans the world, so it is fixed at creation."
+    server_name:
+      type: string
+      required: true
+      apply: restart
+      group: Identity
+    server_description:
+      type: string
+      default: ""
+      apply: restart
+      group: Identity
+    visibility:
+      type: int
+      default: "2"
+      min: 0
+      max: 2
+      apply: restart
+      group: Identity
+      help: "0 hides the server entirely, 1 lists it to friends, 2 lists it publicly."
+    max_players:
+      type: int
+      default: "8"
+      min: 1
+      max: 64
+      apply: restart
+    game_world:
+      type: enum
+      values: [Navezgane, PREGEN10k, PREGEN8k, PREGEN6k, PREGEN4k, RWG]
+      default: Navezgane
+      apply: rebuild
+      group: World
+      help: "RWG generates a new random map on first boot, which is the slow path the 30-minute hard deadline exists for."
+    world_gen_seed:
+      type: string
+      default: ""
+      immutable: true
+      apply: rebuild
+      group: World
+      help: "Only read when game_world is RWG. Empty means the engine picks one."
+    world_gen_size:
+      type: int
+      default: "6144"
+      min: 2048
+      max: 16384
+      immutable: true
+      apply: rebuild
+      group: World
+      help: "Only read when game_world is RWG. Generation time and disk use grow with the square of this."
+    game_difficulty:
+      type: int
+      default: "2"
+      min: 0
+      max: 5
+      apply: restart
+      group: Difficulty
+    drop_on_death:
+      type: int
+      default: "0"
+      min: 0
+      max: 4
+      apply: restart
+      group: Difficulty
+      help: "0 everything, 1 toolbelt only, 2 backpack only, 3 delete all, 4 delete toolbelt only."
+    eac_enabled:
+      type: bool
+      default: "true"
+      apply: restart
+      help: "Easy Anti-Cheat. Turning it off is required by most overhaul mods and lets unsigned clients connect."
+
+  sizing:
+    memory_model: flat
+    native_headroom: 2G
+    high_margin: 512M
+    ram_floor_mb: 8192
+    disk_floor_gb: 16
+
+  recommended_jobs:
+    nightly:
+      action: restart
+      at: "05:00"
+      jitter: 120s
+      persistent: false
+      why: "the engine's memory footprint and chunk-unload debt grow across a
+            long uptime; a restart before the peak hours clears both"
+    backup: {at: "04:00", keep: 14, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD"}
+    - {host: "*.steamcontent.com", why: "Steam CDN"}

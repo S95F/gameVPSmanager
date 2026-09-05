@@ -1,0 +1,314 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: projectzomboid
+  name: Project Zomboid (Build 41/42)
+  revision: 7
+  tags: [steam, survival, workshop, rcon]
+  doc: |
+    Console-first. RCON exists but does NOT bind until the server is fully
+    booted; during a first boot with a large workshop list that is 40-60
+    minutes, which is exactly the window you most want visibility into.
+
+    start-server.sh launches ProjectZomboid64 in a subshell WITHOUT exec, so
+    the unit's MainPID is the shell, not the JVM. Everything signals the
+    process group.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 380870      # the Valve wiki says 108600 / purchase-required.
+                                 # It is wrong; 380870 anonymous is what install.sh does.
+      anonymous: true
+      branch: public
+      platform: linux
+      validate_on: [install, repair]   # NEVER update: validate overwrites customised files
+      sentinel: {path: start-server.sh, executable: true}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: ./start-server.sh
+    cwd: "{{ .Install }}"
+    args:
+      - "-cachedir={{ .Data }}"
+      - "-servername"
+      - "{{ .Var.server_name }}"
+      - "-Xmx{{ .Var.jvm_xmx }}"
+      - "-Xms{{ .Var.jvm_xms }}"
+      # install.sh passes -adminpassword only on the very first boot, because
+      # that is when the admin account is created.
+      - {value: "-adminpassword", when: {phase: install}}
+      - {value: "{{ .Secret.admin_password }}", when: {phase: install}}
+    env:
+      HOME: "{{ .Home }}"
+      LANG: en_US.UTF-8          # SteamCMD and the JVM misbehave without UTF-8
+      TERM: dumb                 # keeps ANSI escapes out of the captured console
+    console:
+      mode: pty
+      strip_ansi: true
+      charset: utf8
+      line_ending: lf
+      rows: 50
+      cols: 200
+      echo_input: true
+      ring_bytes: 2097152
+    process_group: true          # start-server.sh does not exec
+    console_compat: screen       # `screen -r pzserver` keeps working; 90-day sunset
+    arch: native
+    jit: true                    # JVM JIT needs W^X off
+    limits: {nofile: 100000, tasks_max: 4096}
+
+  readiness:
+    hard_deadline: 3600s         # install.sh's mod-download boot budget
+    stall_timeout: 600s          # 10 min of total silence == wedged
+    progress_pattern: "(?i)(workshop|downloading|mod|steam|loading)"
+    probes:
+      - {kind: log_marker, pattern: "SERVER STARTED", timeout: 3600s}
+      - {kind: udp_probe, port: game, after: log_marker, timeout: 60s, every: 3s}
+    fail_markers:
+      - {pattern: "Address already in use", fatal: true,
+         hint: "another server holds this port; check `gvm doctor` and `ss -lunp`"}
+      - {pattern: "java\\.lang\\.OutOfMemoryError", fatal: true,
+         hint: "B42 native memory lives OUTSIDE the heap; raise memory_max or lower jvm_xmx"}
+      - {pattern: "(?i)could not find or load main class", fatal: true,
+         hint: "install tree is incomplete; run `gvm update <name> --repair`"}
+
+  shutdown:
+    # 360s, not the old unit's 180s, which is NOT generous for a large modded
+    # world with 8 players. The budget becomes TimeoutStopSec and must cover the
+    # whole ladder (30+5+240+30 = 305s) plus the SIGKILL rung, or systemd kills
+    # the JVM mid-save at exactly the moment the ladder was trying to prevent.
+    budget: 360s
+    extend_while_progressing: true
+    progress_window: 45s
+    steps:
+      # Console, not control: PZ's dialect is idle-terminated and RCON is
+      # unavailable for the whole first boot. The channel that always works is
+      # the one the stop path uses (D-08).
+      - via: console
+        send: "save"
+        wait_for_log: "(?i)\\bsave(d|\\s+complete|\\s+finished)"
+        wait: 30s
+        on_timeout: continue     # the legacy script slept 10s blind; a real marker
+                                 # with a fallback strictly dominates
+      - {via: console, send: "quit", wait: 5s}
+      - {via: wait_exit, wait: 240s}
+      - {via: signal, signal: SIGTERM, scope: process_group, wait: 30s}
+      # SIGKILL is the implicit last rung. Always logged as a degraded shutdown.
+
+  control:
+    kind: source_rcon
+    port: rcon
+    password: "{{ .Secret.rcon_password }}"
+    # D-07: matches internal/rcon/dialect.go. PZ's terminator support is
+    # unknown; the Valve empty-RESPONSE_VALUE trick risks hangs or truncated
+    # replies on the one game that must work on day one.
+    dialect: simple
+    available_only_when_ready: true
+    not_ready_reason: "RCON does not bind until Project Zomboid finishes booting"
+    min_poll: 60s
+
+  verbs:
+    save:      {console: "save",  control: "save"}
+    stop:      {console: "quit",  control: "quit"}
+    players:   {control: "players"}
+    broadcast: {control: "servermsg \"{{ .Msg }}\""}
+    kick:      {control: "kickuser \"{{ .Player }}\""}
+    ban:       {control: "banuser \"{{ .Player }}\""}
+
+  port_stride: {pz: 10, admin: 1}
+  ports:
+    - {name: game,   proto: udp, default: 16261, group: pz, expose: public,
+       config_key: DefaultPort, config_file: server_ini}
+    - {name: direct, proto: udp, default: 16262, group: pz, expose: public,
+       config_key: UDPPort, config_file: server_ini,
+       note: "the handshake completes on 16261 but data flows on 16262 - opening
+              only one gives a server people can see but never join"}
+    - {name: rcon,   proto: tcp, default: 27015, group: admin, expose: none,
+       bind: 127.0.0.1, config_key: RCONPort, config_file: server_ini,
+       note: "plaintext remote console; reach it with ssh -L 27015:127.0.0.1:27015"}
+
+  config_files:
+    - name: server_ini
+      path: "{{ .Data }}/Server/{{ .Var.server_name }}.ini"
+      format: pz_ini
+      owner: server              # PZ rewrites it on shutdown
+      create_if_missing: false   # generated by the first boot; see pz.first_boot
+      mode: "0640"
+      keys:
+        PublicName:        "{{ .Var.public_name }}"
+        PublicDescription: "{{ .Var.public_desc }}"
+        Public:            "{{ .Var.public }}"
+        Open:              "{{ .Var.open }}"
+        Password:          "{{ .Secret.join_password }}"
+        MaxPlayers:        "{{ .Var.max_players }}"
+        PVP:               "{{ .Var.pvp }}"
+        PauseEmpty:        "{{ .Var.pause_empty }}"
+        RCONPassword:      "{{ .Secret.rcon_password }}"
+        UPnP:              "false"      # pointless on a VPS
+      deny_keys: [SteamVAC, ServerPlayerID]
+
+    - name: sandbox
+      path: "{{ .Data }}/Server/{{ .Var.server_name }}_SandboxVars.lua"
+      format: lua_sandboxvars
+      owner: server
+      create_if_missing: false
+      keys: {}                   # written entirely by pz.apply_sandbox
+
+  presets:
+    # The presets are the server's OWN files, so the list is whatever this build
+    # actually ships -- never a hardcoded table that drifts.
+    source_glob: "{{ .Install }}/media/lua/shared/Sandbox/*.lua"
+    exclude: [SandboxVars]
+    target: sandbox
+    transform: pz_return_to_sandboxvars   # `return {` -> `SandboxVars = {`
+    overrides_var: sandbox_overrides
+
+  content:
+    - name: workshop
+      source: steam_workshop
+      workshop_appid: 108600     # the GAME appid, not the 380870 server appid
+      order_significant: true
+      roots:
+        - "{{ .Data }}/steamapps/workshop/content/108600"
+        - "{{ .Install }}/steamapps/workshop/content/108600"
+      acquisition:
+        mechanism: server_boot   # PZ downloads its own items from WorkshopItems=
+        write_key: WorkshopItems
+        write_file: server_ini
+        separator: ";"           # a comma breaks the list with NO error
+        keep_missing: true       # missing ids stay listed so the server retries
+        boot_timeout: 3600s
+        verify: {dir_non_empty: true}
+      activation:
+        write_key: Mods
+        write_file: server_ini
+        separator: ";"
+        resolver: pz.resolve_mod_ids
+        resolver_vars:
+          target_build: "{{ .Var.pz_build }}"
+      metadata_api: steam_remote_storage   # keyless; tags[] gives Build 41/42
+      collection_sync: true
+      owned_keys: [WorkshopItems, Mods]
+      impact:
+        add: download_cycle
+        remove: restart
+        reorder: restart
+        update: download_cycle
+        repin: download_cycle
+
+  hooks:
+    post_install: [pz.first_boot]
+    post_content: [pz.resolve_mod_ids]
+    pre_start:    [pz.apply_sandbox]
+  validators: [pz.server_name_is_world_dir]
+
+  backup:
+    include:
+      - "{{ .Data }}/Server"                                        # ini + SandboxVars
+      - "{{ .Data }}/Saves/Multiplayer/{{ .Var.server_name }}"
+      - "{{ .Data }}/Saves/Multiplayer/{{ .Var.server_name }}_player"
+      - "{{ .Data }}/db"                                            # accounts, whitelist
+    include_optional:
+      - "{{ .Data }}/Lua"
+    exclude:
+      - "**/*.lock"
+      - "{{ .Data }}/steamapps/workshop/**"   # re-downloadable; 6 GB of nothing
+      - "{{ .Data }}/server-console.txt"
+    world_paths:                 # never in a destroy set without --rebuild
+      - "{{ .Data }}/Saves/Multiplayer/{{ .Var.server_name }}"
+      - "{{ .Data }}/Saves/Multiplayer/{{ .Var.server_name }}_player"
+    destroy_protected:           # rebuild.sh's "accounts and settings survive"
+      - "{{ .Data }}/Server"
+      - "{{ .Data }}/db"
+    freeze:
+      before: {via: console, send: "save",
+               wait_for_log: "(?i)(save complete|saved)", wait: 20s}
+      after:  none               # PZ's save is a one-shot flush, not a mode toggle
+      lease_budget: 120s
+
+  vars:
+    server_name:
+      type: string
+      default: servertest
+      immutable: true
+      apply: rebuild
+      help: "Names the world directory under Saves/Multiplayer. Changing it orphans the save, so it is fixed at creation."
+    pz_build:
+      type: enum
+      values: ["42", "41"]
+      default: "42"
+      apply: rebuild
+      help: "Which Build the mod resolver prefers when an item ships both variants."
+    jvm_xmx:
+      type: memory
+      default: 5g
+      apply: restart
+      group: Memory
+      help: "Java heap ceiling. Build 42 uses significant native memory OUTSIDE the heap during world streaming, so on an 8GB box the heap must leave ~3GB free or the kernel OOM-kills the JVM mid-generation. 5g is the ceiling here, not a conservative starting point."
+    jvm_xms:
+      type: memory
+      default: 2g
+      apply: restart
+      group: Memory
+    public_name:  {type: string, required: true, apply: restart, group: Identity}
+    public_desc:  {type: string, default: "", apply: restart, group: Identity}
+    public:       {type: bool, default: "true", apply: restart, group: Identity}
+    open:
+      type: bool
+      default: "true"
+      apply: restart
+      group: Access
+      help: "false = whitelist only."
+    max_players:
+      type: int
+      default: "8"
+      min: 1
+      max: 64
+      apply: restart
+      help: "8 is a realistic ceiling for an 8GB box with this mod list."
+    pvp:          {type: bool, default: "false", apply: restart}
+    pause_empty:
+      type: bool
+      default: "true"
+      apply: restart
+      help: "Frees the CPU entirely when nobody is online."
+    sandbox_preset:
+      type: enum
+      values_from: presets
+      default: ""
+      apply: rebuild
+      group: Difficulty
+      help: "A preset the server itself ships. Empty leaves the generated settings alone (B42's default equals apocalypse). Population and loot changes apply on any restart; world-generation keys only shape a freshly rebuilt world."
+    sandbox_overrides:
+      type: string
+      default: ""
+      apply: rebuild
+      group: Difficulty
+      help: "Per-key overrides applied on top of the preset, one 'Key = value' or 'Section.Key = value' per line. A key that does not exist in the live SandboxVars file is skipped with a warning, never invented."
+
+  sizing:
+    memory_model: heap_plus_headroom
+    heap_var: jvm_xmx
+    native_headroom: 3G
+    high_margin: 1G
+    ram_floor_mb: 8192
+    disk_floor_gb: 12
+
+  recommended_jobs:
+    nightly:
+      action: update
+      at: "05:00"
+      jitter: 120s
+      persistent: false
+      why: "heap pressure accumulates faster when the heap is tight; a nightly
+            restart clears it before players notice GC stutter"
+    backup: {at: "04:00", keep: 14, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD + workshop downloads"}
+    - {host: "*.steamcontent.com", why: "Steam CDN"}
+    - {host: "steamcommunity.com", why: "workshop collection sync"}

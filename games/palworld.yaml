@@ -1,0 +1,227 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: palworld
+  name: Palworld Dedicated Server
+  revision: 1
+  tags: [steam, survival, rcon]
+  doc: |
+    Palworld keeps everything under the INSTALL tree: there is no save-dir
+    argument, so Pal/Saved/SaveGames and Pal/Saved/Config/LinuxServer are the
+    world and the config. Both are created at runtime rather than shipped in the
+    app manifest, so a SteamCMD `validate` on install/repair leaves them alone.
+
+    RCON authenticates with AdminPassword -- the same secret the admin uses in
+    game -- and does nothing at all while that password is empty. Palworld's own
+    docs say the RCON and REST admin planes "are not designed to be exposed
+    directly to the Internet", so both are bound to loopback here.
+
+    Source RCON is officially deprecated by Pocketpair and is scheduled to stop
+    working; the REST API on 8212 replaces it. Its port is allocated now, while
+    the box is empty, so that turning it on later is a var change and not a port
+    migration that moves a live server's firewall rules.
+
+    Broadcast sends only up to the first space (an upstream bug), so a long
+    message arrives truncated rather than failing.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 2394010
+      anonymous: true
+      branch: public
+      platform: linux
+      validate_on: [install, repair]
+      sentinel: {path: PalServer.sh, executable: true}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: ./PalServer.sh
+    cwd: "{{ .Install }}"
+    args:
+      # -port and -queryport override the ini, and the allocator owns the
+      # numbers, so they are passed rather than left to PublicPort alone.
+      - "-port={{ .Port.game }}"
+      - "-queryport={{ .Port.query }}"
+      - "-players={{ .Var.max_players }}"
+      - "-useperfthreads"
+      - "-NoAsyncLoadingThread"
+      - "-UseMultithreadForDS"
+    env:
+      HOME: "{{ .Home }}"
+    # PalServer.sh execs nothing: it launches PalServer-Linux-Shipping as a
+    # child, so MainPID is the shell and signals must reach the group.
+    console: {mode: pipe, charset: utf8, echo_input: false}
+    process_group: true
+    arch: native
+    jit: false
+    limits: {nofile: 65535, tasks_max: 2048}
+
+  readiness:
+    hard_deadline: 900s
+    stall_timeout: 300s
+    progress: ["Setting breakpad minidump AppID", "LogWorld", "LogPal"]
+    probes:
+      # A protocol answer, not a log line: Palworld answers the Steam query
+      # protocol on the query port, and no log marker in this engine is stable
+      # across builds. Deliberately NOT control_auth -- RCON is dead while
+      # AdminPassword is empty, and that must degrade the control channel, not
+      # hold the whole instance in `activating` until hard_deadline.
+      - {kind: a2s, port: query, timeout: 900s, every: 5s}
+    fail_markers:
+      - {pattern: "(?i)address already in use", fatal: true,
+         hint: "another server holds this port; check `gvm doctor` and `ss -lunp`"}
+      - {pattern: "Fatal error:", fatal: true,
+         hint: "the Unreal crash banner; the backtrace is under Pal/Saved/Logs"}
+
+  shutdown:
+    budget: 180s
+    steps:
+      - {via: control, send: "Save", wait: 45s}
+      - {via: control, send: "DoExit", wait: 15s}
+      - {via: wait_exit, wait: 60s}
+      - {via: signal, signal: SIGTERM, scope: process_group, wait: 20s}
+
+  control:
+    kind: source_rcon
+    port: rcon
+    # Not a separate rcon_password: Palworld authenticates RCON with the admin
+    # password, so a second secret here would silently never match.
+    password: "{{ .Secret.admin_password }}"
+    dialect: source
+    available_only_when_ready: true
+    not_ready_reason: "RCON binds once the world has finished loading, and only when admin_password is set"
+    min_poll: 60s
+    fallback_planned: http_api
+    deprecation: "Pocketpair has deprecated Source RCON and says it will stop functioning; the REST API on the rest port replaces it"
+
+  verbs:
+    save:      {control: "Save"}
+    stop:      {control: "DoExit"}
+    players:   {control: "ShowPlayers"}
+    broadcast: {control: "Broadcast {{ .Msg }}"}
+    kick:      {control: "KickPlayer {{ .Player }}"}
+    ban:       {control: "BanPlayer {{ .Player }}"}
+
+  # No groups: 8211, 27015, 25575 and 8212 have no contiguity relationship, so
+  # each port moves on its own rather than dragging three unrelated ones with it.
+  port_stride: {}
+  ports:
+    - {name: game,  proto: udp, default: 8211, expose: public,
+       config_key: PublicPort, config_file: settings}
+    - {name: query, proto: udp, default: 27015, expose: public,
+       note: "Steam query; this is what the community list and gvm's readiness
+              probe answer on"}
+    - {name: rcon,  proto: tcp, default: 25575, expose: none, bind: 127.0.0.1,
+       config_key: RCONPort, config_file: settings,
+       note: "plaintext remote console; reach it with ssh -L 25575:127.0.0.1:25575"}
+    - {name: rest,  proto: tcp, default: 8212, expose: none, bind: 127.0.0.1,
+       config_key: RESTAPIPort, config_file: settings,
+       note: "the REST admin API that replaces RCON. Allocated but disabled
+              until gvm implements the http_api control kind"}
+
+  config_files:
+    - name: settings
+      path: "{{ .Install }}/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini"
+      format: ue_option_settings
+      owner: server              # the server rewrites OptionSettings on exit
+      create_if_missing: false   # seeded from DefaultPalWorldSettings.ini by pal.settings_seed
+      mode: "0640"
+      # Values are written bare or quoted exactly as the seeded file already
+      # spells each option: PublicPort=8211 is a count and ServerName="8211"
+      # is a name, and nothing in the value itself can tell the two apart.
+      keys:
+        ServerName:                  "{{ .Var.server_name }}"
+        ServerDescription:           "{{ .Var.server_description }}"
+        AdminPassword:               "{{ .Secret.admin_password }}"
+        ServerPassword:              "{{ .Secret.join_password }}"
+        ServerPlayerMaxNum:          "{{ .Var.max_players }}"
+        Difficulty:                  "{{ .Var.difficulty }}"
+        DeathPenalty:                "{{ .Var.death_penalty }}"
+        bEnablePlayerToPlayerDamage: "{{ .Var.pvp }}"
+        RCONEnabled:                 "true"
+        RESTAPIEnabled:              "false"
+      deny_keys: [PublicIP, bUseAuth]
+
+  content: []
+
+  hooks:
+    post_install: [steam.home_layout, steam.link_sdk, pal.settings_seed]
+  validators: []
+
+  backup:
+    include:
+      - "{{ .Install }}/Pal/Saved/SaveGames"
+      - "{{ .Install }}/Pal/Saved/Config/LinuxServer"
+    exclude:
+      - "{{ .Install }}/Pal/Saved/Logs/**"
+      - "{{ .Install }}/Pal/Saved/Crashes/**"
+    world_paths:
+      - "{{ .Install }}/Pal/Saved/SaveGames"
+    destroy_protected:
+      - "{{ .Install }}/Pal/Saved/Config/LinuxServer"
+    freeze:
+      before: {via: control, send: "Save", wait: 30s}
+      after:  none               # Save is a one-shot flush, not a mode toggle
+      lease_budget: 60s
+
+  vars:
+    server_name:
+      type: string
+      required: true
+      apply: restart
+      group: Identity
+      help: "Shown in the community server list."
+    server_description:
+      type: string
+      default: ""
+      apply: restart
+      group: Identity
+    max_players:
+      type: int
+      default: "32"
+      min: 1
+      max: 32
+      apply: restart
+      help: "32 is the engine ceiling. Memory use grows with the number of bases, not only with players."
+    difficulty:
+      type: enum
+      values: [None, Casual, Normal, Hard]
+      default: None
+      apply: restart
+      group: Difficulty
+      help: "None means every individual rate below is used as written instead of being overridden by a preset."
+    death_penalty:
+      type: enum
+      values: [None, Item, ItemAndEquipment, All]
+      default: All
+      apply: restart
+      group: Difficulty
+    pvp:
+      type: bool
+      default: "false"
+      apply: restart
+
+  sizing:
+    memory_model: flat
+    native_headroom: 1G
+    high_margin: 512M
+    ram_floor_mb: 8192
+    disk_floor_gb: 12
+
+  recommended_jobs:
+    nightly:
+      action: restart
+      at: "05:00"
+      jitter: 120s
+      persistent: false
+      why: "the server's resident memory grows over days on an unchanged world;
+            a nightly restart is a workaround for a known leak, not tuning"
+    backup: {at: "04:00", keep: 14, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD"}
+    - {host: "*.steamcontent.com", why: "Steam CDN"}

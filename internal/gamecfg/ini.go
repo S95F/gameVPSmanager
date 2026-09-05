@@ -172,5 +172,4 @@ func (f *INI) Bytes() []byte {
 	return []byte(b.String())
 }
 
-// String implements fmt.Stringer.
 func (f *INI) String() string { return string(f.Bytes()) }

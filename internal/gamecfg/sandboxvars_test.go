@@ -287,3 +287,36 @@ func TestSandboxEmptyInput(t *testing.T) {
 		t.Errorf("Set on empty doc = %v, want ErrKeyNotFound", err)
 	}
 }
+
+// Delete exists because Doc requires it. The guard that matters is the one it
+// shares with Set: a line that opens a nested table is never a target, since
+// removing "ZombieConfig = {" orphans every key inside it and the game then
+// fails to load with a Lua error nowhere near the setting anyone changed.
+func TestSandboxVarsDelete(t *testing.T) {
+	in := readSample(t, "servertest_SandboxVars.lua")
+
+	sv := ParseSandboxVars(in)
+	if n := sv.Delete("ZombieConfig.PopulationPeakDay"); n != 1 {
+		t.Fatalf("Delete removed %d lines; want 1", n)
+	}
+	if _, ok := sv.Get("ZombieConfig.PopulationPeakDay"); ok {
+		t.Error("the key survived Delete")
+	}
+	if _, ok := sv.Get("ZombieConfig.PopulationMultiplier"); !ok {
+		t.Error("Delete took a sibling with it")
+	}
+
+	sv = ParseSandboxVars(in)
+	if n := sv.Delete("ZombieConfig"); n != 0 {
+		t.Fatalf("Delete removed the line opening a nested table (%d lines); "+
+			"that orphans every key inside it", n)
+	}
+	if string(sv.Bytes()) != string(in) {
+		t.Error("a no-op Delete changed the file")
+	}
+
+	sv = ParseSandboxVars(in)
+	if n := sv.Delete("NoSuchKey"); n != 0 {
+		t.Errorf("Delete of an absent key reported %d", n)
+	}
+}

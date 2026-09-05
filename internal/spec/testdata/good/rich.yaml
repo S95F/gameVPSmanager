@@ -1,0 +1,227 @@
+# The rich case, modelled on games/projectzomboid.yaml: an RCON control channel,
+# workshop content with two namespaces, two config files, presets, a freeze rung,
+# a named validator and a heap-plus-headroom memory model. It must validate with
+# zero diagnostics of ANY severity, so a cross-cutting warning that fires here
+# fires on the shipped manifests too.
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: richgame
+  name: Rich Test Game
+  revision: 7
+  tags: [steam, survival, workshop, rcon]
+  doc: |
+    Exercises every part of the schema the ordered checks look at.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 380870
+      anonymous: true
+      branch: public
+      platform: linux
+      validate_on: [install, repair]
+      sentinel: {path: start-server.sh, executable: true}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: ./start-server.sh
+    cwd: "{{ .Install }}"
+    args:
+      - "-cachedir={{ .Data }}"
+      - "-servername"
+      - "{{ .Var.server_name }}"
+      - "-Xmx{{ .Var.jvm_xmx }}"
+      - {value: "-adminpassword", when: {phase: install}}
+      - {value: "{{ .Secret.admin_password }}", when: {phase: install}}
+    env:
+      HOME: "{{ .Home }}"
+      LANG: en_US.UTF-8
+    console:
+      mode: pty
+      strip_ansi: true
+      charset: utf8
+      line_ending: lf
+      rows: 50
+      cols: 200
+      echo_input: true
+      ring_bytes: 2097152
+    process_group: true
+    arch: native
+    jit: true
+    limits: {nofile: 100000, tasks_max: 4096}
+
+  readiness:
+    hard_deadline: 3600s
+    stall_timeout: 600s
+    progress_pattern: "(?i)(workshop|downloading|mod|steam|loading)"
+    probes:
+      - {kind: log_marker, pattern: "SERVER STARTED", timeout: 3600s}
+      - {kind: udp_probe, port: game, after: log_marker, timeout: 60s, every: 3s}
+    fail_markers:
+      - {pattern: "Address already in use", fatal: true,
+         hint: "another server holds this port"}
+      - {pattern: 'java\.lang\.OutOfMemoryError', fatal: true,
+         hint: "native memory lives OUTSIDE the heap; raise memory_max or lower jvm_xmx"}
+
+  shutdown:
+    budget: 300s
+    extend_while_progressing: true
+    progress_window: 45s
+    steps:
+      - via: console
+        send: "save"
+        wait_for_log: '(?i)\bsave(d|\s+complete)'
+        wait: 30s
+        on_timeout: continue
+      - {via: console, send: "quit", wait: 5s}
+      - {via: wait_exit, wait: 240s}
+      - {via: signal, signal: SIGTERM, scope: process_group, wait: 25s}
+
+  control:
+    kind: source_rcon
+    port: rcon
+    password: "{{ .Secret.rcon_password }}"
+    dialect: simple
+    available_only_when_ready: true
+    not_ready_reason: "RCON does not bind until the server finishes booting"
+    min_poll: 60s
+
+  verbs:
+    save:      {console: "save",  control: "save"}
+    stop:      {console: "quit",  control: "quit"}
+    players:   {control: "players"}
+    broadcast: {control: "servermsg \"{{ .Msg }}\""}
+    kick:      {control: "kickuser \"{{ .Player }}\""}
+
+  port_stride: {rg: 10, admin: 1}
+  ports:
+    - {name: game,   proto: udp, default: 16261, group: rg, expose: public,
+       config_key: DefaultPort, config_file: server_ini}
+    - {name: direct, proto: udp, default: 16262, group: rg, expose: public,
+       config_key: UDPPort, config_file: server_ini}
+    - {name: rcon,   proto: tcp, default: 27015, group: admin, expose: none,
+       bind: 127.0.0.1, config_key: RCONPort, config_file: server_ini}
+
+  config_files:
+    - name: server_ini
+      path: "{{ .Data }}/Server/{{ .Var.server_name }}.ini"
+      format: pz_ini
+      owner: server
+      create_if_missing: false
+      mode: "0640"
+      keys:
+        PublicName:   "{{ .Var.public_name }}"
+        Public:       "{{ .Var.public }}"
+        MaxPlayers:   "{{ .Var.max_players }}"
+        Password:     "{{ .Secret.join_password }}"
+        RCONPassword: "{{ .Secret.rcon_password }}"
+        UPnP:         "false"
+      deny_keys: [SteamVAC, ServerPlayerID]
+
+    - name: sandbox
+      path: "{{ .Data }}/Server/{{ .Var.server_name }}_SandboxVars.lua"
+      format: lua_sandboxvars
+      owner: server
+      create_if_missing: false
+      keys: {}
+
+  presets:
+    source_glob: "{{ .Install }}/media/lua/shared/Sandbox/*.lua"
+    exclude: [SandboxVars]
+    target: sandbox
+    transform: pz_return_to_sandboxvars
+    overrides_var: sandbox_overrides
+
+  content:
+    - name: workshop
+      source: steam_workshop
+      workshop_appid: 108600
+      order_significant: true
+      roots:
+        - "{{ .Data }}/steamapps/workshop/content/108600"
+      acquisition:
+        mechanism: server_boot
+        write_key: WorkshopItems
+        write_file: server_ini
+        separator: ";"
+        keep_missing: true
+        boot_timeout: 3600s
+        verify: {dir_non_empty: true}
+      activation:
+        write_key: Mods
+        write_file: server_ini
+        separator: ";"
+        resolver: pz.resolve_mod_ids
+        resolver_vars:
+          target_build: "{{ .Var.pz_build }}"
+      metadata_api: steam_remote_storage
+      collection_sync: true
+      owned_keys: [WorkshopItems, Mods]
+
+  hooks:
+    post_install: [pz.first_boot]
+    post_content: [pz.resolve_mod_ids]
+    pre_start:    [pz.apply_sandbox]
+  validators: [pz.server_name_is_world_dir]
+
+  backup:
+    include:
+      - "{{ .Data }}/Server"
+      - "{{ .Data }}/Saves/Multiplayer/{{ .Var.server_name }}"
+    exclude:
+      - "**/*.lock"
+    world_paths:
+      - "{{ .Data }}/Saves/Multiplayer/{{ .Var.server_name }}"
+    destroy_protected:
+      - "{{ .Data }}/Server"
+    freeze:
+      before: {via: console, send: "save",
+               wait_for_log: "(?i)(save complete|saved)", wait: 20s}
+      after:  none
+      lease_budget: 120s
+
+  vars:
+    server_name:
+      type: string
+      default: servertest
+      immutable: true
+      apply: rebuild
+      help: "Names the world directory. Changing it orphans the save."
+    pz_build:
+      type: enum
+      values: ["42", "41"]
+      default: "42"
+      apply: rebuild
+    jvm_xmx:
+      type: memory
+      default: 5g
+      apply: restart
+      group: Memory
+    public_name: {type: string, required: true, apply: restart, group: Identity}
+    public:      {type: bool, default: "true", apply: restart, group: Identity}
+    max_players: {type: int, default: "8", min: 1, max: 64, apply: restart}
+    sandbox_preset:
+      type: enum
+      values_from: presets
+      default: ""
+      apply: rebuild
+    sandbox_overrides: {type: string, default: "", apply: rebuild}
+
+  sizing:
+    memory_model: heap_plus_headroom
+    heap_var: jvm_xmx
+    native_headroom: 3G
+    high_margin: 1G
+    ram_floor_mb: 8192
+    disk_floor_gb: 12
+
+  recommended_jobs:
+    nightly: {action: update, at: "05:00", jitter: 120s, persistent: false}
+    backup:  {at: "04:00", keep: 14, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD + workshop downloads"}

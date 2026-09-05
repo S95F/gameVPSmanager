@@ -226,6 +226,43 @@ func (sv *SandboxVars) Set(dotted, value string) error {
 	return nil
 }
 
+// Delete removes every assignment of a dotted key and reports how many lines
+// it removed.
+//
+// A line that opens a nested table is never a target: dropping
+// "ZombieConfig = {" would orphan every key inside it and leave the file
+// syntactically broken, which the game reports as a Lua error nowhere near the
+// setting anyone was changing.
+func (sv *SandboxVars) Delete(dotted string) int {
+	section, leaf := splitKey(dotted)
+	re := keyLineRE(leaf)
+	drop := map[int]bool{}
+
+	sv.walk(func(i int, line string, depth int, sec string) bool {
+		if reOpensTable.MatchString(line) {
+			return true
+		}
+		if !atKeyLevel(section, sec, depth) || !re.MatchString(line) {
+			return true
+		}
+		drop[i] = true
+		return true
+	})
+
+	if len(drop) == 0 {
+		return 0
+	}
+	out := make([]string, 0, len(sv.lines)-len(drop))
+	for i, line := range sv.lines {
+		if drop[i] {
+			continue
+		}
+		out = append(out, line)
+	}
+	sv.lines = out
+	return len(drop)
+}
+
 // Keys lists every addressable dotted key, in file order.
 //
 // This is what makes validating an override file possible: a key that is not
@@ -268,7 +305,6 @@ func (sv *SandboxVars) Bytes() []byte {
 	return []byte(b.String())
 }
 
-// String implements fmt.Stringer.
 func (sv *SandboxVars) String() string { return string(sv.Bytes()) }
 
 // Override is one line of a sandbox override file.

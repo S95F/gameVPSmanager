@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<ServerSettings>
+	<!-- GENERAL SERVER SETTINGS -->
+
+	<!-- Server representation -->
+	<property name="ServerName"					value="My Game Host"/>					<!-- Whatever you want the name to be. -->
+	<property name="ServerDescription"			value="A 7 Days to Die server"/>		<!-- Whatever you want the description to be. -->
+	<property name="ServerWebsiteURL"			value=""/>								<!-- Website URL for the server -->
+	<property name="ServerPassword"				value=""/>								<!-- Password to gain entry to the server -->
+	<property name="ServerLoginConfirmationText" value="" />							<!-- If set the user will see the message during joining -->
+	<property name="Region"						value="NorthAmericaEast"/>				<!-- The region this server is in. -->
+	<property name="Language"					value="English"/>						<!-- Primary language for players on this server. -->
+
+	<!-- Networking -->
+	<property name="ServerPort"					value="26900"/>							<!-- Port you want the server to listen on. -->
+	<property name="ServerVisibility"			value="2"/>								<!-- Visibility of this server: 2 = public, 1 = friends, 0 = not listed -->
+	<property name="ServerDisabledNetworkProtocols" value="SteamNetworking"/>			<!-- Networking protocols that should not be used. -->
+	<property name="ServerMaxWorldTransferSpeedKiBs" value="1300"/>						<!-- Maximum speed in kiB/s the world is transferred at to a client. -->
+
+	<!-- Slots -->
+	<property name="ServerMaxPlayerCount"		value="8"/>								<!-- Maximum Concurrent Players -->
+	<property name="ServerReservedSlots"		value="0"/>								<!-- Out of the MaxPlayerCount this many slots can only be used by players with a specific permission level -->
+
+	<!-- Admin interfaces -->
+	<property name="WebDashboardEnabled"		value="false"/>							<!-- Enable/disable the web dashboard -->
+	<property name="WebDashboardPort"			value="8080"/>							<!-- Port of the web dashboard -->
+	<property name="TelnetEnabled"				value="true"/>							<!-- Enable/Disable the telnet -->
+	<property name="TelnetPort"					value="8081"/>							<!-- Port of the telnet server -->
+	<property name="TelnetPassword"				value=""/>								<!-- Password to gain entry to telnet interface. -->
+
+	<!-- The following are disabled by default; uncomment to use them.
+	<property name="ServerIP"					value="127.0.0.1"/>
+	<property name="TelnetFailedLoginLimit"		value="10"/>
+	-->
+
+	<!-- World -->
+	<property name="GameWorld"					value="Navezgane"/>						<!-- "RWG" or any already existing world name -->
+	<property name="WorldGenSeed"				value="asdf"/>							<!-- If RWG this is the seed for the generation of the new world. -->
+	<property name="WorldGenSize"				value="6144"/>							<!-- If RWG this controls the width and height of the created world. -->
+	<property name="GameName"					value="My Game"/>						<!-- Whatever you want the game name to be. -->
+	<property name="GameDifficulty"				value="1"/>								<!-- 0 - 5, 0=easiest, 5=hardest -->
+</ServerSettings>

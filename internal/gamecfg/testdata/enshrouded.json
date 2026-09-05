@@ -1,0 +1,31 @@
+{
+  "name": "Enshrouded Server",
+  "password": "",
+  "saveDirectory": "./savegame",
+  "logDirectory": "./logs",
+  "ip": "0.0.0.0",
+  "gamePort": 15636,
+  "queryPort": 15637,
+  "slotCount": 16,
+  "voiceChatMode": "Proximity",
+  "enableVoiceChat": false,
+  "enableTextChat": false,
+  "gameSettingsPreset": "Default",
+  "gameSettings": {
+    "playerHealthFactor": 1,
+    "playerManaFactor": 1,
+    "enableDurability": true,
+    "enableStarvingDebuff": false,
+    "weatherFrequency": "Normal",
+    "tombstoneMode": "AddBackpackMaterials"
+  },
+  "userGroups": [
+    {
+      "name": "Admin",
+      "password": "changeme",
+      "canKickBan": true,
+      "canAccessInventories": true,
+      "reservedSlots": 0
+    }
+  ]
+}

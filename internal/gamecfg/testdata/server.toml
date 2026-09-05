@@ -1,0 +1,31 @@
+# A line-oriented TOML config in the shape a game server ships one.
+# Comments like this must survive every write.
+
+name = "Test Server"          # shown in the browser
+port = 27015
+max_players = 16
+motd = 'welcome, don"t break anything'
+enabled = true
+tick_rate = 30.0
+
+[world]
+seed = "abcdef"
+size = 6144
+# the next key is deliberately an inline table
+spawn = { x = 0, y = 64, z = 0 }
+tags = [
+  "pvp",
+  "modded",
+]
+
+[network]
+bind = "0.0.0.0"
+compression = 256
+
+[[admins]]
+name = "root"
+uuid = "0000-0000"
+
+[[admins]]
+name = "second"
+uuid = "1111-1111"

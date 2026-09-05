@@ -1,0 +1,130 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: valheim
+  name: Valheim Dedicated Server
+  revision: 4
+  tags: [steam, survival, no-rcon]
+  doc: |
+    NO RCON of any kind. Console (stdin) is the only command channel, so the
+    dashboard omits players/broadcast/kick with a real reason.
+    systemd's default KillSignal=SIGTERM does NOT trigger Valheim's save.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 896660
+      anonymous: true
+      branch: public
+      platform: linux
+      validate_on: [install, repair]
+      sentinel: {path: valheim_server.x86_64, executable: true}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: ./valheim_server.x86_64
+    cwd: "{{ .Install }}"
+    args:
+      - "-nographics"
+      - "-batchmode"
+      - "-name"
+      - "{{ .Var.public_name }}"
+      - "-port"
+      - "{{ .Port.game }}"
+      - "-world"
+      - "{{ .Var.world_name }}"
+      - "-savedir"
+      - "{{ .Data }}"
+      - {values: ["-password", "{{ .Secret.join_password }}"],
+         when: {secret_set: join_password}}
+      - {value: "-public", when: {var_true: public}}
+      - {value: "1",       when: {var_true: public}}
+      - {value: "-crossplay", when: {var_true: crossplay}}
+    env:
+      HOME: "{{ .Home }}"
+      SteamAppId: "892970"                       # runtime appid != install 896660
+      LD_LIBRARY_PATH: "{{ .Install }}/linux64"  # Unity ships its own libs
+    console: {mode: pipe, charset: utf8, echo_input: true}
+    process_group: true
+    arch: native
+    jit: false
+    limits: {nofile: 65535, tasks_max: 2048}
+
+  readiness:
+    hard_deadline: 900s
+    stall_timeout: 300s
+    progress: ["Load world", "Zonesystem Awake"]
+    probes:
+      - {kind: log_marker, pattern: "Game server connected", timeout: 600s}
+      - {kind: udp_probe, port: query, after: log_marker, timeout: 60s}
+    fail_markers:
+      - {pattern: "Address already in use", fatal: true}
+      - {pattern: "Password is invalid", fatal: true,
+         hint: "Valheim refuses a join password under 5 chars, or one that is a
+                substring of the server name"}
+
+  shutdown:
+    budget: 180s
+    steps:
+      - {via: signal, signal: SIGINT, scope: process_group, wait: 150s}
+      # SIGTERM does not save. There is no console 'stop' command. This is it.
+
+  control: null                  # console only; `verbs` reflects that honestly
+
+  verbs:
+    save: {console: "save"}
+    # no players/broadcast/kick -- the dashboard OMITS those, with the derived
+    # reason "Valheim has no query channel". Not hand-written (D-22).
+
+  port_stride: {vh: 10}
+  ports:
+    - {name: game,  proto: udp, default: 2456, group: vh, expose: public}
+    - {name: query, proto: udp, default: 2457, group: vh, expose: public}
+    - {name: spare, proto: udp, default: 2458, group: vh, expose: none,
+       note: "Valheim reserves 2456-2458; the third is unused but must not be
+              handed to another instance"}
+
+  config_files: []               # everything is argv. Proves the empty case.
+  content: []
+
+  hooks:
+    post_install: [steam.home_layout, steam.link_sdk, steam.appid_shim]
+  validators: [valheim.password_rules]
+
+  backup:
+    include: ["{{ .Data }}/worlds_local", "{{ .Data }}/adminlist.txt",
+              "{{ .Data }}/permittedlist.txt", "{{ .Data }}/bannedlist.txt"]
+    world_paths: ["{{ .Data }}/worlds_local"]
+    destroy_protected: ["{{ .Data }}/adminlist.txt", "{{ .Data }}/permittedlist.txt"]
+    freeze:
+      before: {via: console, send: "save", wait: 10s}
+      after:  none
+      lease_budget: 60s
+
+  vars:
+    world_name:
+      type: string
+      default: Dedicated
+      immutable: true
+      apply: rebuild
+      help: "Names the .db/.fwl pair under worlds_local."
+    public_name: {type: string, required: true, apply: restart}
+    public:      {type: bool, default: "true", apply: restart}
+    crossplay:   {type: bool, default: "false", apply: restart}
+
+  sizing:
+    memory_model: flat
+    native_headroom: 1G
+    high_margin: 512M
+    ram_floor_mb: 2048
+    disk_floor_gb: 4
+
+  recommended_jobs:
+    backup: {at: "04:00", keep: 14, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD"}
+    - {host: "*.valheimgame.com",  why: "Steam relay / crossplay backend"}

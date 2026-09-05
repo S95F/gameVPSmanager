@@ -68,7 +68,7 @@ var commands = []Command{
 	{Name: "web", Group: "roles", Summary: "run the dashboard and API", Hidden: true, Run: notImplemented},
 	{Name: "run", Group: "roles", Summary: "supervise one instance", Hidden: true, Run: notImplemented},
 
-	{Name: "game", Group: "manifests", Summary: "validate and inspect game manifests", Run: notImplemented},
+	{Name: "game", Group: "manifests", Summary: "validate and inspect game manifests", Run: runGame},
 
 	{Name: "create", Group: "instances", Summary: "define a new instance", Run: notImplemented},
 	{Name: "apply", Group: "instances", Summary: "reconcile an instance with its spec", Run: notImplemented},

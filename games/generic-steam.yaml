@@ -1,0 +1,145 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: generic-steam
+  name: Generic Steam dedicated server (template)
+  revision: 1
+  tags: [steam, template]
+  doc: |
+    START HERE for a new Steam title. Copy this file to
+    /etc/gvm/games/<yourgame>.yaml, set metadata.id to match the new filename,
+    and work down the REPLACE-ME markers. Adding a game is meant to cost zero
+    lines of Go, and everything below is ordinary data.
+
+    The install appid is deliberately not a real app: SteamCMD answers "No app
+    info" and stops, so an unedited copy of this template cannot quietly install
+    something. The sentinel is the other half of that -- it is the file whose
+    existence proves the download finished, and a wrong one makes a
+    half-downloaded tree look installed.
+
+    What `gvm game validate` CANNOT check for you: whether the launch flags are
+    the ones this engine actually takes, whether the readiness probe matches,
+    and whether the shutdown ladder saves. `gvm game try <id> --scratch` runs
+    all three against a throwaway instance and writes a suggested patch.
+
+    Two things games differ on that are easy to miss. If the runtime appid is
+    not the install appid (Valheim installs 896660 and announces 892970, Core
+    Keeper installs 1963720 and announces 1621690), add steam.appid_shim to
+    post_install and a SteamAppId entry to env. If the engine ships its own
+    libraries, add LD_LIBRARY_PATH pointing at the install tree's linux64.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 999999999   # REPLACE-ME: the dedicated SERVER appid, which is
+                                 # usually not the game's. Verify it against
+                                 # LinuxGSM rather than the Valve wiki, which is stale.
+      anonymous: true            # REPLACE-ME if the server needs a real Steam account
+      branch: public
+      platform: linux
+      # `update` is banned from this list and always will be: SteamCMD's validate
+      # overwrites customised files, so a nightly update that validated would
+      # silently revert every hand edit (D-32).
+      validate_on: [install, repair]
+      sentinel: {path: REPLACE-ME-server.x86_64, executable: true}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: ./REPLACE-ME-server.x86_64
+    cwd: "{{ .Install }}"
+    args:
+      # REPLACE-ME: flag spellings differ per engine. What matters is the shape:
+      # a port comes from the allocator, a var comes from the instance, and a
+      # secret is guarded so an unset password does not become an empty argument.
+      - "-name"
+      - "{{ .Var.public_name }}"
+      - "-port"
+      - "{{ .Port.game }}"
+      - "-maxplayers"
+      - "{{ .Var.max_players }}"
+      - {values: ["-password", "{{ .Secret.join_password }}"],
+         when: {secret_set: join_password}}
+    env:
+      HOME: "{{ .Home }}"
+    console: {mode: pipe, charset: utf8, echo_input: true}
+    # True unless the launch script ends in `exec`. Getting this wrong means the
+    # shutdown signal lands on a shell that has already returned.
+    process_group: true
+    arch: native                 # i386 for a 32-bit engine (srcds, GMod, L4D2)
+    jit: false                   # true for anything JVM-based; it turns W^X off
+    limits: {nofile: 65535, tasks_max: 2048}
+
+  readiness:
+    hard_deadline: 900s
+    stall_timeout: 300s
+    probes:
+      # A2S is the one readiness signal most Steam servers share, and a protocol
+      # answer beats a log line: it cannot drift with a build's logging changes.
+      # Some engines answer it on gameport+1 instead -- `gvm game try` says which.
+      - {kind: a2s, port: game, timeout: 900s, every: 5s}
+    fail_markers:
+      - {pattern: "(?i)address already in use", fatal: true,
+         hint: "another server holds this port; check `gvm doctor` and `ss -lntup`"}
+
+  shutdown:
+    budget: 180s
+    steps:
+      # on_timeout: continue is what makes a guessed console command safe. If the
+      # engine has no `quit`, this rung costs 15 seconds and the ladder carries
+      # on; the alternative is a stop path that hangs on an unknown game.
+      - {via: console, send: "quit", wait: 15s, on_timeout: continue}
+      - {via: wait_exit, wait: 60s}
+      - {via: signal, signal: SIGTERM, scope: process_group, wait: 30s}
+
+  control: null                  # REPLACE-ME with a control block if the game has RCON
+  verbs: {}                      # a verb the game cannot serve is omitted, never faked
+
+  port_stride: {game: 10}
+  ports:
+    - {name: game,  proto: udp, default: 27015, group: game, expose: public}
+    - {name: query, proto: udp, default: 27016, group: game, expose: public,
+       note: "many Steam engines bind gameport+1 for queries; declaring it
+              reserves the number even when this game does not use it"}
+
+  config_files: []               # REPLACE-ME once you know the file and its codec
+  content: []
+
+  hooks:
+    post_install: [steam.home_layout, steam.link_sdk]
+
+  backup:
+    include: ["{{ .Data }}"]
+    exclude: ["**/*.lock"]
+    world_paths: ["{{ .Data }}"]
+    freeze: {before: none, after: none, lease_budget: 30s}
+
+  vars:
+    public_name:
+      type: string
+      required: true
+      apply: restart
+      group: Identity
+      help: "Shown in the server browser."
+    max_players:
+      type: int
+      default: "16"
+      min: 1
+      max: 64
+      apply: restart
+
+  sizing:
+    memory_model: flat
+    native_headroom: 1G
+    high_margin: 512M
+    ram_floor_mb: 2048
+    disk_floor_gb: 8
+
+  recommended_jobs:
+    backup: {at: "04:00", keep: 14, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD"}
+    - {host: "*.steamcontent.com", why: "Steam CDN"}

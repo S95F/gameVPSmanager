@@ -178,5 +178,4 @@ func (m *ModsFile) Bytes() []byte {
 	return []byte(b.String())
 }
 
-// String implements fmt.Stringer.
 func (m *ModsFile) String() string { return string(m.Bytes()) }

@@ -1,0 +1,82 @@
+# Check 6: a config_key with no config file to land in. The allocation is
+# written nowhere and the server keeps listening on its compiled-in default.
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: testgame
+  name: Test Game
+  revision: 1
+  tags: [steam, test]
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 1234
+      anonymous: true
+      branch: public
+      platform: linux
+      validate_on: [install, repair]
+      sentinel: {path: run.sh, executable: true}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: ./run.sh
+    cwd: "{{ .Install }}"
+    args:
+      - "-name"
+      - "{{ .Var.world_name }}"
+      - "-port"
+      - "{{ .Port.game }}"
+    env:
+      HOME: "{{ .Home }}"
+    console: {mode: pipe, charset: utf8, echo_input: true}
+    process_group: true
+    arch: native
+    jit: false
+    limits: {nofile: 65535, tasks_max: 2048}
+
+  readiness:
+    hard_deadline: 600s
+    stall_timeout: 240s
+    probes:
+      - {kind: log_marker, pattern: "SERVER STARTED", timeout: 600s}
+
+  shutdown:
+    budget: 120s
+    steps:
+      - {via: signal, signal: SIGINT, scope: process_group, wait: 90s}
+
+  control: null
+  verbs: {}
+
+  port_stride: {tg: 10}
+  ports:
+    - {name: game, proto: udp, default: 27015, group: tg, expose: public,
+       config_key: DefaultPort}
+
+  config_files: []
+  content: []
+
+  hooks:
+    post_install: [steam.home_layout]
+
+  backup:
+    include: ["{{ .Data }}/worlds"]
+    world_paths: ["{{ .Data }}/worlds"]
+    freeze: {before: none, after: none, lease_budget: 30s}
+
+  vars:
+    world_name: {type: string, default: gvm, immutable: true, apply: rebuild}
+
+  sizing:
+    memory_model: flat
+    native_headroom: 512M
+    high_margin: 256M
+    ram_floor_mb: 2048
+    disk_floor_gb: 4
+
+  recommended_jobs:
+    backup: {at: "04:00", keep: 14, persistent: true}
