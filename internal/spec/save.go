@@ -77,6 +77,19 @@ func WriteFileAtomic(path string, data []byte, perm fs.FileMode) error {
 	return writeAtomic(path, data, perm, true, nil)
 }
 
+// WriteFileAtomicNoBackup is WriteFileAtomic for a file whose previous
+// contents must cease to exist when it is replaced.
+//
+// Rotating a credential that leaves the old value behind in path.bak has not
+// rotated anything: the .bak is mode 0600 today and on a backup tape tomorrow,
+// and it never expires. internal/secrets writes every file through here for
+// that reason, and it is exported rather than reimplemented so that the crash
+// ordering the probe points in this file pin down — sync, then rename, then
+// sync the directory — holds for secrets too.
+func WriteFileAtomicNoBackup(path string, data []byte, perm fs.FileMode) error {
+	return writeAtomic(path, data, perm, false, nil)
+}
+
 func writeAtomic(path string, data []byte, perm fs.FileMode, keepBackup bool, p *writeProbe) (err error) {
 	dir := filepath.Dir(path)
 
