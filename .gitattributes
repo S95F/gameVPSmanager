@@ -1,0 +1,42 @@
+# This project ships shell scripts, systemd units, Caddyfiles and YAML to
+# Linux hosts. A CRLF line ending in any of them is a production outage:
+# `#!/usr/bin/env bash\r` is "bad interpreter", and systemd silently
+# mis-parses directives with a trailing \r. Force LF everywhere, regardless
+# of the developer's platform or core.autocrlf setting.
+* text=auto eol=lf
+
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.service   text eol=lf
+*.timer     text eol=lf
+*.socket    text eol=lf
+*.slice     text eol=lf
+*.template  text eol=lf
+*.env       text eol=lf
+*.go        text eol=lf
+*.sql       text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+*.html      text eol=lf
+*.css       text eol=lf
+*.js        text eol=lf
+Caddyfile   text eol=lf
+Makefile    text eol=lf
+go.mod      text eol=lf
+go.sum      text eol=lf
+
+# Windows-only helpers may keep CRLF.
+*.ps1       text eol=crlf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Never touch binaries.
+*.png       binary
+*.jpg       binary
+*.ico       binary
+*.gz        binary
+*.zip       binary
+*.tar       binary
+*.jar       binary
