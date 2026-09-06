@@ -47,6 +47,11 @@ const (
 	// there: that is the package's directory, and an upgrade owns it.
 	SystemdUnitDir = "/etc/systemd/system"
 
+	// EtcJobsDir holds one descriptor per job slug (D-13, section 5). It is
+	// what turns the "<instance>_<job>" systemd passes to `gvm job run` back
+	// into an instance, a job and an action without a database.
+	EtcJobsDir = EtcRoot + "/jobs"
+
 	// SteamHomesDir gives each instance its own SteamCMD HOME, which removes
 	// the shared ~/.steam corruption class outright rather than only
 	// serialising around it (D-30, section 5.2).
@@ -94,9 +99,15 @@ type Paths struct {
 	PortsJSON       string // echo of the materialized allocation
 	BlockedMods     string // present iff AWAITING_MANUAL_FILES
 	ControlProbe    string // `gvm control probe` finding
-	SnapDir         string // reflink/btrfs snapshot staging
-	SteamScriptDir  string // generated steamcmd runscripts
-	SteamHome       string // SteamCMD's HOME for this instance (D-30)
+	// Lease is the job that currently owns the instance (section 5.3). It is
+	// here rather than under /run deliberately: /run is tmpfs, and a lease
+	// that vanished on reboot could not distinguish "the job finished" from
+	// "the box died mid-update". The recorded boot id is what makes the
+	// reboot case decidable instead.
+	Lease          string
+	SnapDir        string // reflink/btrfs snapshot staging
+	SteamScriptDir string // generated steamcmd runscripts
+	SteamHome      string // SteamCMD's HOME for this instance (D-30)
 
 	// Runtime, under /run/gvm/<name>. The directory is 2750
 	// gvm-<name>:gvm-console (setgid) so gvm-web can traverse it and instance
@@ -148,6 +159,7 @@ func PathsFor(name string) Paths {
 		PortsJSON:       path.Join(state, "ports.json"),
 		BlockedMods:     path.Join(state, "blocked-mods.json"),
 		ControlProbe:    path.Join(state, "control-probe.json"),
+		Lease:           path.Join(state, "lease.json"),
 		SnapDir:         path.Join(state, "snap"),
 		SteamScriptDir:  path.Join(state, "steam"),
 		SteamHome:       path.Join(SteamHomesDir, name),

@@ -30,12 +30,13 @@ func TestVersionSucceeds(t *testing.T) {
 
 // An unbuilt phase must never look like success to a shell script.
 //
-// `run` and `console` left this list when Phase 4 built them. Moving a name out
-// as it is implemented is the point: weakening the assertion to "non-zero"
-// would keep passing for a command that had grown a usage error instead of a
-// working body.
+// `run` and `console` left this list when Phase 4 built them, and `apply` left
+// it when Phase 7 did. Moving a name out as it is implemented is the point:
+// weakening the assertion to "non-zero" would keep passing for a command that
+// had grown a usage error instead of a working body.
 func TestUnimplementedCommandExitsNonZero(t *testing.T) {
-	for _, name := range []string{"gvmd", "web", "apply", "adopt", "doctor"} {
+	for _, name := range []string{"gvmd", "web", "content", "backup", "restore",
+		"update", "rebuild", "adopt", "firewall", "doctor"} {
 		code, _, errb := run(t, name)
 		if code == 0 {
 			t.Errorf("%s: exit 0, want non-zero while unimplemented", name)
@@ -51,6 +52,8 @@ func TestUnimplementedCommandExitsNonZero(t *testing.T) {
 func TestImplementedCommandsAreNotStubs(t *testing.T) {
 	for _, args := range [][]string{
 		{"run"}, {"run-prepare"}, {"run-shutdown"}, {"console"}, {"control"}, {"game"},
+		{"create"}, {"install"}, {"apply"}, {"start"}, {"stop"}, {"restart"},
+		{"status"}, {"list"}, {"logs"}, {"ports"}, {"destroy"},
 	} {
 		_, _, errb := run(t, args...)
 		if strings.Contains(errb, "not implemented") {

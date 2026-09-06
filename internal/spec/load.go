@@ -360,6 +360,18 @@ func LoadInstance(path string) (*Instance, Diags, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	return ParseInstance(path, raw)
+}
+
+// ParseInstance is LoadInstance without the read.
+//
+// It exists because the readers of an instance spec are not all holding a
+// filesystem: the lifecycle observer reaches /etc through an injected seam so
+// that its logic is testable on the Windows development machine, and a loader
+// that could only start from a path would have forced it to fake one. ref is
+// what diagnostics are attributed to and is normally the path.
+func ParseInstance(ref string, raw []byte) (*Instance, Diags, error) {
+	path := ref
 	ix, err := IndexBytes(path, raw)
 	if err != nil {
 		return nil, Diags{{File: path, Sev: SevError, Msg: err.Error()}}, err

@@ -56,6 +56,16 @@ type Env struct {
 	// Geteuid is os.Geteuid by default, and decides local-root vs remote
 	// transport.
 	Geteuid func() int
+
+	// Host is the set of host-touching seams the instance verbs use. Nil
+	// means the production one, which refuses off Linux -- see hostEnv.
+	//
+	// It is one field rather than a dozen because a test that wants to drive
+	// `gvm create` on Windows needs all of them at once and none of them
+	// individually: the interesting thing about these commands is the ORDER
+	// they touch the host in, and that is only observable when every touch
+	// goes to the same recorder.
+	Host *HostEnv
 }
 
 // DefaultEnv builds an Env bound to the real process.
@@ -96,16 +106,24 @@ var commands = []Command{
 	// it exists to be run when the runner is already gone.
 	{Name: "run-prepare", Group: "roles", Summary: "chown the runtime directory (root, ExecStartPre)", Hidden: true, Run: runRunPrepare},
 	{Name: "run-shutdown", Group: "roles", Summary: "run a stopped instance's shutdown ladder from shutdown.json", Hidden: true, Run: runRunShutdown},
+	// probe-write runs INSIDE the transient unit `gvm apply` builds, as the
+	// instance's own account and under the sandbox the drop-in will carry
+	// (D-15). It is the only command whose caller is another copy of gvm.
+	{Name: "probe-write", Group: "roles", Summary: "test whether the sandbox permits a write to each path (root, apply)", Hidden: true, Run: runProbeWrite},
 
 	{Name: "game", Group: "manifests", Summary: "validate and inspect game manifests", Run: runGame},
 
-	{Name: "create", Group: "instances", Summary: "define a new instance", Run: notImplemented},
-	{Name: "apply", Group: "instances", Summary: "reconcile an instance with its spec", Run: notImplemented},
-	{Name: "start", Group: "instances", Summary: "start an instance", Run: notImplemented},
-	{Name: "stop", Group: "instances", Summary: "stop an instance, saving cleanly", Run: notImplemented},
-	{Name: "restart", Group: "instances", Summary: "restart an instance", Run: notImplemented},
-	{Name: "status", Group: "instances", Summary: "show instance state", Run: notImplemented},
-	{Name: "list", Group: "instances", Summary: "list instances", Run: notImplemented},
+	{Name: "create", Group: "instances", Summary: "define a new instance", Run: runCreate},
+	{Name: "install", Group: "instances", Summary: "install or repair an instance's game files", Run: runInstall},
+	{Name: "apply", Group: "instances", Summary: "reconcile an instance with its spec", Run: runApply},
+	{Name: "start", Group: "instances", Summary: "start an instance", Run: runStart},
+	{Name: "stop", Group: "instances", Summary: "stop an instance, saving cleanly", Run: runStop},
+	{Name: "restart", Group: "instances", Summary: "restart an instance", Run: runRestart},
+	{Name: "status", Group: "instances", Summary: "show instance state", Run: runStatus},
+	{Name: "list", Group: "instances", Summary: "list instances", Run: runList},
+	{Name: "logs", Group: "instances", Summary: "print an instance's console log and shutdown records", Run: runLogs},
+	{Name: "ports", Group: "instances", Summary: "show port occupancy and conflicts", Run: runPorts},
+	{Name: "destroy", Group: "instances", Summary: "remove an instance, archiving it first", Run: runDestroy},
 	{Name: "console", Group: "instances", Summary: "attach to an instance console", Run: runConsole},
 	{Name: "control", Group: "instances", Summary: "inspect and drive an instance's control channel", Run: runControl},
 
@@ -176,6 +194,17 @@ func Main(ctx context.Context, env *Env) int {
 		usage(env.Stderr)
 		return 2
 	}
+
+	// Whatever the command built gets released before the process exits: the
+	// production HostEnv holds a systemd connection and an open audit spool,
+	// and the spool's last records are only durable once it is closed. It is a
+	// defer rather than a call at the end of the happy path because the run
+	// that most needs its audit trail flushed is the one that failed.
+	defer func() {
+		if env.Host != nil {
+			_ = env.Host.Close()
+		}
+	}()
 
 	if err := cmd.Run(ctx, env, env.Args[1:]); err != nil {
 		// The wrapped error is printed rather than a fixed sentence so that a

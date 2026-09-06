@@ -28,6 +28,7 @@ func TestPathsForIsSectionFive(t *testing.T) {
 		{"PortsJSON", p.PortsJSON, "/var/lib/gvm/instances/pz-main/ports.json"},
 		{"BlockedMods", p.BlockedMods, "/var/lib/gvm/instances/pz-main/blocked-mods.json"},
 		{"ControlProbe", p.ControlProbe, "/var/lib/gvm/instances/pz-main/control-probe.json"},
+		{"Lease", p.Lease, "/var/lib/gvm/instances/pz-main/lease.json"},
 		{"SnapDir", p.SnapDir, "/var/lib/gvm/instances/pz-main/snap"},
 		{"SteamScriptDir", p.SteamScriptDir, "/var/lib/gvm/instances/pz-main/steam"},
 		{"SteamHome", p.SteamHome, "/var/lib/gvm/cache/steam/homes/pz-main"},

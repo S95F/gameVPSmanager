@@ -1,0 +1,15 @@
+# /usr/lib/systemd/system/gvm.slice  -- ARCHITECTURE.md 7.2
+[Unit]
+Description=gvm game servers
+Before=slices.target
+
+[Slice]
+MemoryAccounting=yes
+CPUAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
+CPUWeight=100
+IOWeight=100
+# Deliberately NO MemoryMax here. Capping the sum means one instance's leak
+# throttles every other world on the box; limits belong per-instance, in the
+# generated drop-in, where they are derived from that game's own sizing.

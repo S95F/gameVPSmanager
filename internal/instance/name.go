@@ -236,3 +236,12 @@ func DropInPath(name string) string {
 func JobTimerPath(inst, job string) string {
 	return path.Join(SystemdUnitDir, JobTimer(inst, job))
 }
+
+// JobDescPath is the descriptor that maps a slug back to its instance, job and
+// action (D-13, section 5).
+//
+// It exists so `gvm job run %i` can resolve what systemd handed it with no
+// database: SplitJobSlug recovers the two names, this file supplies the rest.
+func JobDescPath(inst, job string) string {
+	return path.Join(EtcJobsDir, JobSlug(inst, job)+".json")
+}

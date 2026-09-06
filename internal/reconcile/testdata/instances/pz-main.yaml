@@ -1,0 +1,78 @@
+# The adopted Project Zomboid instance of section 6.1, as `gvm adopt cutover`
+# writes it: a pre-existing account, a world under /home, managed_install false.
+apiVersion: gvm/v1
+kind: Instance
+metadata:
+  name: pz-main
+  uid: 019f2c7a-8b31-7c4e-9d20-3f61a5b7c9e2
+  created: 2026-09-04T18:22:11Z
+  adopted_from: "bash-suite:/root/pz-server"
+spec:
+  game: projectzomboid
+  manifest:
+    revision: 7
+    sha256: 1b40c9de4f7a2c8e5d3b1a09f6e4c2b8d7a5930e1c4f6b8a2d0e3c5f7a9b1d3e5
+    origin: shipped
+  enabled: true
+  managed_install: false
+  user: pzserver
+  group: pzserver
+  paths:
+    install: /opt/pzserver
+    data: /home/pzserver/Zomboid
+    home: /home/pzserver
+    work: /var/lib/gvm/cache/steam/homes/pz-main
+  ports:
+    game: 16261
+    direct: 16262
+    rcon: 27015
+  vars:
+    server_name: servertest
+    pz_build: "42"
+    jvm_xmx: 5g
+    jvm_xms: 2g
+    public_name: "MadGaymers.club"
+    public_desc: "Modded Build 42"
+    public: "true"
+    open: "true"
+    max_players: "8"
+    pvp: "false"
+    pause_empty: "true"
+    sandbox_preset: ""
+    sandbox_overrides: ""
+  resources:
+    cpu_weight: 100
+    io_weight: 100
+    memory_high: 7G
+    memory_max: 8G
+    memory_swap_max: "0"
+    tasks_max: 4096
+    nofile: 100000
+  console:
+    compat: screen
+    sunset: 2026-12-03T00:00:00Z
+  firewall:
+    expose:
+      rcon: none
+    admin_cidrs: []
+  egress:
+    policy: open
+    allow: []
+  jobs:
+    nightly:
+      schedule: "*-*-* 05:00:00 America/Denver"
+      action: update
+      randomized_delay: 120s
+      persistent: false
+      on_failure: start_anyway
+    backup:
+      schedule: "*-*-* 04:00:00 America/Denver"
+      action: backup
+      randomized_delay: 300s
+      persistent: true
+      on_failure: fail
+  backup:
+    keep: 14
+    keep_days: 45
+    dir: /var/backups/gvm/pz-main
+    remote: {kind: none}

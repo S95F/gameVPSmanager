@@ -1,0 +1,40 @@
+# /usr/lib/systemd/system/gvm-job@.service  -- ARCHITECTURE.md 7.5
+#
+# %i is "<instance>_<job>", e.g. "pz-main_nightly" (D-13). Host-level jobs use
+# an empty instance part: "_guard", "_verify".
+[Unit]
+Description=gvm job %i
+After=network-online.target
+Wants=network-online.target
+# Deliberately NOT PartOf=gvm.target: stopping gvm.target must not abort a
+# running backup halfway through a freeze window.
+
+[Service]
+Type=oneshot
+User=root
+Slice=gvm-jobs.slice
+ExecStart=/usr/local/bin/gvm job run %i
+
+# Finite (D-12). 4h is comfortably above the legitimate worst case (a 3600s PZ
+# workshop boot inside a rebuild) and far below "forever".
+TimeoutStartSec=14400
+
+# The job runs its own shutdown ladder; systemd must not race it.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=600
+SendSIGKILL=yes
+
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=0
+LogRateLimitBurst=0
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+# jobs must reach /home/pzserver/Zomboid
+ProtectHome=no
+# systemd-run needs the manager
+ProtectControlGroups=no
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK

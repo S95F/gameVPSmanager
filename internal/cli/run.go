@@ -250,48 +250,19 @@ type manifestTemplateRefs struct {
 
 // manifestRefs walks every templated field in the pinned bytes.
 //
-// It reads m.Raw rather than re-reading the file, so the references are
-// collected from exactly the bytes that will build the argv — the same rule the
-// pin check follows, and for the same reason.
+// The walk itself is spec.ScanManifestRefs, because `gvm apply` derives the
+// LoadCredential= lines it writes from the same scan: two implementations
+// would eventually hand the runner a credential id the unit never loaded, and
+// the symptom is an empty RCONPassword in a live config file rather than an
+// error anywhere.
 func manifestRefs(m *spec.Manifest) (manifestTemplateRefs, error) {
-	var out manifestTemplateRefs
-	if len(m.Raw) == 0 {
-		return out, fmt.Errorf("the pinned manifest carries no source bytes")
-	}
-	ix, err := spec.IndexBytes(m.SourceRef, m.Raw)
+	refs, err := spec.ScanManifestRefs(m)
 	if err != nil {
-		return out, err
+		return manifestTemplateRefs{}, err
 	}
-	seenSecret, seenHost := map[string]bool{}, map[string]bool{}
-	for _, path := range spec.TemplateFields(ix) {
-		refs, terr := spec.TemplateRefs(path, ix.Node(path).Value, spec.SurfaceFor(path))
-		if terr != nil {
-			// The guard refused this file at load, so reaching here means the
-			// pinned bytes are not the bytes that were validated. Refuse.
-			return out, fmt.Errorf("%s: %s", path, terr.Msg)
-		}
-		for _, r := range refs {
-			switch r.Root {
-			case "Secret":
-				if !seenSecret[r.Name] {
-					seenSecret[r.Name] = true
-					out.secretNames = append(out.secretNames, r.Name)
-				}
-			case "Host":
-				// Only the two the runner cannot know. `.Host.CPUs` is
-				// answerable here and is answered.
-				if r.Name == "RamMB" || r.Name == "IP4" {
-					if k := ".Host." + r.Name; !seenHost[k] {
-						seenHost[k] = true
-						out.hostRefs = append(out.hostRefs, k)
-					}
-				}
-			}
-		}
-	}
-	sort.Strings(out.secretNames)
-	sort.Strings(out.hostRefs)
-	return out, nil
+	// Only the two the runner cannot know. `.Host.CPUs` is answerable here and
+	// is answered.
+	return manifestTemplateRefs{secretNames: refs.Secrets, hostRefs: refs.RuntimeUnknowable()}, nil
 }
 
 func firstErrorDiag(d spec.Diags) string {

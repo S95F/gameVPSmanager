@@ -1,0 +1,108 @@
+# /usr/lib/systemd/system/gvm@.service  -- ARCHITECTURE.md 7.3
+#
+# PACKAGE-OWNED. gvm never writes this file. Everything that varies per
+# instance lives in the generated /etc/systemd/system/gvm@%i.service.d/
+# 10-gvm.conf, and everything that is a supervision POLICY for the whole box
+# lives here -- so a gvm upgrade that fixes the shutdown ladder fixes it for
+# every instance, including the ones created last year.
+[Unit]
+Description=gvm game server instance %i
+Documentation=man:gvm(8)
+After=network-online.target
+Wants=network-online.target
+# Deliberately NOT After=postgresql.service or gvmd.service, and deliberately
+# no PartOf=gvm.target (D-14). A game server must come back on a reboot with
+# the control plane and the database dead. ci/control-plane-dead.sh asserts it.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+Slice=gvm.slice
+ExecStartPre=+/usr/local/bin/gvm run-prepare %i
+ExecStart=/usr/local/bin/gvm run %i
+
+# There is deliberately NO ExecStop=. systemd's own manual: it is "usually not
+# sufficient to specify a command ... that only asks the service to terminate
+# ... but does not wait for it to do so." The legacy zomboid.service survived
+# that only because KillSignal=SIGCONT neutered the terminate step -- correct,
+# but load-bearing magic with no observability. Here KillMode=mixed sends
+# SIGTERM to the RUNNER only; the runner walks the per-game shutdown ladder
+# (PZ: console "save", wait for the save marker, "quit", poll the real game
+# PID) and blocks until the game process group is gone. "Saved cleanly at 40s"
+# and "hung and got SIGKILLed at 180s" become distinguishable outcomes.
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+FinalKillSignal=SIGKILL
+
+# FINITE (D-12). The drop-in raises this from the manifest's
+# readiness.hard_deadline; the runner extends it with EXTEND_TIMEOUT_USEC only
+# while it can prove progress. `infinity` would leave a wedged boot in
+# "activating" forever with Restart=on-failure never firing.
+TimeoutStartSec=600
+TimeoutStopSec=300
+
+# Catches a runner that is alive but stuck. SIGTERM, not the default SIGABRT,
+# so a wedged runner still gets one attempt at the shutdown ladder. The
+# runner's watchdog goroutine takes no locks, so a ring-buffer deadlock still
+# trips it.
+WatchdogSec=60
+WatchdogSignal=SIGTERM
+
+Restart=on-failure
+RestartSec=20
+# 64 spec/manifest-pin invalid, 65 preflight failed, 66 port unavailable,
+# 78 sandbox blocks a required write. Restarting cannot fix any of these and a
+# restart loop hides the error. 70 (panic) and 75 (orphan) DO retry.
+RestartPreventExitStatus=64 65 66 78
+OOMPolicy=stop
+
+RuntimeDirectory=gvm/%i
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=restart
+LogsDirectory=gvm/%i
+LogsDirectoryMode=0750
+
+# Only runner diagnostics reach the journal; the console goes to the ring and
+# to /var/log/gvm/%i/console.log. journald drops >10k msgs/30s per service by
+# default and a modded server WILL hit that and lose crash lines.
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=0
+LogRateLimitBurst=0
+SyslogIdentifier=gvm-%i
+
+MemoryAccounting=yes
+CPUAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
+
+# Baseline hardening. Everything per-instance -- User=, WorkingDirectory=,
+# Environment=, ReadWritePaths=, ProtectHome=, memory limits,
+# SystemCallArchitectures=, MemoryDenyWriteExecute= -- lives in 10-gvm.conf.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=full
+# read-only, not yes: `yes` makes /home EMPTY, and the adopted PZ world lives
+# at /home/pzserver/Zomboid. The generated drop-in ALWAYS emits an explicit
+# value and `gvm apply` write-probes it first (D-15).
+ProtectHome=read-only
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RemoveIPC=yes
+# AF_NETLINK is required: the JVM enumerates interfaces through it, and
+# dropping it makes NetworkInterface.getNetworkInterfaces() fail at startup.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

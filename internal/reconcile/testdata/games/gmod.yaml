@@ -1,0 +1,122 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: gmod
+  name: Garry's Mod dedicated server
+  revision: 2
+  tags: [steam, source, i386]
+  doc: |
+    A 32-BIT engine. srcds_linux is an i386 binary, so the generated drop-in
+    must admit x86 alongside the host's architecture; with
+    SystemCallArchitectures=native alone the process is killed with SIGSYS
+    before it prints anything, which is the failure spec.runtime.arch exists to
+    prevent.
+
+    This manifest lives under testdata because the shipped set is section 9's
+    six games and adding a seventh to prove one directive would change what gvm
+    ships. Everything else about it is an ordinary manifest.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 4020
+      anonymous: true
+      branch: public
+      platform: linux
+      validate_on: [install, repair]
+      sentinel: {path: srcds_run, executable: true}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: ./srcds_run
+    cwd: "{{ .Install }}"
+    args:
+      - "-game"
+      - "garrysmod"
+      - "-console"
+      - "-port"
+      - "{{ .Port.game }}"
+      - "+maxplayers"
+      - "{{ .Var.max_players }}"
+      - "+hostname"
+      - "{{ .Var.public_name }}"
+      - "+map"
+      - "{{ .Var.start_map }}"
+    env:
+      HOME: "{{ .Home }}"
+      LD_LIBRARY_PATH: "{{ .Install }}/bin"
+    console: {mode: pipe, charset: utf8, echo_input: true}
+    process_group: true
+    arch: i386
+    jit: false
+    limits: {nofile: 65535, tasks_max: 2048}
+
+  readiness:
+    hard_deadline: 600s
+    stall_timeout: 180s
+    probes:
+      - {kind: a2s, port: game, timeout: 600s, every: 5s}
+    fail_markers:
+      - {pattern: "(?i)address already in use", fatal: true,
+         hint: "another server holds this port; check `gvm doctor` and `ss -lntup`"}
+
+  shutdown:
+    budget: 120s
+    steps:
+      - {via: console, send: "quit", wait: 15s, on_timeout: continue}
+      - {via: wait_exit, wait: 60s}
+      - {via: signal, signal: SIGTERM, scope: process_group, wait: 30s}
+
+  control: null
+  verbs: {}
+
+  port_stride: {game: 10}
+  ports:
+    - {name: game,  proto: udp, default: 27015, group: game, expose: public}
+    - {name: query, proto: udp, default: 27016, group: game, expose: public}
+
+  config_files: []
+  content: []
+
+  hooks:
+    post_install: [steam.home_layout, steam.link_sdk]
+
+  backup:
+    include: ["{{ .Data }}"]
+    exclude: ["**/*.lock"]
+    world_paths: ["{{ .Data }}"]
+    freeze: {before: none, after: none, lease_budget: 30s}
+
+  vars:
+    public_name:
+      type: string
+      required: true
+      apply: restart
+      group: Identity
+      help: "Shown in the server browser."
+    start_map:
+      type: string
+      default: gm_flatgrass
+      apply: restart
+    max_players:
+      type: int
+      default: "16"
+      min: 1
+      max: 64
+      apply: restart
+
+  sizing:
+    memory_model: flat
+    native_headroom: 1G
+    high_margin: 512M
+    ram_floor_mb: 2048
+    disk_floor_gb: 8
+
+  recommended_jobs:
+    backup: {at: "04:00", keep: 14, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD"}

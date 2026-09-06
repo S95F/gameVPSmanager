@@ -1,0 +1,18 @@
+# /usr/lib/systemd/system/gvm-jobs.slice  -- ARCHITECTURE.md 7.2
+#
+# systemd derives the parent from the NAME, so gvm-jobs.slice sits under
+# gvm.slice. That is what makes CPUWeight below a RATIO against the games: a
+# 65 GB CS2 download must not starve a live world.
+[Unit]
+Description=gvm provisioning jobs (SteamCMD, modpack installers, archiving)
+
+[Slice]
+MemoryAccounting=yes
+CPUAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
+CPUWeight=20
+IOWeight=20
+MemoryHigh=2G
+MemoryMax=3G
+TasksMax=2048

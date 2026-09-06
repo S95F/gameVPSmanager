@@ -1,0 +1,43 @@
+# A 32-bit engine. The only thing this instance exists to prove is that
+# spec.runtime.arch reaches SystemCallArchitectures= as "native x86".
+apiVersion: gvm/v1
+kind: Instance
+metadata:
+  name: gmod-1
+  uid: 019f2c7a-8b31-7c4e-9d20-3f61a5b7c9e4
+  created: 2026-09-04T18:40:00Z
+spec:
+  game: gmod
+  manifest:
+    revision: 2
+    sha256: 3c1d5e7f9a2b4c6d8e0f1a3b5c7d9e1f3a5b7c9d1e3f5a7b9c1d3e5f7a9b1c3d
+    origin: shipped
+  enabled: true
+  managed_install: true
+  user: gvm-gmod-1
+  group: gvm-gmod-1
+  paths:
+    install: /srv/gvm/gmod-1/install
+    data: /srv/gvm/gmod-1/data
+    home: /srv/gvm/gmod-1
+    work: /var/lib/gvm/cache/steam/homes/gmod-1
+  ports:
+    game: 27015
+    query: 27016
+  vars:
+    public_name: "sandbox"
+    start_map: gm_construct
+    max_players: "24"
+  resources:
+    cpu_weight: 100
+    io_weight: 100
+    memory_high: 2688M
+    memory_max: 3G
+    memory_swap_max: "0"
+    tasks_max: 2048
+    nofile: 65535
+  backup:
+    keep: 7
+    keep_days: 30
+    dir: /var/backups/gvm/gmod-1
+    remote: {kind: none}

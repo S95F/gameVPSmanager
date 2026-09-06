@@ -1,0 +1,52 @@
+# A NEW instance: gvm owns the account, everything lives under /srv/gvm, and
+# nothing it writes is under /home -- which is what makes ProtectHome=yes the
+# right answer here and ProtectHome=no the right answer for pz-main.
+apiVersion: gvm/v1
+kind: Instance
+metadata:
+  name: valheim-1
+  uid: 019f2c7a-8b31-7c4e-9d20-3f61a5b7c9e3
+  created: 2026-09-04T18:30:00Z
+spec:
+  game: valheim
+  manifest:
+    revision: 4
+    sha256: 7ab41c0d2e5f8a6b3c9d1e4f7a0b2c5d8e1f4a7b0c3d6e9f2a5b8c1d4e7f0a3b
+    origin: shipped
+  enabled: true
+  managed_install: true
+  user: gvm-valheim-1
+  group: gvm-valheim-1
+  paths:
+    install: /srv/gvm/valheim-1/install
+    data: /srv/gvm/valheim-1/data
+    home: /srv/gvm/valheim-1
+    work: /var/lib/gvm/cache/steam/homes/valheim-1
+  ports:
+    game: 2456
+    query: 2457
+  vars:
+    public_name: "Ashlands"
+    world_name: "Ashlands"
+    public: "true"
+    crossplay: "false"
+  resources:
+    cpu_weight: 100
+    io_weight: 100
+    memory_high: 2688M
+    memory_max: 3G
+    memory_swap_max: "0"
+    tasks_max: 2048
+    nofile: 65535
+  jobs:
+    backup:
+      schedule: "*-*-* 04:00:00 America/Denver"
+      action: backup
+      randomized_delay: 300s
+      persistent: true
+      on_failure: fail
+  backup:
+    keep: 14
+    keep_days: 45
+    dir: /var/backups/gvm/valheim-1
+    remote: {kind: none}

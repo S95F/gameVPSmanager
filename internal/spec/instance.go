@@ -1,6 +1,9 @@
 package spec
 
 import (
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,6 +28,49 @@ var ErrUID = errors.New("invalid uid")
 // a typo'd uid that still decodes would be a new instance identity, and that
 // failure is invisible until grants disappear.
 type UID string
+
+// NewUID mints the identity `gvm create` writes once and never revisits.
+//
+// UUIDv7 rather than v4 because the first six bytes are big-endian
+// milliseconds: ids sort chronologically as strings, so an index on them is
+// append-mostly and a directory listing of anything keyed by one comes out in
+// creation order. The version and variant nibbles are stamped so that a reader
+// which does check them (Postgres' uuid type does not, but a future doctor
+// check will) sees a well-formed v7 rather than 16 random bytes wearing the
+// shape of one.
+//
+// internal/audit has a sibling generator for spool ids and the two are
+// deliberately not shared: this package is the schema and must not depend on
+// the audit trail, and the two identifiers have different lifetimes -- a spool
+// id lives for one record, this one outlives the machine.
+func NewUID() UID {
+	var b [16]byte
+
+	var ms [8]byte
+	binary.BigEndian.PutUint64(ms[:], uint64(time.Now().UnixMilli()))
+	copy(b[:6], ms[2:])
+
+	// crypto/rand.Read always fills its argument and never returns an error
+	// (it terminates the program if the system source fails), so there is no
+	// error path here to get wrong -- which is what lets this return a bare
+	// UID and keeps every call site from inventing a fallback identity.
+	_, _ = rand.Read(b[6:])
+
+	b[6] = (b[6] & 0x0f) | 0x70 // version 7
+	b[8] = (b[8] & 0x3f) | 0x80 // RFC 4122 variant
+
+	var out [36]byte
+	hex.Encode(out[0:8], b[0:4])
+	out[8] = '-'
+	hex.Encode(out[9:13], b[4:6])
+	out[13] = '-'
+	hex.Encode(out[14:18], b[6:8])
+	out[18] = '-'
+	hex.Encode(out[19:23], b[8:10])
+	out[23] = '-'
+	hex.Encode(out[24:36], b[10:16])
+	return UID(out[:])
+}
 
 // ParseUID accepts the canonical 8-4-4-4-12 hexadecimal form, case-insensitively,
 // and normalises to lowercase. It deliberately does not require version 7: a
