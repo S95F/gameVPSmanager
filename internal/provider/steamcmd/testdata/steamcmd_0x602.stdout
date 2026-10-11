@@ -1,0 +1,13 @@
+Redirecting stderr to '/var/lib/gvm/cache/steam/homes/pz-main/.local/share/Steam/logs/stderr.txt'
+Steam Console Client (c) Valve Corporation - version 1757457223
+-- type 'quit' to exit --
+Loading Steam API...OK
+"@ShutdownOnFailedCommand" = "1"
+"@NoPromptForPassword" = "1"
+Connecting anonymously to Steam Public...OK
+Waiting for client config...OK
+Waiting for user info...OK
+ Update state (0x3) reconfiguring, progress: 0.00 (0 / 0)
+ Update state (0x61) downloading, progress: 41.02 (581239936 / 1417183232)
+ Update state (0x5) validating, progress: 0.00 (0 / 0)
+Error! App '380870' state is 0x602 after update job.

@@ -491,7 +491,7 @@ The consequence, which is the point: the `.acf`/VDF parser, the spec loader and 
 
 /usr/share/gvm/games/*.yaml                 SHIPPED manifests. dpkg-owned, never edited.
 
-/var/lib/gvm/                               DERIVED. rebuildable. genuinely safe to lose.
+/var/lib/gvm/                 0751 root:root  DERIVED. rebuildable. genuinely safe to lose.
 ├── ports.lock.json                         0640 root:root  in-flight port reservations
 ├── archives.index.json                     0640 root:root  DB-free restore index
 ├── instances/<name>/                       0750 root:root
@@ -503,6 +503,8 @@ The consequence, which is the point: the `.acf`/VDF parser, the spec loader and 
 │   ├── snap/                               reflink/btrfs snapshot staging
 │   └── steam/{update.txt,check.txt}        generated runscripts
 ├── cache/steam/homes/<name>/               0700 gvm-<name>  SteamCMD's HOME      (D-30)
+│                                           (every level above it 0751 root:root,
+│                                            so that account can traverse to it)
 ├── blobs/sha256/<aa>/<sha256>              0444 gvm-fetch:gvm-content  content-addressed
 ├── blobs/tmp/                              staging, same fs, atomic rename
 ├── downloads/{mods,modpacks,worlds}/       0755 root:root  operator drop-box
@@ -547,10 +549,11 @@ The consequence, which is the point: the `.acf`/VDF parser, the spec loader and 
 d /run/gvm                  0755 root root -
 d /run/gvm/web              2750 gvm  caddy -
 d /var/log/gvm              0755 root root -
-d /var/lib/gvm              0750 root root -
+d /var/lib/gvm              0751 root root -
 d /var/lib/gvm/instances    0750 root root -
-d /var/lib/gvm/cache        0750 root root -
-d /var/lib/gvm/cache/steam  0750 root root -
+d /var/lib/gvm/cache        0751 root root -
+d /var/lib/gvm/cache/steam  0751 root root -
+d /var/lib/gvm/cache/steam/homes 0751 root root -
 d /var/lib/gvm/blobs        0755 gvm-fetch gvm-content -
 d /var/lib/gvm/blobs/tmp    0750 gvm-fetch gvm-content -
 d /var/lib/gvm/downloads    0755 root root -
@@ -566,6 +569,8 @@ d /etc/gvm/secrets          0700 root root -
 ```
 
 `/etc/gvm` is `0750 root:gvm` so the unprivileged web tier can *read* specs for rendering; every file in it is `0640 root:gvm`, so it can never write, and `secrets/` at `0700 root:root` is untraversable to it.
+
+`/var/lib/gvm` and the `cache/steam/homes` chain are `0751`, not `0750`, and the difference is load-bearing: `gvm-<name>` owns `cache/steam/homes/<name>` (D-30) and has to *traverse* to it to run steamcmd and to pass D-15's write-probe, while `doctor` asserts `getgrouplist(gvm-<name>) == {gvm-<name>}` (§7.6, §19) so no group can grant that. The absent `r` keeps the directories unlistable, so the instances on a box cannot be enumerated from here. `instances/` stays `0750 root:root` per §5.3 — which is why the SteamCMD runscript reaches its transient unit as a `LoadCredential=` rather than as a path the unit opens (§13.5).
 
 ### 5.2 Two HOMEs, deliberately
 
@@ -2137,8 +2142,14 @@ const (
 //
 // CONTRACT -- all five enforced by tests, not convention:
 //  1. A hook MUST NOT exec a process. If it needs to, it is a Provider.
-//     (internal/hook/noexec_test.go greps the package for os/exec, sh -c,
-//     bash -c and syscall.Exec and fails the build.)
+//     Enforced on the IMPORT GRAPH first: internal/platform/deps_test.go
+//     resolves `go list -deps ./internal/hook` for linux and windows and fails
+//     if os/exec or internal/jobs is reachable. The graph is what matters,
+//     because internal/jobs exports RunSandboxed and nothing in hook's import
+//     set prevents importing it -- a grep walks straight past that, and past
+//     os.StartProcess. internal/hook/noexec_test.go is the second line of
+//     defence: an ImportsOnly parse banning os/exec, syscall and x/sys/unix,
+//     plus a token scan for the os.* spawns and the shell spellings.
 //  2. A hook MUST be idempotent. Every phase can re-run after a crash.
 //  3. A hook MUST NOT start, stop or signal the game.
 //  4. A hook writes ONLY through Ctx.Fs, jailed to the instance root.
@@ -4412,7 +4423,7 @@ Phase 9  RESOLVE        activation ids from disk; diff against the lock.
 Phase 10 SECOND CYCLE   only if the lists actually changed: stop -> write ini -> start.
 ```
 
-**Phase 5's runscript** (`/var/lib/gvm/instances/pz-main/steam/update.txt`, 0600, owned by the instance user):
+**Phase 5's runscript** (`/var/lib/gvm/instances/pz-main/steam/update.txt`, 0600 **root:root**, handed to the transient unit as a `LoadCredential=`):
 
 ```
 @ShutdownOnFailedCommand 1
@@ -4424,6 +4435,8 @@ quit
 ```
 
 `force_install_dir` before `login`, per Valve. **No `validate`.** Note also that `-validate` (with a dash) is silently ignored, which is why the runscript is generated from a struct and never hand-edited. `@ShutdownOnFailedCommand 1` matters because without it a failed `app_update` still falls through to `+quit` and steamcmd can exit 0.
+
+**The script is delivered as a credential, not as a path the unit opens.** It lives under `/var/lib/gvm/instances/<name>/steam`, and every ancestor of that is root-owned `0750` — §5.1 for the two host levels, `hostops` `DirState`/`DirSteamScripts` for the two per-instance ones — which §5.3 requires on purpose and `doctor`'s single-group assertion leaves no way around. So the instance account cannot *traverse* to the file whatever the file's own owner and mode are, and `ReadWritePaths=` bind-mounts without altering DAC: chowning the script to the instance user looks like it fixes the problem and does not. Instead the job layer passes `--property=LoadCredential=runscript:<host path>` and rewrites the argv to `+runscript /run/credentials/<unit>.service/runscript`; systemd reads the file as root and exposes it `0400` owned by the unit's uid. The failure this avoids is the worst available: a steamcmd that cannot open its runscript finds no commands, **exits 0**, and the run is reported as a successful update.
 
 **Failure classification is a ladder, not an exit code** — steamcmd self-updates and re-execs and can exit 0 after a failed update:
 
@@ -4457,6 +4470,28 @@ quit
 //   4. BytesStaged     == BytesToStage
 //   5. the manifest-declared sentinel exists and, if declared executable, is +x
 //      (PZ: start-server.sh -- exactly install.sh line 110's check)
+//   6. the installed buildid IS the build this run was authorized to fetch,
+//      and Steam's own TargetBuildID marker agrees with it. Without this,
+//      "we downloaded everything" and "we downloaded nothing" are the same
+//      answer: checks 1-5 all pass on an untouched tree. The comparison is
+//      monotonic, because Steam can publish during a multi-hour download and
+//      failing that run would recommend the one command that overwrites
+//      customised files.
+//
+// 2 and 3+4 are gated on verify.appmanifest and verify.byte_parity, which the
+// schema makes mandatory -- so an UNDECLARED one is a failure with its own
+// error, not a skipped check. A pin from an older gvm loads without being
+// re-validated (spec.LoadPinned runs no checker), and with both flags off the
+// surviving evidence is "the directory is not empty", which is the standard
+// this whole decision exists to reject. The driver also refuses such a pin at
+// its door, before 65 GB is downloaded.
+//
+// Every string this reads comes out of a file the INSTANCE ACCOUNT owns
+// (§18.1), so buildid and name are validated at the parse boundary rather
+// than interpolated into the verdict line: a buildid is a short run of digits
+// or it is refused with a fixed sentence, and a name is stripped of control
+// characters. The KeyValues lexer materialises Valve's \n and \r escapes into
+// real bytes inside a 1 MB token, so an unvalidated copy is a forged verdict.
 ```
 
 `gvm update <n> --repair` is the only path that emits `validate`, requires an explicit flag, takes a `preserve` archive first (because it will overwrite customised files), and prints which files it is about to risk.

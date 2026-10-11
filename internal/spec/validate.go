@@ -1135,6 +1135,21 @@ func ConfigFormats() map[string]Support {
 	return out
 }
 
+// ProviderKinds reports every `spec.provider.kind` a manifest may name, and
+// how far this build implements each.
+//
+// internal/provider's registry refuses to register a driver under a name this
+// map does not call SupportImplemented, which is what keeps a driver that no
+// manifest can ask for from looking like a working feature, and keeps a kind
+// the schema calls planned from quietly shipping.
+func ProviderKinds() map[string]Support {
+	out := make(map[string]Support, len(providerKinds.entries))
+	for k, v := range providerKinds.entries {
+		out[k] = v
+	}
+	return out
+}
+
 // HookNames reports every hook a manifest may name, and how far this build
 // implements each.
 //

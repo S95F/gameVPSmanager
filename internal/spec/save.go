@@ -220,6 +220,20 @@ func syncDir(dir string) error {
 	return nil
 }
 
+// ReplaceFile and SyncDir are writeAtomic's last two steps, exported for the
+// one writer that cannot hold its bytes in memory: the blob store streams a
+// multi-gigabyte download through a hasher into a staging file, so it cannot
+// call WriteFileAtomic and must still end with the same publish.
+//
+// They are exported rather than reimplemented for the reason the comment on
+// WriteFileAtomicNoBackup gives: the Windows retry window and the "an fsync
+// failure after a successful rename is not the caller's problem" judgement are
+// decisions, and a second copy of them would drift from this one silently.
+func ReplaceFile(staged, path string) error { return renameWithRetry(staged, path) }
+
+// SyncDir makes a rename in dir durable. See ReplaceFile.
+func SyncDir(dir string) error { return syncDir(dir) }
+
 // MarshalYAML encodes v the way gvm writes YAML: two-space indent, matching the
 // shipped manifests, so a gvm-written file and a hand-written one do not differ
 // cosmetically in every diff.

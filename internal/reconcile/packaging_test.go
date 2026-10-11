@@ -4,6 +4,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -413,4 +414,120 @@ func TestEveryPathTheProbeTestsIsCreatedByAnEarlierStep(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestEveryPathTheProbeTestsIsReachableByTheInstanceAccount.
+//
+// Existence is not enough, and the mode of the path itself is not enough: the
+// probe runs as the INSTANCE account (D-15), so every ancestor of every probed
+// path has to be traversable by that account. ARCHITECTURE:110 has doctor
+// assert that getgrouplist(gvm-<name>) is exactly {gvm-<name>}, so no group
+// grants it, and ReadWritePaths= bind-mounts without altering DAC. The
+// other-execute bit, or the instance's own ownership, is the only thing left.
+//
+// What this catches: BuildSandbox puts spec.Paths.Work -- the per-instance
+// SteamCMD HOME at /var/lib/gvm/cache/steam/homes/<name> (D-30) -- into the
+// probe set, and the three levels above it were 0750 root:root, so the probe
+// failed for every instance on a correctly packaged host with "check the
+// directory's owner and mode". The same chain is why the SteamCMD runscript
+// could not be delivered through the state tree at all (jobs.SteamScriptCredential).
+func TestEveryPathTheProbeTestsIsReachableByTheInstanceAccount(t *testing.T) {
+	modes := tmpfilesModes(t)
+	owners := tmpfilesOwners(t)
+
+	for _, name := range []string{"valheim-1", "gmod-1", "pz-main"} {
+		t.Run(name, func(t *testing.T) {
+			in, _ := loadInstance(t, name)
+			sb, err := BuildSandbox(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Directories gvm itself hands to the instance account; traversable
+			// because the owner's execute bit is set in every declared mode.
+			instanceOwned := map[string]bool{}
+			for _, k := range instanceOwnedDirs {
+				if p, ok := hostops.DirPathFor(k, in); ok {
+					instanceOwned[p] = true
+				}
+			}
+
+			for _, probed := range sb.Paths {
+				for p := path.Dir(probed); p != "/" && p != "." && p != ""; p = path.Dir(p) {
+					if instanceOwned[p] {
+						continue
+					}
+					mode, declared := modes[p]
+					if !declared {
+						// Not the package's: /var, /var/lib, /home and /opt are
+						// the distribution's, at 0755.
+						continue
+					}
+					if owners[p] == in.Spec.User {
+						continue
+					}
+					if !otherTraversable(t, mode) {
+						t.Errorf("the write-probe tests %s as %s, and the ancestor %s is %s %s "+
+							"-- not traversable by that account, and no group grants it "+
+							"(ARCHITECTURE:110). The probe fails for every instance on a "+
+							"correctly packaged host.",
+							probed, in.Spec.User, p, mode, owners[p])
+					}
+				}
+			}
+		})
+	}
+}
+
+// And the one directory whose UNtraversability is the point stays that way.
+//
+// ARCHITECTURE 5.3: /var/lib/gvm/instances/<name> is root-owned 0750 so a
+// compromised mod cannot rewrite content.lock.json or lease.json. Widening the
+// cache chain above must not widen this one by accident.
+func TestTheInstanceStateTreeStaysUntraversable(t *testing.T) {
+	modes := tmpfilesModes(t)
+	owners := tmpfilesOwners(t)
+	const dir = "/var/lib/gvm/instances"
+	mode, ok := modes[dir]
+	if !ok {
+		t.Fatalf("tmpfiles.d does not create %s", dir)
+	}
+	if otherTraversable(t, mode) {
+		t.Errorf("%s is %s: any account on the box could traverse to an instance's state "+
+			"directory, and ARCHITECTURE 5.3 keeps it root-owned 0750 so a compromised mod "+
+			"cannot rewrite the content lock", dir, mode)
+	}
+	if owners[dir] != "root" {
+		t.Errorf("%s is owned by %q, want root", dir, owners[dir])
+	}
+	// The same for the two directories whose whole job is to be unreadable.
+	for _, d := range []string{"/etc/gvm/secrets", "/var/backups/gvm"} {
+		if m := modes[d]; m != "0700" {
+			t.Errorf("%s is %s, want 0700", d, m)
+		}
+	}
+}
+
+func otherTraversable(t *testing.T, mode string) bool {
+	t.Helper()
+	v, err := strconv.ParseUint(mode, 8, 32)
+	if err != nil {
+		t.Fatalf("tmpfiles mode %q is not octal: %v", mode, err)
+	}
+	return v&0o001 != 0
+}
+
+func tmpfilesOwners(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, line := range strings.Split(readPackaged(t, "tmpfiles/gvm.conf"), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 || f[0] != "d" {
+			continue
+		}
+		out[f[1]] = f[3]
+	}
+	if len(out) < 15 {
+		t.Fatalf("parsed only %d tmpfiles owners; the parser or the file is broken", len(out))
+	}
+	return out
 }

@@ -1,0 +1,10 @@
+Redirecting stderr to '/var/lib/gvm/cache/steam/homes/sdtd-1/.local/share/Steam/logs/stderr.txt'
+Steam Console Client (c) Valve Corporation - version 1757457223
+-- type 'quit' to exit --
+Loading Steam API...OK
+Connecting anonymously to Steam Public...OK
+Waiting for client config...OK
+Waiting for user info...OK
+ Update state (0x11) preallocating, progress: 0.00 (0 / 18374182912)
+ Update state (0x61) downloading, progress: 3.11 (571441152 / 18374182912)
+Error! App '294420' state is 0x202 after update job.

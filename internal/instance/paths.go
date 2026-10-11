@@ -59,6 +59,17 @@ const (
 	// SteamCMDLock is the host-wide flock, kept as belt-and-braces (D-30).
 	SteamCMDLock = StateRoot + "/locks/steamcmd.lock"
 
+	// BlobsDir is the content-addressed store: every third-party byte gvm
+	// downloads itself lands here under its own digest before anything links
+	// it into an instance tree. 0755 gvm-fetch:gvm-content, so the uid that
+	// parses hostile archives owns the cache and nothing else (D-16).
+	BlobsDir = StateRoot + "/blobs"
+	// BlobsTmpDir is where a download stages while it is being hashed. It is
+	// inside BlobsDir rather than beside it so the rename that publishes a
+	// verified blob is a same-filesystem rename, which is the only kind that
+	// is atomic.
+	BlobsTmpDir = BlobsDir + "/tmp"
+
 	// SpoolDir holds the audit and job records Postgres has not accepted yet
 	// (section 14.6). It is host-wide rather than per-instance because the
 	// records in it are not all about instances -- a user creation and a
