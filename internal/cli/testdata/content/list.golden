@@ -1,0 +1,15 @@
+
+  pz-main   block workshop (steam_workshop), server_boot acquisition
+  declared 4, locked 4 (5 activation id(s))
+
+  #  WorkshopItems  Mods                                 state           note
+  0  3171167894     ThatDamnLibrary                      present         that DAMN Library (required by all KI5 vehicle mods)
+  1  2866258937     MiniHealthPanel, MiniHealthPanelB41  present, check  Mini Health Panel [B41/B42.20]
+  2  3536052310     Hilux88                              present         requires 3171167894; KI5 Hilux
+  3  3778511497     —                                    absent          Skully's Zombie Collision
+
+  ! content root /srv/gvm/pz-main/install/steamapps/workshop/content/108600 is not there yet
+
+  ! 1 activation id(s) live in Mods that no declared item accounts for:
+      StaleLeftover
+    gvm content why pz-main <id>   explains one

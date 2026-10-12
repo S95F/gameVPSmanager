@@ -259,6 +259,7 @@ var routes = map[string]Route{
 	"ports":    RouteHostOp,
 	"destroy":  RouteHostOp,
 	"content":  RouteHostOp,
+	"mods":     RouteHostOp,
 	"backup":   RouteHostOp,
 	"restore":  RouteHostOp,
 	"update":   RouteHostOp,

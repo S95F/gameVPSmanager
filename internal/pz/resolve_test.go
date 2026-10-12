@@ -266,3 +266,95 @@ func TestResolveToleratesWalkErrors(t *testing.T) {
 }
 
 var _ fs.FS = fstest.MapFS(nil)
+
+// TestFindModInfosSkipsAnythingThatIsNotARegularFile.
+//
+// The declared read roots are inside the instance's own install and data trees,
+// which ARCHITECTURE 18.1's first row hands outright to a compromised workshop
+// item -- so every byte under them is third-party input, and `mod.info` is a
+// name an item chooses.
+//
+// A FIFO named mod.info blocks the open forever, which holds the job lease with
+// the server stopped: a hang, not a failure, and the one failure mode a
+// shutdown ladder cannot recover from. A symlink named mod.info is a read of a
+// file the item did not ship. Three other readers in this tree already check
+// the dirent type for exactly these reasons (steamcmd/buildid.go walks a
+// Steam-written tree with !d.Type().IsRegular() so "a symlink named
+// appinfo.vdf must not be followed"; content/digest.go records a non-regular
+// entry instead of reading it); this was the only untrusted-bytes reader with
+// neither guard.
+func TestFindModInfosSkipsAnythingThatIsNotARegularFile(t *testing.T) {
+	for name, mode := range map[string]fs.FileMode{
+		"a named pipe blocks the open forever":         fs.ModeNamedPipe,
+		"a symlink reads a file the item did not ship": fs.ModeSymlink,
+		"a device node": fs.ModeDevice | fs.ModeCharDevice,
+		"a socket":      fs.ModeSocket,
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := fstest.MapFS{
+				// The bait, as the item would plant it.
+				"777/mods/Evil/mod.info": &fstest.MapFile{
+					Data: []byte(modInfo("EvilMod", "Evil", "versionMin=42")),
+					Mode: mode,
+				},
+				// A real one beside it, so the skip is a skip and not an abort.
+				"777/mods/Good/mod.info": &fstest.MapFile{
+					Data: []byte(modInfo("GoodMod", "Good", "versionMin=42")),
+				},
+			}
+			res := Resolve([]WorkshopRoot{root("r", files)}, []string{"777"})
+			if len(res.Items) != 1 {
+				t.Fatalf("items = %d", len(res.Items))
+			}
+			if got := res.Items[0].ModIDs; len(got) != 1 || got[0] != "GoodMod" {
+				t.Fatalf("mod ids = %v, want only GoodMod: a %v entry named mod.info was read",
+					got, mode)
+			}
+		})
+	}
+}
+
+// TestFindModInfosBoundsWhatItReads.
+//
+// fs.ReadFile allocates whatever it is handed, and the bytes are then
+// re-materialised twice more as strings inside the parse -- so one oversized
+// file named mod.info is several times its own size in a root process. A real
+// mod.info is a few hundred bytes; the bound is three orders of magnitude above
+// that, which is the same reasoning steamcmd/acf.go's maxKVBytes records ("a
+// parser that will allocate whatever it is handed is a denial of service with a
+// friendly name").
+//
+// An item whose only mod.info is skipped lands as StatusEmpty, which the
+// content resolver already renders as `modinfo:no-usable-mod-info` -- so the
+// skip is reported rather than silent.
+func TestFindModInfosBoundsWhatItReads(t *testing.T) {
+	huge := modInfo("HugeMod", "Huge", "versionMin=42") +
+		strings.Repeat("# padding padding padding\n", (maxModInfoBytes/26)+64)
+	if len(huge) <= maxModInfoBytes {
+		t.Fatalf("the fixture is %d bytes and the bound is %d", len(huge), maxModInfoBytes)
+	}
+	files := fstest.MapFS{
+		"888/mods/Huge/mod.info": &fstest.MapFile{Data: []byte(huge)},
+		"888/mods/Good/mod.info": &fstest.MapFile{
+			Data: []byte(modInfo("GoodMod", "Good", "versionMin=42")),
+		},
+	}
+	res := Resolve([]WorkshopRoot{root("r", files)}, []string{"888"})
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d", len(res.Items))
+	}
+	if got := res.Items[0].ModIDs; len(got) != 1 || got[0] != "GoodMod" {
+		t.Fatalf("mod ids = %v, want only GoodMod", got)
+	}
+
+	// And a file at exactly the bound is still read: the check must be a
+	// bound, not an off-by-one that drops legitimate items.
+	ok := modInfo("BigMod", "Big", "versionMin=42")
+	ok += strings.Repeat("#", maxModInfoBytes-len(ok))
+	res = Resolve([]WorkshopRoot{root("r", fstest.MapFS{
+		"999/mods/Big/mod.info": &fstest.MapFile{Data: []byte(ok)},
+	})}, []string{"999"})
+	if got := res.ModIDs; len(got) != 1 || got[0] != "BigMod" {
+		t.Fatalf("mod ids = %v; a file at exactly the bound was dropped", got)
+	}
+}

@@ -1,0 +1,27 @@
+
+  declared  /etc/gvm/instances/pz-main.yaml       4 items
+  locked    /etc/gvm/instances/pz-main.lock.json  4 items, 5 activation ids
+  observed  live config + 1 workshop root         3 items, 4 activation ids
+
+  DECLARED vs LOCKED
+    - 3435796523  KI5 Chevrolet   locked, no longer declared
+    ~ 3536052310  KI5 Hilux   ordinal 3 -> 2
+                  requires 3171167894, satisfied
+    + 3778511497  Skully's Zombie Collision   declared, never acquired
+
+  LOCKED vs OBSERVED
+    ! 3435796523  Mods does not enable Chevy88
+    ! 3536052310  Mods does not enable Hilux88
+    ! 2866258937  Mini Health Panel [B41/B42.20]   ambiguous: MiniHealthPanel, MiniHealthPanelB41
+                  evidence: modinfo:no-build-marker, tags:Build 41, tags:Build 42
+                  all of them enabled, unchanged from the bash suite
+    ! 3778511497  Skully's Zombie Collision   not on disk; it stays listed in WorkshopItems so the server retries it
+    ! 1 id(s) live in Mods that no item on this box accounts for: StaleLeftover
+                  gvm content why pz-main <id>   explains one
+
+  ! content root /srv/gvm/pz-main/install/steamapps/workshop/content/108600 is not there yet
+
+  impact: download_cycle   1 item needs an acquisition boot (budget 60m)
+  apply:  gvm content sync pz-main
+
+  note: no Workshop metadata was fetched for 4 item(s): this source is offline, so every item was scored from its downloaded files alone

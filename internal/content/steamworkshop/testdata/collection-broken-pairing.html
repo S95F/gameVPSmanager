@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head><title>Steam Workshop::Hardcore Apocalypse</title></head>
+<body>
+<div class="collectionChildren">
+
+	<div class="collectionItem" id="sharedfile_3171167894">
+		<div class="workshopItemTitle">that DAMN Library</div>
+	</div>
+
+	<!--
+	  The markup change this fixture exists for: Steam renamed the title
+	  element, so this entry's id is in the page and is never paired with a
+	  title. The pairer's state machine then carries the id forward until the
+	  NEXT collectionItem line overwrites it, so this item does not merely get
+	  a bad title: it disappears from the parsed list entirely, and the parsed
+	  list still looks like a perfectly ordinary mod list.
+
+	  Exactly the failure rebuild.sh's second, independent id count was added
+	  to catch. Three ids in the raw page, two pairs out of the walk, so
+	  nothing is rewritten.
+	-->
+	<div class="collectionItem" id="sharedfile_3508537032">
+		<div class="workshopItemName_v2">Neat UI Framework</div>
+	</div>
+
+	<div class="collectionItem" id="sharedfile_3435796523">
+		<div class="workshopItemTitle">KI5&#39;s Toyota Hilux 1988</div>
+	</div>
+
+</div>
+</body>
+</html>

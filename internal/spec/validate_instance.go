@@ -17,6 +17,7 @@
 package spec
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -203,8 +204,38 @@ func ValidateInstance(in *Instance, m *Manifest, vals ValidatorInput, ix *NodeIn
 }
 
 // checkInstanceAgainstManifest is the half that needs both documents: the vars
-// the manifest declares, the ports it needs, and D-20's narrowing rule.
+// the manifest declares, the ports it needs, D-20's narrowing rule, and that
+// every content key names a block the game actually has.
 func (c *checker) checkInstanceAgainstManifest(in *Instance) {
+	// The content map's KEY is how an instance's list is bound to a manifest
+	// block, and it is the one spelling in the system matched by name and
+	// otherwise unchecked. An unmatched key is silent in both directions: the
+	// list is never read, AND the activation_policy written on it is never
+	// honoured -- so an instance that says `preserve` is resolved as `derive`,
+	// the lock records verbatim_activation:false, and from that point nothing
+	// downstream can tell it from an instance that really does derive.
+	//
+	// The same class of name is already refused twice: a template reference to
+	// `.Content.<name>` (checkTemplates, via this same helper) and an
+	// instance/manifest SOURCE mismatch in internal/content's schema compiler.
+	// Both are blind to this case, which is why it gets its own check rather
+	// than a shared one.
+	for _, name := range sortedKeys(in.Spec.Content) {
+		if contentBlockExists(c.m, name) {
+			continue
+		}
+		d := c.errf("spec.content."+name,
+			"game %q declares no content block named %q, so this list is never read and its "+
+				"activation_policy is never honoured", c.m.Metadata.ID, name)
+		fix := "rename the key to the manifest's block name -- do not delete it, or the " +
+			"declared list goes with it"
+		if n := nearestName(name, contentBlockNames(c.m)); n != "" {
+			fix = fmt.Sprintf("did you mean %q? Rename the key -- do not delete it, or the "+
+				"declared list goes with it", n)
+		}
+		c.add(d.WithFix("%s", fix))
+	}
+
 	for _, name := range sortedKeys(in.Spec.Vars) {
 		v, ok := c.m.Spec.Vars[name]
 		if !ok {

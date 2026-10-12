@@ -363,6 +363,23 @@ func (c *checker) checkRegistries() {
 			c.add(c.errf(p+".acquisition.mechanism", "%q is not an acquisition mechanism (want %s|%s|%s)",
 				mech, AcquireServerBoot, AcquireSteamCMDItem, AcquireHTTP))
 		}
+		if cs.Acquisition.Mechanism == AcquireServerBoot && !cs.Acquisition.KeepMissing {
+			// Self-defeating on this mechanism, and the zero value, which is
+			// the combination worth a load-time refusal. On server_boot the
+			// acquisition key is the only way bytes ever arrive and the SERVER
+			// is the only thing that can fetch them, so dropping an id whose
+			// bytes are not on disk tells the server to download nothing: a
+			// fresh instance renders an empty line, nothing materialises, and
+			// the next sync renders the same empty line forever. Caught here
+			// rather than mid-sync because `keep_missing:` is an
+			// operator-authored key and false is what omitting it means.
+			c.add(c.errf(p+".acquisition.keep_missing",
+				"keep_missing is false on a %s acquisition, which can never download anything",
+				AcquireServerBoot).
+				WithFix("on %s the game downloads what %q lists, so an id dropped for not being "+
+					"on disk is never requested again; set keep_missing: true",
+					AcquireServerBoot, cs.Acquisition.WriteKey))
+		}
 		if r := cs.Activation.Resolver; r != "" {
 			c.closed(resolverNames, p+".activation.resolver", r)
 		}
@@ -1150,6 +1167,38 @@ func ProviderKinds() map[string]Support {
 	return out
 }
 
+// ContentSources reports every `spec.content[].source` a manifest may name,
+// and how far this build implements each.
+//
+// internal/content/fetch keys its per-source egress allowlist off this map, and
+// its own test asserts the two name the same set in both directions. A source a
+// manifest may declare with no allowlist behind it would be a source whose
+// fetcher either refuses every host or -- the failure that matters -- gets a
+// hand-rolled client with no allowlist at all.
+func ContentSources() map[string]Support {
+	out := make(map[string]Support, len(contentSources.entries))
+	for k, v := range contentSources.entries {
+		out[k] = v
+	}
+	return out
+}
+
+// ResolverNames reports every `activation.resolver` a manifest may name, and
+// how far this build implements each.
+//
+// This is the LOAD-time registry; internal/content.GetResolver is the runtime
+// one, and content's own test asserts the two name the same set. Without that
+// pairing a manifest could validate against a resolver nothing implements and
+// then fail in the middle of a content sync -- with the server already stopped,
+// which is the worst moment to discover a typo.
+func ResolverNames() map[string]Support {
+	out := make(map[string]Support, len(resolverNames.entries))
+	for k, v := range resolverNames.entries {
+		out[k] = v
+	}
+	return out
+}
+
 // HookNames reports every hook a manifest may name, and how far this build
 // implements each.
 //
@@ -1169,6 +1218,15 @@ func portNames(m *Manifest) []string {
 	out := make([]string, 0, len(m.Spec.Ports))
 	for _, p := range m.Spec.Ports {
 		out = append(out, p.Name)
+	}
+	return out
+}
+
+// contentBlockNames are the block names a game declares, for a "did you mean".
+func contentBlockNames(m *Manifest) []string {
+	out := make([]string, 0, len(m.Spec.Content))
+	for _, cs := range m.Spec.Content {
+		out = append(out, cs.Name)
 	}
 	return out
 }

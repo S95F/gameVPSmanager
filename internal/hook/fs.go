@@ -270,8 +270,22 @@ func (f *osFS) Sub(r Root, rel string) (fs.FS, error) {
 		return nil, err
 	}
 	// os.DirFS and not fs.Sub of a parent: this is handed to internal/pz's
-	// resolver, which walks it, and a DirFS rooted at the subtree cannot be
-	// walked upwards out of it.
+	// resolver, which walks it, and ".." cannot walk a DirFS out of its own
+	// root.
+	//
+	// A SYMLINK inside the subtree still can, and that is accepted rather than
+	// refused. Two reasons. The subtree was already symlink-evaluated and
+	// contained by instance.Jail in resolve() above, so the root itself is not
+	// an escape. And an operator who moved workshop content to a second disk
+	// and left `content/108600/<id> -> /mnt/big/<id>` is ordinary on a VPS with
+	// a small root disk; refusing that link would report the item missing and
+	// leave its ids out of the activation line -- a mod the operator declared
+	// that silently never loads, which is the one failure section 12.5 exists
+	// to prevent, this time caused by gvm's own strictness. The write jail can
+	// afford to be strict because a refused write fails loudly; a refused READ
+	// degrades into a shorter Mods=. What the reader does enforce is the dirent
+	// TYPE and a size bound on each mod.info (internal/pz), which closes the
+	// hang and the read-through without that regression.
 	return os.DirFS(p), nil
 }
 

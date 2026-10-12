@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "instance": "pz-main",
+  "game": "projectzomboid",
+  "manifest_sha256": "1b40c9de5f4a2c8e0b6d7f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e",
+  "generated_at": "2026-09-04T18:22:11Z",
+  "gvm_version": "0.1.0",
+  "sources": {
+    "workshop": {
+      "kind": "steam_workshop",
+      "order_significant": true,
+      "verbatim_activation": false,
+      "acquisition_line": "3171167894;3508537032;2866258937",
+      "activation_line": "ThatDamnLibrary;NeatUIFramework;MiniHealthPanel;MiniHealthPanelB41",
+      "entries": [
+        {
+          "ordinal": 0,
+          "source": "steam_workshop",
+          "acquire_id": "3171167894",
+          "note": "that DAMN Library (required by all KI5 vehicle mods)",
+          "materialized": true,
+          "activation_ids": [
+            "ThatDamnLibrary"
+          ],
+          "resolution": "server_boot",
+          "artifact": {
+            "kind": "tree",
+            "path": "/home/pzserver/Zomboid/steamapps/workshop/content/108600/3171167894",
+            "digest": "tree-sha256:4b19c00000000000000000000000000000000000000000000000000000000000",
+            "size": 48211934,
+            "members": 412
+          },
+          "upstream": {
+            "api": "steam_remote_storage",
+            "time_updated": "2026-08-21T04:11:09Z",
+            "title": "that DAMN Library",
+            "tags": [
+              "Build 41",
+              "Build 42"
+            ],
+            "consumer_app_id": 108600
+          },
+          "evidence": [
+            "modinfo:versionMin>=42"
+          ]
+        },
+        {
+          "ordinal": 1,
+          "source": "steam_workshop",
+          "acquire_id": "3508537032",
+          "note": "NeatUI Framework",
+          "materialized": true,
+          "activation_ids": [
+            "NeatUIFramework"
+          ],
+          "resolution": "server_boot",
+          "evidence": [
+            "modinfo:42-dir"
+          ]
+        },
+        {
+          "ordinal": 2,
+          "source": "steam_workshop",
+          "acquire_id": "2866258937",
+          "note": "Mini Health Panel [B41/B42.20]",
+          "materialized": true,
+          "activation_ids": [
+            "MiniHealthPanel",
+            "MiniHealthPanelB41"
+          ],
+          "resolution": "server_boot",
+          "ambiguous": true,
+          "evidence": [
+            "modinfo:no-build-marker"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -551,6 +551,12 @@ func (h *Ctx) openConfig(name string) (gamecfg.Doc, Commit, error) {
 type ContentState struct {
 	blocks  map[string]*spec.ContentValues
 	changed map[string]bool
+	// policy is each block's activation_policy, which is an INSTANCE fact the
+	// job layer reads out of the instance YAML. The zero value is `derive`,
+	// because that is what every freshly created instance does; `preserve` is
+	// the adoption switch and the one case where a resolver must not rewrite
+	// the activation list at all.
+	policy map[string]string
 }
 
 // NewContentState binds one instance's content blocks. The values are copied:
@@ -560,6 +566,7 @@ func NewContentState(in map[string]spec.ContentValues) *ContentState {
 	c := &ContentState{
 		blocks:  make(map[string]*spec.ContentValues, len(in)),
 		changed: map[string]bool{},
+		policy:  map[string]string{},
 	}
 	for name, v := range in {
 		cv := spec.ContentValues{
@@ -569,6 +576,48 @@ func NewContentState(in map[string]spec.ContentValues) *ContentState {
 		c.blocks[name] = &cv
 	}
 	return c
+}
+
+// SetActivationPolicy records one block's activation_policy.
+//
+// It is separate from NewContentState because the policy is not a value a hook
+// may invent and not one the two lists imply: `preserve` means the live
+// activation line is the operator's own -- an adopted server's Mods=, or a
+// hand-pruned list -- and must be returned untouched rather than re-derived.
+// A resolver that could not see it would rewrite exactly the list adoption
+// exists to keep.
+//
+// An unknown value is refused rather than defaulted. `derive` is the zero
+// value, so a typo'd "presrve" that fell through would silently hand the list
+// back to the resolver, which is the one direction that loses work.
+func (c *ContentState) SetActivationPolicy(block, policy string) error {
+	if c == nil {
+		return fmt.Errorf("%w: no content lock; the activation policy belongs to %s",
+			ErrNoSeam, PhasePostContent)
+	}
+	if c.blocks[block] == nil {
+		return fmt.Errorf("%w: no content block named %q in this instance's lock", ErrHook, block)
+	}
+	switch p := strings.TrimSpace(policy); p {
+	case "", spec.ActivationDerive, spec.ActivationPreserve:
+		if c.policy == nil {
+			c.policy = map[string]string{}
+		}
+		c.policy[block] = p
+		return nil
+	default:
+		return fmt.Errorf("%w: %q is not an activation policy for block %q (want %s|%s)",
+			ErrHook, policy, block, spec.ActivationPreserve, spec.ActivationDerive)
+	}
+}
+
+// ActivationPolicy is one block's policy. "" means derive, which is what every
+// instance that was created rather than adopted does.
+func (c *ContentState) ActivationPolicy(block string) string {
+	if c == nil {
+		return ""
+	}
+	return c.policy[block]
 }
 
 // Blocks lists the content block names, sorted.
@@ -582,6 +631,23 @@ func (c *ContentState) Blocks() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Declares reports whether this instance has a content block of that name at
+// all.
+//
+// It is the discriminator a resolver needs and the two id lists cannot give it:
+// a block declared with no items and a block that was never declared both
+// answer nil from Acquire, and the first is an operator who removed every mod
+// while the second is a list nobody read. Writing the activation key is correct
+// for one and catastrophic for the other.
+//
+// Deliberately not keyed on len(Acquire()) == 0 for exactly that reason.
+func (c *ContentState) Declares(block string) bool {
+	if c == nil {
+		return false
+	}
+	return c.blocks[block] != nil
 }
 
 // Acquire is one block's acquisition ids, in order.

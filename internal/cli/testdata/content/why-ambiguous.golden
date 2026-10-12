@@ -1,0 +1,7 @@
+
+  MiniHealthPanelB41
+    from steam_workshop item 2866258937  "Mini Health Panel [B41/B42.20]"
+    ordinal 1, enabled because the item carries no build marker, so every id inside it was kept (status: check)
+    sibling in the same item: MiniHealthPanel
+    evidence: modinfo:no-build-marker  tags:Build 41  tags:Build 42
+    live in Mods: yes

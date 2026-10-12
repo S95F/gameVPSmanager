@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -532,5 +533,215 @@ func TestPZResolveModIDsIsIdempotent(t *testing.T) {
 	}
 	if e.exists("data/Server/servertest.ini.bak") {
 		t.Error("an identical ini was rewritten")
+	}
+}
+
+// TestPZResolveModIDsActsOnTheDeclaredTargetBuild is the half of
+// resolver_vars.target_build that used to be recorded and ignored.
+//
+// The item ships both variants in the layout that makes the answer decisive: a
+// 41/ directory and a 42/ directory, each with its own mod.info and its own
+// internal id. A B41 instance must enable the B41 id and drop the B42 one, and
+// a B42 instance must do the opposite -- from the SAME files, with only the
+// declared target changing. Scoring both against B42 on a B41 server enables a
+// mod the server cannot load, which fails silently.
+func TestPZResolveModIDsActsOnTheDeclaredTargetBuild(t *testing.T) {
+	for _, tc := range []struct {
+		build   string
+		wantOn  string
+		wantOff string
+	}{
+		{build: "42", wantOn: "Foo42", wantOff: "FooB41"},
+		{build: "41", wantOn: "FooB41", wantOff: "Foo42"},
+	} {
+		t.Run("build "+tc.build, func(t *testing.T) {
+			e := pzEnv(t, spec.VarValues{"pz_build": tc.build})
+			e.ctx.Content = NewContentState(map[string]spec.ContentValues{
+				"workshop": {Acquire: []string{"555"}},
+			})
+			e.write("data/Server/servertest.ini", "Mods=\nWorkshopItems=\n")
+			const root = "data/steamapps/workshop/content/108600/555/mods/"
+			e.write(root+"41/mod.info", "name=Foo\nid=FooB41\n")
+			e.write(root+"42/mod.info", "name=Foo\nid=Foo42\n")
+
+			if err := e.run("pz.resolve_mod_ids"); err != nil {
+				t.Fatal(err)
+			}
+			if got := e.ctx.Content.Activation("workshop"); strings.Join(got, ";") != tc.wantOn {
+				t.Fatalf("activation = %v, want %s for a Build %s server", got, tc.wantOn,
+					tc.build)
+			}
+			if !strings.Contains(e.read("data/Server/servertest.ini"), "Mods="+tc.wantOn+"\n") {
+				t.Errorf("Mods= is not the Build %s variant:\n%s", tc.build,
+					e.read("data/Server/servertest.ini"))
+			}
+			// The loser is REPORTED, not silently absent: a surprising
+			// exclusion months later is otherwise unexplainable.
+			if !strings.Contains(strings.Join(e.notes(), "\n"), tc.wantOff) {
+				t.Errorf("the dropped variant was not reported: %v", e.notes())
+			}
+			// And the note says the declaration was acted on, because the
+			// previous build recorded it and said so.
+			if !strings.Contains(strings.Join(e.notes(), "\n"), "that is the build this resolve") {
+				t.Errorf("notes do not say the target was acted on: %v", e.notes())
+			}
+		})
+	}
+}
+
+// TestPZResolveModIDsRefusesAnUnaccountedList is section 12.2's gate reaching
+// the one hook that writes both keys.
+//
+// An id declared twice is not cosmetic: two entries for one id make the derived
+// activation list depend on which one is read. It is UNACCOUNTED, not
+// ambiguous, and the two get different answers -- an ambiguous item is enabled
+// with a warning, an unaccounted one stops both writes, because a list that
+// lost track of its own input cannot say what either key should hold.
+func TestPZResolveModIDsRefusesAnUnaccountedList(t *testing.T) {
+	cases := []struct {
+		name    string
+		acquire []string
+		want    string
+	}{
+		{name: "declared twice", acquire: []string{"111", "111"}, want: "declared twice"},
+		{name: "no id at all", acquire: []string{"111", "  "}, want: "has no id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := pzEnv(t, nil)
+			e.ctx.Content = NewContentState(map[string]spec.ContentValues{
+				"workshop": {Acquire: tc.acquire, Activate: []string{"AMod"}},
+			})
+			e.write("data/Server/servertest.ini", "Mods=AMod\nWorkshopItems=111\n")
+			e.write("data/steamapps/workshop/content/108600/111/mods/A/mod.info",
+				"name=A\nid=AMod\nversionMin=42\n")
+
+			err := e.run("pz.resolve_mod_ids")
+			if err == nil {
+				t.Fatal("an unaccounted declared list was written anyway")
+			}
+			if !errors.Is(err, ErrHook) {
+				t.Errorf("error does not wrap ErrHook: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not say what is wrong: %v", err)
+			}
+			// Nothing was written, including the acquisition half: this is the
+			// one refusal that is not the "nothing resolved" guard.
+			if e.exists("data/Server/servertest.ini.bak") {
+				t.Error("the ini was rewritten off an unaccounted list")
+			}
+		})
+	}
+}
+
+// TestPZResolveModIDsPreservesAVerbatimActivationLine is the adoption switch,
+// reaching the resolver.
+//
+// activation_policy: preserve means the live Mods= is the OPERATOR's -- an
+// adopted server's list, or one they hand-pruned -- and it is handed back
+// untouched rather than re-derived. The resolver still resolves (the report is
+// how an operator decides to promote), and the acquisition half is still
+// written, because gvm owns which items the server is told to fetch.
+func TestPZResolveModIDsPreservesAVerbatimActivationLine(t *testing.T) {
+	e := pzEnv(t, nil)
+	e.ctx.Content = NewContentState(map[string]spec.ContentValues{
+		"workshop": {Acquire: []string{"111", "222"}, Activate: []string{"HandPruned"}},
+	})
+	if err := e.ctx.Content.SetActivationPolicy("workshop", spec.ActivationPreserve); err != nil {
+		t.Fatal(err)
+	}
+	// The live line lists an id the files do not produce and omits one they do:
+	// exactly what a hand edit looks like, and exactly what a re-derive would
+	// throw away.
+	e.write("data/Server/servertest.ini", "Mods=HandPruned\nWorkshopItems=111\n")
+	e.write("data/steamapps/workshop/content/108600/111/mods/A/mod.info",
+		"name=A\nid=AMod\nversionMin=42\n")
+	e.write("data/steamapps/workshop/content/108600/222/mods/B/mod.info",
+		"name=B\nid=BMod\nversionMin=42\n")
+
+	if err := e.run("pz.resolve_mod_ids"); err != nil {
+		t.Fatal(err)
+	}
+	ini := e.read("data/Server/servertest.ini")
+	if !strings.Contains(ini, "Mods=HandPruned\n") {
+		t.Fatalf("the operator's Mods= line was re-derived:\n%s", ini)
+	}
+	// gvm owns the acquisition key even under preserve, so a newly declared
+	// item still reaches the server.
+	if !strings.Contains(ini, "WorkshopItems=111;222\n") {
+		t.Errorf("the acquisition half was not written:\n%s", ini)
+	}
+	if got := e.ctx.Content.Activation("workshop"); strings.Join(got, ";") != "HandPruned" {
+		t.Errorf("the lock's activation list was replaced with the derived one: %v", got)
+	}
+	if !strings.Contains(strings.Join(e.notes(), "\n"), "not re-derived") {
+		t.Errorf("notes do not say the line was preserved: %v", e.notes())
+	}
+}
+
+// A typo'd policy is refused rather than defaulted. `derive` is the zero value,
+// so "presrve" falling through would hand an adopted server's list back to the
+// resolver -- which is the one direction that loses work.
+func TestContentStateRefusesAnUnknownActivationPolicy(t *testing.T) {
+	c := NewContentState(map[string]spec.ContentValues{"workshop": {}})
+	if err := c.SetActivationPolicy("workshop", "presrve"); err == nil {
+		t.Fatal("a misspelled activation policy was accepted")
+	}
+	if err := c.SetActivationPolicy("nosuchblock", spec.ActivationPreserve); err == nil {
+		t.Fatal("a policy was recorded for a block the instance does not declare")
+	}
+	if got := c.ActivationPolicy("workshop"); got != "" {
+		t.Errorf("policy = %q, want the derive default", got)
+	}
+}
+
+// TestPZResolveModIDsRefusesABlockTheInstanceDoesNotDeclare is the sibling of
+// TestPZResolveModIDsStillEmptiesModsWhenEveryItemWasRemoved, and the two
+// inputs are one map entry apart with opposite required outcomes.
+//
+// Block present with an empty Acquire list is INTENT -- the operator removed
+// every mod -- and Mods= is emptied. Block absent means the list was never
+// read, which produces identical bytes and must refuse. `gvm create` writes no
+// content key at all, so the absent case is the ordinary post-create and adopt
+// state rather than an exotic one.
+//
+// Until this guard existed the only thing standing in the way was WHERE
+// SetActivation happened to sit inside writeModLists: it refuses an undeclared
+// block, and it ran before the first doc.Set. Moving the recording step below
+// the writes -- which a later author has a real reason to do, so the lock stops
+// recording ids that never reached disk if a commit fails -- committed both
+// keys EMPTY with the whole suite still green.
+func TestPZResolveModIDsRefusesABlockTheInstanceDoesNotDeclare(t *testing.T) {
+	e := pzEnv(t, nil)
+	// The adopt window: internal/cli builds this map by iterating the
+	// instance's spec.content, so an instance YAML with no content key yields
+	// exactly this.
+	e.ctx.Content = NewContentState(map[string]spec.ContentValues{})
+	const before = "Mods=Brita;Tsarslib\nWorkshopItems=111;222\n"
+	e.write("data/Server/servertest.ini", before)
+	e.write("data/steamapps/workshop/content/108600/111/mods/A/mod.info",
+		"name=A\nid=AMod\nversionMin=42\n")
+
+	err := e.run("pz.resolve_mod_ids")
+	if err == nil {
+		t.Fatal("the resolver ran against a block the instance does not declare")
+	}
+	if !strings.Contains(err.Error(), "workshop") {
+		t.Errorf("the refusal does not name the block: %v", err)
+	}
+	// The whole file, not a Contains: the dangerous reordering leaves both keys
+	// present and empty, which a substring check for "Mods=" would pass.
+	if got := e.read("data/Server/servertest.ini"); got != before {
+		t.Errorf("the ini was written.\n got %q\nwant %q", got, before)
+	}
+	if e.ctx.Content.Changed() {
+		t.Error("a block that is not declared was recorded as changed")
+	}
+	// The note that used to precede this is the other half of the bug: it
+	// asserted the list was empty when the truth is that it was never read.
+	if joined := strings.Join(e.notes(), "\n"); strings.Contains(joined, "are acquired for") {
+		t.Errorf("the misleading \"no workshop items are acquired\" note still fires: %v",
+			e.notes())
 	}
 }

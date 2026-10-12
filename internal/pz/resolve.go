@@ -1,10 +1,13 @@
 package pz
 
 import (
+	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -14,6 +17,50 @@ import (
 // that; anything deeper is not a mod layout PZ recognises.
 const maxModInfoDepth = 5
 
+// maxModInfoBytes bounds one mod.info read.
+//
+// A real mod.info is a few hundred bytes; this is three orders of magnitude
+// above that, so nothing legitimate is clipped. The bound exists because the
+// declared read roots live inside the instance's own install and data trees,
+// which ARCHITECTURE 18.1's first row hands outright to a compromised workshop
+// item -- so `mod.info` is a name third-party bytes get to choose. The same
+// reasoning as provider/steamcmd's maxKVBytes: a parser that will allocate
+// whatever it is handed is a denial of service with a friendly name. Here the
+// bytes are re-materialised twice more as strings inside the parse, so the real
+// cost is a multiple of the file.
+const maxModInfoBytes = 1 << 20
+
+// Build is the Project Zomboid major build a resolve targets.
+//
+// It exists because an instance may legitimately be a Build 41 server: the
+// scoring below answers "which variant inside this item is for MY build", and
+// that question has no answer until the build is named. Resolve keeps
+// targeting B42, which is what every existing caller means.
+type Build int
+
+const (
+	BuildB41 Build = 41
+	BuildB42 Build = 42
+)
+
+func (b Build) String() string { return strconv.Itoa(int(b)) }
+
+// ParseBuild decodes a `resolver_vars.target_build` value.
+//
+// It returns an error and never a default. A typo'd target that fell through
+// to B42 on a B41 server would enable the B42 variant of every dual-build
+// item, which is the silent-omission failure this file exists to prevent --
+// except pointing the other way.
+func ParseBuild(s string) (Build, error) {
+	switch strings.TrimSpace(s) {
+	case "41":
+		return BuildB41, nil
+	case "42":
+		return BuildB42, nil
+	}
+	return 0, fmt.Errorf("pz: %q is not a target build (want 41 or 42)", s)
+}
+
 // ModInfo is one mod.info file found inside a workshop item.
 type ModInfo struct {
 	// Path is the mod.info location, relative to the workshop item directory.
@@ -22,15 +69,39 @@ type ModInfo struct {
 	ID string
 	// Name is the human-readable mod name, for display only.
 	Name string
-	// B42Score is how strongly this looks like a Build 42 variant.
-	B42Score int
+	// BuildScore is how strongly this looks like a variant for the TARGET
+	// build. Comparable only within one item and one target.
+	BuildScore int
+	// BuildMarker names what produced the score ("42-dir",
+	// "versionMin>=42", "common-layout", "no-build-marker"), so a caller can
+	// record WHY an id was kept or dropped. A surprising inclusion months
+	// later is otherwise unexplainable without re-running the scan.
+	BuildMarker string
 }
 
 var (
-	reModInfoID   = regexp.MustCompile(`(?i)^[ \t]*id[ \t]*=(.*)$`)
-	reModInfoName = regexp.MustCompile(`(?i)^[ \t]*name[ \t]*=(.*)$`)
-	reVersionMin  = regexp.MustCompile(`(?i)^[ \t]*versionMin[ \t]*=[ \t]*4[2-9]`)
+	reModInfoID    = regexp.MustCompile(`(?i)^[ \t]*id[ \t]*=(.*)$`)
+	reModInfoName  = regexp.MustCompile(`(?i)^[ \t]*name[ \t]*=(.*)$`)
+	reVersionMin   = regexp.MustCompile(`(?i)^[ \t]*versionMin[ \t]*=[ \t]*4[2-9]`)
+	reVersionMin41 = regexp.MustCompile(`(?i)^[ \t]*versionMin[ \t]*=[ \t]*41`)
 )
+
+// buildMarkers describes, per target build, what the files have to say for a
+// variant to count as explicitly that build's.
+//
+// B42's entry reproduces the original b42Score exactly: a 42/ directory or
+// versionMin 42+ is explicit, and a 42/ or common/ media directory is the
+// weaker layout hint. B41's entry deliberately does NOT credit common/: a
+// common/ plus 42/ split is the B42 restructure, and giving it a point on a
+// B41 target would promote the B42 variant on a B41 server.
+var buildMarkers = map[Build]struct {
+	dir        string
+	versionMin *regexp.Regexp
+	layout     []string
+}{
+	BuildB42: {dir: "42", versionMin: reVersionMin, layout: []string{"42", "common"}},
+	BuildB41: {dir: "41", versionMin: reVersionMin41, layout: []string{"41"}},
+}
 
 // ParseModInfo extracts the fields gvm needs from a mod.info.
 //
@@ -54,31 +125,44 @@ func ParseModInfo(data []byte) ModInfo {
 	return info
 }
 
-// b42Score rates how strongly a mod.info looks like a Build 42 variant.
+// buildScore rates how strongly a mod.info looks like a variant for target.
 //
 // Many workshop items ship a B41 and a B42 build side by side, each with its
-// own mod.info and its own internal id. Enabling the B41 id on a B42 server
-// is the silent-failure case this scoring exists to avoid.
+// own mod.info and its own internal id. Enabling the wrong one is the
+// silent-failure case this scoring exists to avoid: the item downloads, the
+// mod never loads, and nothing is logged.
 //
-//	3 = explicit: it lives in a 42/ folder, or declares versionMin 42+
-//	1 = B42-style layout: it ships common/ or 42/ media directories
+//	3 = explicit: it lives in a <target>/ folder, or declares versionMin for it
+//	1 = target-style layout: it ships the directories that build splits into
 //	0 = no evidence either way
-func b42Score(fsys fs.FS, infoPath string, data []byte) int {
+//
+// The second return value names the marker that produced the score, so a
+// caller can record it as evidence instead of asserting a conclusion it cannot
+// show its work for.
+func buildScore(fsys fs.FS, infoPath string, data []byte, target Build) (int, string) {
+	m, ok := buildMarkers[target]
+	if !ok {
+		// An unknown target scores everything zero, which makes every item
+		// ambiguous and therefore loudly warned about. Silently falling back
+		// to B42 would be the one outcome nobody could see.
+		return 0, "unknown-target"
+	}
+
 	dir := path.Dir(infoPath)
-	if path.Base(dir) == "42" {
-		return 3
+	if path.Base(dir) == m.dir {
+		return 3, m.dir + "-dir"
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if reVersionMin.MatchString(line) {
-			return 3
+		if m.versionMin.MatchString(line) {
+			return 3, "versionMin>=" + m.dir
 		}
 	}
-	for _, sub := range []string{"42", "common"} {
+	for _, sub := range m.layout {
 		if st, err := fs.Stat(fsys, path.Join(dir, sub)); err == nil && st.IsDir() {
-			return 1
+			return 1, sub + "-layout"
 		}
 	}
-	return 0
+	return 0, "no-build-marker"
 }
 
 // ItemStatus is the resolution outcome for one workshop item.
@@ -109,6 +193,13 @@ type ItemResult struct {
 	Dropped []string
 	// Dir is where the item was found, for diagnostics.
 	Dir string
+	// Score is the winning build score inside this item, and Markers are the
+	// markers the winners carried. Reported rather than inferred from Status:
+	// "ok" covers both an explicit versionMin and a layout hint, and those are
+	// different strengths of evidence when someone asks months later why an id
+	// is in Mods=.
+	Score   int
+	Markers []string
 }
 
 // Resolution is the whole sync-mods report.
@@ -122,6 +213,9 @@ type Resolution struct {
 	WorkshopIDs []string
 	Missing     []string
 	Ambiguous   []string
+	// Target is the build this resolution scored against, recorded so a report
+	// can say which question was asked.
+	Target Build
 }
 
 // ModsLine renders the Mods= value.
@@ -143,13 +237,23 @@ type WorkshopRoot struct {
 }
 
 // Resolve maps workshop ids to internal mod ids by reading the downloaded
-// files.
+// files, targeting Build 42.
 //
 // Roots are searched in order and the first one holding an item wins, because
 // the server writes workshop content to different locations depending on
 // version and both may exist on the same box.
 func Resolve(roots []WorkshopRoot, workshopIDs []string) *Resolution {
-	res := &Resolution{WorkshopIDs: append([]string(nil), workshopIDs...)}
+	return ResolveFor(roots, workshopIDs, BuildB42)
+}
+
+// ResolveFor is Resolve against a named target build.
+//
+// Variant selection stays purely file-based: the highest-scoring variants
+// inside one item win and the losers land in Dropped. target only decides
+// which build's markers count, so a B41 instance asks the same question about
+// its own files rather than being handed B42's answer.
+func ResolveFor(roots []WorkshopRoot, workshopIDs []string, target Build) *Resolution {
+	res := &Resolution{WorkshopIDs: append([]string(nil), workshopIDs...), Target: target}
 	seen := map[string]bool{}
 
 	for _, wid := range workshopIDs {
@@ -164,7 +268,7 @@ func Resolve(roots []WorkshopRoot, workshopIDs []string) *Resolution {
 		}
 		item.Dir = dir
 
-		infos := findModInfos(fsys)
+		infos := findModInfos(fsys, target)
 		if len(infos) == 0 {
 			item.Status = StatusEmpty
 			res.Missing = append(res.Missing, wid)
@@ -177,17 +281,24 @@ func Resolve(roots []WorkshopRoot, workshopIDs []string) *Resolution {
 		// keeps both.
 		best := 0
 		for _, in := range infos {
-			if in.B42Score > best {
-				best = in.B42Score
+			if in.BuildScore > best {
+				best = in.BuildScore
 			}
 		}
+		markers := map[string]bool{}
 		for _, in := range infos {
-			if in.B42Score == best {
+			if in.BuildScore == best {
 				item.ModIDs = append(item.ModIDs, in.ID)
+				if in.BuildMarker != "" && !markers[in.BuildMarker] {
+					markers[in.BuildMarker] = true
+					item.Markers = append(item.Markers, in.BuildMarker)
+				}
 			} else {
 				item.Dropped = append(item.Dropped, in.ID)
 			}
 		}
+		item.Score = best
+		sort.Strings(item.Markers)
 
 		switch {
 		case best == 0:
@@ -228,7 +339,7 @@ func findItem(roots []WorkshopRoot, id string) (fs.FS, string, bool) {
 }
 
 // findModInfos walks a workshop item for mod.info files, in a stable order.
-func findModInfos(fsys fs.FS) []ModInfo {
+func findModInfos(fsys fs.FS, target Build) []ModInfo {
 	var out []ModInfo
 
 	_ = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
@@ -241,10 +352,21 @@ func findModInfos(fsys fs.FS) []ModInfo {
 			}
 			return nil
 		}
+		if !d.Type().IsRegular() {
+			// `mod.info` is a name third-party bytes choose, under a tree the
+			// instance account owns (ARCHITECTURE 18.1). A FIFO named mod.info
+			// blocks the open forever, which holds the job lease with the
+			// server stopped -- a hang rather than a failure, and the one
+			// outcome the shutdown ladder cannot recover from. A symlink named
+			// mod.info is a read of a file the item did not ship. Same check,
+			// and the same reason, as steamcmd/buildid.go's walk of a
+			// Steam-written tree.
+			return nil
+		}
 		if d.Name() != "mod.info" {
 			return nil
 		}
-		data, err := fs.ReadFile(fsys, p)
+		data, err := readBounded(fsys, p)
 		if err != nil {
 			return nil
 		}
@@ -253,7 +375,7 @@ func findModInfos(fsys fs.FS) []ModInfo {
 			return nil // no id means nothing usable for Mods=
 		}
 		info.Path = p
-		info.B42Score = b42Score(fsys, p, data)
+		info.BuildScore, info.BuildMarker = buildScore(fsys, p, data, target)
 		out = append(out, info)
 		return nil
 	})
@@ -263,4 +385,32 @@ func findModInfos(fsys fs.FS) []ModInfo {
 	// decides which duplicate id wins, so it must not drift.
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// readBounded reads one mod.info, refusing anything over maxModInfoBytes.
+//
+// It reads the bound PLUS ONE and compares, rather than trusting a LimitReader
+// that stops exactly at the bound: a reader that stops at the limit returns a
+// truncated file and no error, and a truncated mod.info parses into a plausible
+// ModInfo with whatever id happened to fit. The same reasoning
+// content/fetch's bodied reader records.
+//
+// An item whose only mod.info is skipped resolves to no ids, which the content
+// resolver already renders as `modinfo:no-usable-mod-info`, so the skip is
+// reported rather than silent.
+func readBounded(fsys fs.FS, p string) ([]byte, error) {
+	f, err := fsys.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxModInfoBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxModInfoBytes {
+		return nil, fmt.Errorf("pz: %s is over %d bytes, which is not a mod.info", p,
+			maxModInfoBytes)
+	}
+	return data, nil
 }

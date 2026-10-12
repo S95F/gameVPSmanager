@@ -127,7 +127,11 @@ var commands = []Command{
 	{Name: "console", Group: "instances", Summary: "attach to an instance console", Run: runConsole},
 	{Name: "control", Group: "instances", Summary: "inspect and drive an instance's control channel", Run: runControl},
 
-	{Name: "content", Group: "content", Summary: "manage mods and workshop items", Run: notImplemented},
+	{Name: "content", Group: "content", Summary: "manage mods and workshop items", Run: runContent},
+	// `gvm mods` is an alias, because operators say "mods" (section 12.9). It
+	// is hidden so the usage listing names one spelling: two visible entries
+	// for one verb invites the question of how they differ.
+	{Name: "mods", Group: "content", Summary: "alias for `gvm content`", Hidden: true, Run: runContent},
 	{Name: "backup", Group: "operations", Summary: "archive an instance", Run: notImplemented},
 	{Name: "restore", Group: "operations", Summary: "restore an archive", Run: notImplemented},
 	{Name: "update", Group: "operations", Summary: "update an instance", Run: notImplemented},

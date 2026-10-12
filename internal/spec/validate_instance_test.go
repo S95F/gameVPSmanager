@@ -192,6 +192,12 @@ func TestValidateInstanceShape(t *testing.T) {
 		name string
 		edit func(*Instance)
 		path string
+		// manifest overrides valheimManifest for the rows that need the game
+		// to declare something. The content rows do: a key naming no declared
+		// block is now its own diagnostic, so a row about the POLICY has to
+		// use a manifest that has the block, or it would be asserting two
+		// findings at once.
+		manifest func() *Manifest
 	}{
 		{
 			name: "an unknown egress policy",
@@ -208,7 +214,8 @@ func TestValidateInstanceShape(t *testing.T) {
 			edit: func(in *Instance) {
 				in.Spec.Content = map[string]ContentList{"workshop": {ActivationPolicy: "rederive"}}
 			},
-			path: "spec.content.workshop.activation_policy",
+			path:     "spec.content.workshop.activation_policy",
+			manifest: contentManifest,
 		},
 		{
 			name: "an unknown job action",
@@ -242,7 +249,11 @@ func TestValidateInstanceShape(t *testing.T) {
 			in := valheimInstance()
 			tc.edit(in)
 
-			got := ValidateInstance(in, valheimManifest(), ValidatorInput{}, nil)
+			mf := valheimManifest
+			if tc.manifest != nil {
+				mf = tc.manifest
+			}
+			got := ValidateInstance(in, mf(), ValidatorInput{}, nil)
 			if len(got) != 1 || got[0].Path != tc.path {
 				t.Fatalf("want one diagnostic at %s, got:\n%s", tc.path, got)
 			}
@@ -326,5 +337,155 @@ func TestValidateInstanceWithoutAManifest(t *testing.T) {
 func TestValidateInstanceOfNothing(t *testing.T) {
 	if got := ValidateInstance(nil, valheimManifest(), ValidatorInput{}, nil); got != nil {
 		t.Errorf("got %v, want nil", got)
+	}
+}
+
+// contentManifest is a manifest whose game declares one content block, named
+// `workshop`.
+func contentManifest() *Manifest {
+	m := valheimManifest()
+	m.Spec.Content = []ContentSpec{{
+		Name:          "workshop",
+		Source:        SourceSteamWorkshop,
+		WorkshopAppID: 108600,
+		Acquisition: ContentAcquisition{
+			Mechanism: AcquireServerBoot, WriteKey: "WorkshopItems",
+			WriteFile: "server_ini", Separator: ";", KeepMissing: true,
+		},
+		Activation: ContentActivation{
+			WriteKey: "Mods", WriteFile: "server_ini", Separator: ";",
+			Resolver: "pz.resolve_mod_ids",
+		},
+	}}
+	return m
+}
+
+// TestAnInstanceContentKeyMustNameADeclaredBlock is the one spelling in the
+// system that is matched by NAME and was never checked.
+//
+// The map key is how an instance's list is bound to the manifest's block. An
+// unmatched key means the list is never read AND the activation_policy written
+// on it is never honoured -- so an instance that says `preserve` resolves as
+// `derive`, the lock records verbatim_activation:false, and from then on
+// nothing downstream can tell it from a legitimately derive-mode instance. The
+// same class of name is already refused twice elsewhere: a template reference
+// to `.Content.<name>` (validate.go) and an instance/manifest SOURCE mismatch
+// (content/schema.go), and both are blind to this one case.
+func TestAnInstanceContentKeyMustNameADeclaredBlock(t *testing.T) {
+	m := contentManifest()
+
+	t.Run("the manifest's own block name validates", func(t *testing.T) {
+		in := valheimInstance()
+		in.Spec.Content = map[string]ContentList{
+			"workshop": {ActivationPolicy: ActivationPreserve, Acquire: []ContentRef{{ID: "1"}}},
+		}
+		if d := ValidateInstance(in, m, ValidatorInput{Instance: "vh-1"}, nil); d.HasErrors() {
+			t.Fatalf("the declared block was refused:\n%s", d.Errors())
+		}
+	})
+
+	t.Run("a misspelled key is refused with a suggestion", func(t *testing.T) {
+		in := valheimInstance()
+		in.Spec.Content = map[string]ContentList{
+			"workshp": {ActivationPolicy: ActivationPreserve, Acquire: []ContentRef{{ID: "1"}}},
+		}
+		d := ValidateInstance(in, m, ValidatorInput{Instance: "vh-1"}, nil)
+		if !d.HasErrors() {
+			t.Fatal("a content key no manifest block declares validated; the list it carries " +
+				"is never read and its activation_policy is never honoured")
+		}
+		got := d.Errors().String()
+		if !strings.Contains(got, "spec.content.workshp") {
+			t.Errorf("the diagnostic does not name the key:\n%s", got)
+		}
+		if !strings.Contains(got, `"workshop"`) {
+			t.Errorf("no \"did you mean\" for a one-character typo:\n%s", got)
+		}
+		// An operator told only that the key is unknown deletes it, and loses
+		// the list they wrote.
+		if !strings.Contains(strings.ToLower(got), "rename") {
+			t.Errorf("the fix does not tell the operator to RENAME rather than delete:\n%s", got)
+		}
+	})
+
+	// The absent-key case must stay legal: `gvm create` writes no content
+	// block, so "no key at all" is the normal post-create state and
+	// `gvm content add` creates the key on its first write.
+	t.Run("no content key at all is legal", func(t *testing.T) {
+		in := valheimInstance()
+		if d := ValidateInstance(in, m, ValidatorInput{Instance: "vh-1"}, nil); d.HasErrors() {
+			t.Fatalf("an instance with no content block was refused:\n%s", d.Errors())
+		}
+	})
+
+	// A broken catalog must not turn into a flood of content diagnostics.
+	t.Run("no manifest means no opinion", func(t *testing.T) {
+		in := valheimInstance()
+		in.Spec.Content = map[string]ContentList{"anything": {}}
+		d := ValidateInstance(in, nil, ValidatorInput{Instance: "vh-1"}, nil)
+		for _, diag := range d {
+			if strings.Contains(diag.Path, "spec.content.anything") {
+				t.Errorf("checked a content key with no manifest to check it against: %v", diag)
+			}
+		}
+	})
+}
+
+// TestServerBootRefusesKeepMissingFalse: on server_boot the acquisition key is
+// the ONLY way bytes ever arrive, and the server is the only thing that can
+// fetch them. keep_missing:false drops an unmaterialized id from that key, so a
+// fresh instance tells the server to download nothing, so nothing materializes,
+// so the next sync renders the same empty line -- a permanent stall out of a
+// recoverable state. The Go/YAML zero value is false, so an operator-authored
+// /etc/gvm/games/<id>.yaml that simply omits the key lands here, which is why
+// this is a load-time refusal and not a runtime surprise.
+// TestServerBootRefusesKeepMissingFalse: on server_boot the acquisition key is
+// the ONLY way bytes ever arrive, and the server is the only thing that can
+// fetch them. keep_missing:false drops an unmaterialized id from that key, so a
+// fresh instance tells the server to download nothing, so nothing materializes,
+// so the next sync renders the same empty line -- a permanent stall out of a
+// recoverable state. The Go/YAML zero value is false, so an operator-authored
+// /etc/gvm/games/<id>.yaml that simply omits the key lands here, which is why
+// this is a load-time refusal and not a runtime surprise.
+func TestServerBootRefusesKeepMissingFalse(t *testing.T) {
+	// The acquisition checks only, picked out by path: valheimManifest is not
+	// a complete game manifest, so the rest of Validate has plenty to say and
+	// none of it is about this.
+	contentDiags := func(m *Manifest) Diags {
+		var out Diags
+		for _, d := range Validate(m, nil) {
+			if strings.Contains(d.Path, ".acquisition.") {
+				out = append(out, d)
+			}
+		}
+		return out
+	}
+
+	m := contentManifest()
+	if got := contentDiags(m); len(got) != 0 {
+		t.Fatalf("the control manifest already has an acquisition diagnostic: %s", got)
+	}
+
+	m.Spec.Content[0].Acquisition.KeepMissing = false
+	got := contentDiags(m)
+	if len(got) == 0 {
+		t.Fatal("keep_missing:false on a server_boot acquisition validated")
+	}
+	msg := got.String()
+	if !strings.Contains(msg, "keep_missing") {
+		t.Errorf("the diagnostic does not name the key: %s", msg)
+	}
+	if !strings.Contains(msg, AcquireServerBoot) {
+		t.Errorf("the diagnostic does not name the mechanism: %s", msg)
+	}
+	if !got.HasErrors() {
+		t.Error("the finding is not an error, so `gvm apply` would proceed into the stall")
+	}
+
+	// The other mechanisms are gvm's own downloads, where dropping an id whose
+	// bytes are not on disk is a legitimate policy.
+	m.Spec.Content[0].Acquisition.Mechanism = AcquireSteamCMDItem
+	if got := contentDiags(m); len(got) != 0 {
+		t.Errorf("keep_missing:false was refused on %s: %s", AcquireSteamCMDItem, got)
 	}
 }

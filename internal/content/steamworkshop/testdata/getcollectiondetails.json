@@ -1,0 +1,18 @@
+{
+  "response": {
+    "result": 1,
+    "resultcount": 1,
+    "collectiondetails": [
+      {
+        "publishedfileid": "3374983339",
+        "result": 1,
+        "children": [
+          {"publishedfileid": "3171167894", "sortorder": 0, "filetype": 0},
+          {"publishedfileid": "3508537032", "sortorder": 1, "filetype": 0},
+          {"publishedfileid": "3435796523", "sortorder": 2, "filetype": 0},
+          {"publishedfileid": "2866258937", "sortorder": 3, "filetype": 0}
+        ]
+      }
+    ]
+  }
+}

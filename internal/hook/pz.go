@@ -9,8 +9,8 @@ import (
 	"path"
 	"strings"
 
+	"github.com/S95F/gameVPSmanager/internal/content"
 	"github.com/S95F/gameVPSmanager/internal/gamecfg"
-	"github.com/S95F/gameVPSmanager/internal/pz"
 	"github.com/S95F/gameVPSmanager/internal/spec"
 )
 
@@ -26,9 +26,26 @@ import (
 // invisible until a player noticed a mod missing -- which is a regression from
 // sync-mods.sh's visible `check` warning into silent data loss.
 //
-// So it is Go, and the Go already exists: internal/pz implements the scoring
-// and is tested against the live 33-item mods.txt. These hooks resolve paths
-// and write config keys. They do not re-implement any of it.
+// So it is Go, and the Go already exists. The division of labour between the
+// three packages involved is the whole of section 12 as it reaches a hook:
+//
+//   - internal/pz owns the SCORING -- which variant inside a dual-build item is
+//     this server's -- and the section 12.5 tag table. It is tested against the
+//     live 33-item mods.txt, byte-identical round trip included.
+//   - internal/content owns the TWO-LIST MODEL: AcquireID and ActivationID as
+//     incompatible Go types, the fail-closed gate, the compiled schema that
+//     proves the two write keys are distinct, and the verbatim-activation
+//     switch. pz.resolve_mod_ids is a name in ITS closed resolver registry.
+//   - these hooks resolve paths and write config keys, and re-implement no part
+//     of either. The acquisition and activation lines a hook writes come out of
+//     content.Activate, which is the one implementation of that contract: a
+//     second one here would be a second place verbatim activation could be
+//     forgotten, and the cost of forgetting it is an adopted server's
+//     hand-pruned Mods= replaced without being asked.
+//
+// pz.apply_sandbox is the exception that proves the boundary is real: it edits
+// the sandbox document and touches neither namespace, so nothing in it goes
+// through internal/content at all.
 
 // pzFirstBoot is pz.first_boot.
 //
@@ -100,13 +117,45 @@ func (pzFirstBoot) Run(_ context.Context, h *Ctx) error {
 
 	h.RequestBoot(BootRequest{
 		Why: fmt.Sprintf("Project Zomboid generates %s on its first run. This boot creates it "+
-			"and then quits; with a large workshop list it takes 40-60 minutes, and the "+
-			"console is live throughout.", rel),
+			"and then quits; the console is live throughout.%s", rel, acquisitionBootFact(h)),
 		WaitFor: marker,
 		Then:    stop,
 	})
 	h.Note("requested a first boot: wait for %q, then send %q", marker, stop)
 	return nil
+}
+
+// acquisitionBootFact is the second half of the sentence first_boot's
+// BootRequest carries, when the game acquires its own content.
+//
+// The number comes from the content block's declared boot_timeout rather than
+// from a sentence in this file, because it is the SAME budget section 12.6 step
+// 5 spends: on Project Zomboid the first boot is also the first acquisition
+// boot, the server downloads what the acquisition key lists, and "40-60
+// minutes" hardcoded here would be a second, drifting copy of a manifest field
+// that an operator can change.
+func acquisitionBootFact(h *Ctx) string {
+	block, ok := workshopBlock(h.Manifest)
+	if !ok {
+		return ""
+	}
+	// Compiled rather than read field by field, so the two write keys are
+	// proved distinct and both separators present before a number out of this
+	// block is quoted at an operator. A block that cannot be compiled is
+	// reported here and refused for real by pz.resolve_mod_ids, which is the
+	// hook that writes those keys.
+	sc, err := content.Compile(block, spec.ContentList{}, nil)
+	if err != nil {
+		h.Problem("this game's content block %q does not compile, so the acquisition boot's "+
+			"budget cannot be stated and `gvm content sync` will refuse: %v", block.Name, err)
+		return ""
+	}
+	if !sc.ServerBoot() {
+		return ""
+	}
+	return fmt.Sprintf(" It is also this instance's first ACQUISITION boot: the server "+
+		"downloads whatever %s lists, which with a large workshop list is most of the "+
+		"%s budget the manifest allows.", sc.Acquisition.Key, sc.Acquisition.BootTimeout)
 }
 
 // logMarker is the manifest's log_marker readiness pattern.
@@ -453,6 +502,15 @@ func applyOverrides(h *Ctx, doc gamecfg.Doc, raw string) {
 // and writes both lists into the server's config. The two are different
 // identifiers for the same mod and both must persist, which is the two-list
 // model the content lock exists for.
+//
+// The mapping itself is internal/content's: this hook compiles the manifest's
+// block into a content.Schema, hands the acquired ids to content.Resolve --
+// which dispatches through the closed resolver registry to the same
+// `pz.resolve_mod_ids` name the manifest declares, applies
+// resolver_vars.target_build and layers the section 12.5 tag table -- and
+// renders the two lines with content.Activate. What is left here is the part
+// that is genuinely a hook's: which config file, which key, and the two
+// refusals below.
 type pzResolveModIDs struct{}
 
 func (pzResolveModIDs) Name() string    { return "pz.resolve_mod_ids" }
@@ -466,7 +524,7 @@ func (pzResolveModIDs) Doc() string {
 		"them, and reports every item it could not resolve with confidence."
 }
 
-func (pzResolveModIDs) Run(_ context.Context, h *Ctx) error {
+func (r pzResolveModIDs) Run(ctx context.Context, h *Ctx) error {
 	fsys, err := h.fsOf()
 	if err != nil {
 		return err
@@ -481,10 +539,34 @@ func (pzResolveModIDs) Run(_ context.Context, h *Ctx) error {
 			"this resolver to act on", ErrHook)
 	}
 
+	// Before Acquire, not just before the writes. An undeclared block and a
+	// declared-but-empty one both answer nil from Acquire, so every sentence
+	// below this point would assert the wrong fact: the note used to say "no
+	// workshop items are acquired", which claims the list is EMPTY when the
+	// truth is that it was never read -- the exact conflation section 12 exists
+	// to prevent.
+	//
+	// Until this guard existed the only thing that stopped an undeclared block
+	// emptying Mods= was where ContentState.SetActivation happens to sit inside
+	// writeModLists, below the lock build and above the first doc.Set. That is
+	// an accident of call order, not a rule, and a later author moving the
+	// recording step below the commits -- to fix the real inconsistency where
+	// the lock records ids a failed commit never wrote -- would commit both
+	// keys empty with the whole suite green.
+	if !h.Content.Declares(block.Name) {
+		return fmt.Errorf("%w: this instance declares no content block named %q, although game "+
+			"%s does, so there is no acquisition list to resolve. An unread list and an empty "+
+			"one are the same bytes, and writing %s from either would be indistinguishable from "+
+			"an operator disabling every mod -- so nothing was written. Add a `spec.content.%s`"+
+			" block to the instance, or check that its key is spelled the way the manifest "+
+			"names it", ErrHook, block.Name, gameOf(h.Manifest), block.Activation.WriteKey,
+			block.Name)
+	}
+
 	ids := h.Content.Acquire(block.Name)
 	if len(ids) == 0 {
-		h.Note("no workshop items are acquired for %q, so there is nothing to resolve",
-			block.Name)
+		h.Note("this instance declares %q with no items, so there is nothing to resolve and "+
+			"both keys are written empty on purpose", block.Name)
 	}
 
 	roots, err := workshopRoots(h, fsys, block)
@@ -492,43 +574,44 @@ func (pzResolveModIDs) Run(_ context.Context, h *Ctx) error {
 		return err
 	}
 
-	if tb := strings.TrimSpace(resolverVar(block, "target_build")); tb != "" {
-		// Recorded rather than acted on. internal/pz scores each item from its
-		// OWN files -- a 42/ directory, versionMin 42+, a common/ layout --
-		// which is evidence; a declared target that disagreed with the files
-		// would silently enable the wrong variant, which is the exact failure
-		// the scoring exists to prevent.
-		h.Note("resolver_vars.target_build is %q; the resolver scores each item from its own "+
-			"files (versionMin, 42/ and common/ directories) rather than from the declaration",
-			tb)
+	sc, err := contentSchema(h, block)
+	if err != nil {
+		return err
 	}
 
-	res := pz.Resolve(roots, ids)
-	for _, it := range res.Items {
-		switch it.Status {
-		case pz.StatusOK:
-		case pz.StatusMulti:
-			h.Note("%s contains %d mods, all enabled: %s", it.WorkshopID, len(it.ModIDs),
-				strings.Join(it.ModIDs, ", "))
-		case pz.StatusCheck:
-			h.Problem("%s has no build marker anywhere in it, so every mod id inside it was "+
-				"enabled (%s) and a Build 41 variant may have slipped in. Check it against the "+
-				"workshop page", it.WorkshopID, strings.Join(it.ModIDs, ", "))
-		case pz.StatusMissing:
-			h.Problem("%s has not downloaded yet; it stays listed in %s so the server retries "+
-				"it on the next boot", it.WorkshopID, block.Acquisition.WriteKey)
-		case pz.StatusEmpty:
-			h.Problem("%s is on disk but contains no usable mod.info, so nothing from it was "+
-				"enabled", it.WorkshopID)
-		}
-		for _, d := range it.Dropped {
-			h.Note("%s: %s was dropped as a lower-scoring build variant", it.WorkshopID, d)
-		}
+	if tb := strings.TrimSpace(sc.Activation.Vars[targetBuildVar]); tb != "" {
+		// Acted on, and this is the sentence that says so. The declared target
+		// decides WHICH BUILD'S MARKERS COUNT; it never decides which variant
+		// wins, because selection inside an item stays purely file-based
+		// (highest score wins, losers land in Dropped). So a B41 instance asks
+		// the same question about its own files instead of being handed B42's
+		// answer, and a declaration that disagrees with the files still cannot
+		// enable a variant the files contradict.
+		h.Note("resolver_vars.target_build is %q, and that is the build this resolve scored "+
+			"against; selection within an item stays file-based (versionMin, 42/ and common/ "+
+			"directories), so the declaration chooses the question and the files choose the "+
+			"answer", tb)
 	}
 
-	// Items are pinned and NOTHING resolved. Writing the activation list would
-	// start the server with every mod disabled, and PZ rewrites the ini on
-	// shutdown, so the empty list becomes permanent and there is no second
+	p, err := r.plan(ctx, sc, ids, roots)
+	if err != nil {
+		return err
+	}
+	reportItems(h, sc, p)
+
+	// THE GATE (section 12.2). Something in the declared set could not be
+	// classified at all, so neither list is written: an unaccounted item is not
+	// an ambiguous one, and the two get different responses. An ambiguous item
+	// is enabled with a warning -- today's behaviour, preserved exactly -- and
+	// an unaccounted one aborts, because a plan that lost track of its own
+	// input cannot say what either list should contain.
+	if err := content.Materializable(p); err != nil {
+		return fmt.Errorf("%w: %w", ErrHook, err)
+	}
+
+	// Items are declared and NOTHING resolved. Writing the activation list
+	// would start the server with every mod disabled, and PZ rewrites the ini
+	// on shutdown, so the empty list becomes permanent and there is no second
 	// pass that could put it back.
 	//
 	// The refusal covers the ACTIVATION half only. PZ's acquisition mechanism
@@ -537,48 +620,234 @@ func (pzResolveModIDs) Run(_ context.Context, h *Ctx) error {
 	// newly pinned id never reaches the server, so it is never downloaded, so
 	// the next resolve fails identically -- which turns a recoverable state
 	// into a stall and starves `keep_missing: true` of its purpose.
-	if len(res.ModIDs) == 0 && len(ids) > 0 {
+	if len(p.ActivationIDs()) == 0 && len(ids) > 0 {
 		if len(roots) == 0 {
 			// The more specific diagnosis, when it applies: no root is on disk
 			// at all, so this is a download that has not started rather than
 			// one whose items cannot be read.
 			h.Problem("none of this game's workshop roots exist yet, so %d acquired item(s) "+
-				"could not be resolved. %s was left alone", len(ids), block.Activation.WriteKey)
+				"could not be resolved. %s was left alone", len(ids), sc.Activation.Key)
 		} else {
 			h.Problem("none of the %d acquired item(s) resolved to a mod id, although %d "+
 				"workshop root(s) are on disk, so %s was left alone. %s still lists them, so "+
 				"the server retries the download on its next boot",
-				len(ids), len(roots), block.Activation.WriteKey, block.Acquisition.WriteKey)
+				len(ids), len(roots), sc.Activation.Key, sc.Acquisition.Key)
 		}
-		return writeModLists(h, block, res, false)
+		return writeModLists(h, sc, p, false)
 	}
 
-	if err := h.Content.SetActivation(block.Name, res.ModIDs); err != nil {
-		return err
+	return writeModLists(h, sc, p, true)
+}
+
+// plan turns the acquired ids into a content.Plan.
+//
+// The two records it makes itself are the two it can see without reading a
+// file, and both are things that would otherwise break the plan's own
+// arithmetic: an entry with no id, and an id declared twice. A duplicate is not
+// cosmetic -- two entries for one id make the derived activation list depend on
+// which one is read, and the two can carry different notes and requires -- so it
+// closes the gate with a reason rather than being de-duplicated into silence.
+//
+// Everything else is internal/content's: content.Resolve dispatches through the
+// closed registry and records a reason for any item its resolver returned
+// neither a result nor an explanation for.
+func (r pzResolveModIDs) plan(ctx context.Context, sc *content.Schema, ids []string,
+	roots []content.Root) (*content.Plan, error) {
+
+	p := &content.Plan{Block: sc.Block, Source: sc.Source, Declared: len(ids)}
+
+	items := make([]content.ResolverItem, 0, len(ids))
+	// first records the declared position PLUS ONE, so the zero value means
+	// "not seen". Storing the position itself would make position 0 -- the
+	// library that has to load before everything else -- invisible here.
+	first := make(map[content.AcquireID]int, len(ids))
+	for i, raw := range ids {
+		id := content.AcquireID(strings.TrimSpace(raw))
+		switch {
+		case id == "":
+			p.Unaccounted = append(p.Unaccounted, content.Unaccounted{
+				Reason: fmt.Sprintf("the item declared at position %d has no id", i),
+				Hint:   "remove the entry, or give it a Steam Workshop publishedfileid",
+			})
+		case first[id] > 0:
+			p.Unaccounted = append(p.Unaccounted, content.Unaccounted{
+				ID: id,
+				Reason: fmt.Sprintf("it is declared twice, at positions %d and %d",
+					first[id]-1, i),
+				Hint: "two entries for one id make the derived activation list depend on " +
+					"which one is read, and the two can carry different notes and requires",
+			})
+		default:
+			first[id] = i + 1
+			items = append(items, content.ResolverItem{Ordinal: i, ID: id})
+		}
 	}
-	return writeModLists(h, block, res, true)
+	if len(items) == 0 {
+		return p, nil
+	}
+
+	// No Upstream is passed, and that is section 12.5's degradation rather than
+	// an omission: a hook has no business making a Steam request in the job
+	// process, so every item is scored from its downloaded files alone -- which
+	// is exactly what an unreachable API produces. The metadata path is the
+	// job layer's, which fetches once per sync and hands it to the source.
+	res, err := content.Resolve(ctx, sc, items, roots)
+	if err != nil {
+		return nil, err
+	}
+	p.Unaccounted = append(p.Unaccounted, res.Unaccounted...)
+	p.Warnings = append(p.Warnings, res.Warnings...)
+
+	refused := make(map[content.AcquireID]bool, len(p.Unaccounted))
+	for _, u := range p.Unaccounted {
+		if u.ID != "" {
+			refused[u.ID] = true
+		}
+	}
+	byID := make(map[content.AcquireID]content.ResolvedItem, len(res.Items))
+	for _, it := range res.Items {
+		byID[it.ID] = it
+	}
+
+	for _, want := range items {
+		if refused[want.ID] {
+			continue
+		}
+		it, ok := byID[want.ID]
+		if !ok {
+			continue // the registry wrapper's cross-check already recorded a reason
+		}
+		p.Entries = append(p.Entries, content.PlanEntry{
+			Ordinal:    want.Ordinal,
+			Ref:        content.Ref{ID: string(want.ID)},
+			Activation: it.Activation,
+			Dropped:    it.Dropped,
+			Evidence:   it.Evidence,
+			Ambiguous:  it.Ambiguous,
+			// Materialized is presence on disk, which on a server_boot source
+			// is the only thing that decides whether an acquisition boot is
+			// still owed. The ARTIFACT is deliberately not recorded here: this
+			// hook does not write the lockfile, and a size and member count
+			// taken in the job process would be a second reading of the same
+			// tree that the source's Materialize takes properly.
+			Materialized: !it.Missing,
+			Resolution:   pzResolution(sc),
+		})
+	}
+	return p, nil
+}
+
+// pzResolution records HOW an entry's bytes arrive.
+//
+// server_boot means the SERVER downloads them and gvm never holds them, which
+// is why the artifact is a tree with no digest until `gvm content verify
+// --deep`. Any other mechanism on this block is refused by contentSchema's
+// compile, so there is no third answer to give.
+func pzResolution(sc *content.Schema) content.ResolutionPath {
+	if sc.ServerBoot() {
+		return content.ResolutionServerBoot
+	}
+	return content.ResolutionAPI
+}
+
+// contentSchema compiles the manifest's block plus the instance's activation
+// policy into the schema every later step reads fields off.
+//
+// It is where the two-namespace rules become refusals instead of review
+// comments: one key cannot carry both lists, a missing separator is refused
+// rather than guessed (PZ's lists are semicolon-separated and a comma breaks
+// them with NO error), and the activation resolver this manifest names has to
+// exist in the build that is about to run it.
+//
+// The roots are not passed in. content.Schema records them for a source that
+// has to open them; this hook opens its own through Ctx.Fs, which is the only
+// filesystem a hook may touch.
+func contentSchema(h *Ctx, block spec.ContentSpec) (*content.Schema, error) {
+	vars, err := resolverVars(h, block)
+	if err != nil {
+		return nil, err
+	}
+	// A copy, with the rendered values in place of the templates. The block
+	// itself is the pinned manifest and nothing here may edit it.
+	block.Activation.ResolverVars = vars
+
+	sc, err := content.Compile(block, spec.ContentList{
+		// The instance's half, and the only field of it a hook can see.
+		// `preserve` is the adoption switch: the live activation line is the
+		// operator's own and content.Activate hands it back untouched.
+		ActivationPolicy: h.Content.ActivationPolicy(block.Name),
+	}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrHook, err)
+	}
+	return sc, nil
+}
+
+// reportItems is the per-item half of the report: the notes and problems an
+// operator reads, from the plan rather than from a second walk of the disk.
+func reportItems(h *Ctx, sc *content.Schema, p *content.Plan) {
+	for _, e := range p.Entries {
+		id := e.AcquireID()
+		switch {
+		case !e.Materialized && hasEvidence(e.Evidence, "modinfo:no-usable-mod-info"):
+			h.Problem("%s is on disk but contains no usable mod.info, so nothing from it was "+
+				"enabled", id)
+		case !e.Materialized:
+			h.Problem("%s has not downloaded yet; it stays listed in %s so the server retries "+
+				"it on the next boot", id, sc.Acquisition.Key)
+		case e.Ambiguous:
+			h.Problem("%s has no build marker anywhere in it, so every mod id inside it was "+
+				"enabled (%s) and a Build 41 variant may have slipped in. Check it against the "+
+				"workshop page", id, joinActivation(e.Activation, ", "))
+		case len(e.Activation) > 1:
+			h.Note("%s contains %d mods, all enabled: %s", id, len(e.Activation),
+				joinActivation(e.Activation, ", "))
+		}
+		for _, d := range e.Dropped {
+			h.Note("%s: %s was dropped as a lower-scoring build variant", id, d)
+		}
+	}
+	for _, u := range p.Unaccounted {
+		h.Problem("%s", u.String())
+	}
+	// Section 12.5's doctor lines. They are MESSAGES: nothing branches on one,
+	// and every finding that has a warning also has a machine-readable record
+	// of itself in the entry's evidence.
+	for _, w := range p.Warnings {
+		h.Problem("%s", w)
+	}
+}
+
+func hasEvidence(evidence []string, want string) bool {
+	for _, e := range evidence {
+		if e == want {
+			return true
+		}
+	}
+	return false
+}
+
+// joinActivation renders activation ids for a message. It takes
+// []content.ActivationID and nothing else, so no acquisition id can be
+// formatted as one by mistake.
+func joinActivation(ids []content.ActivationID, sep string) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, id.String())
+	}
+	return strings.Join(parts, sep)
 }
 
 // writeModLists puts both namespaces into the config file the manifest names.
 //
 // activation false writes only the acquisition key: see the refusal above.
-func writeModLists(h *Ctx, block spec.ContentSpec, res *pz.Resolution, activation bool) error {
-	writes := []struct {
-		file, key, value, sep string
-	}{
-		{block.Acquisition.WriteFile, block.Acquisition.WriteKey,
-			join(res.WorkshopIDs, block.Acquisition.Separator), block.Acquisition.Separator},
-	}
-	if activation {
-		// Prepended, so the declared order of the two keys in a shared file is
-		// unchanged from when both were always written.
-		writes = append([]struct {
-			file, key, value, sep string
-		}{{block.Activation.WriteFile, block.Activation.WriteKey,
-			join(res.ModIDs, block.Activation.Separator), block.Activation.Separator}},
-			writes...)
-	}
-
+//
+// The two VALUES come from content.Activate, which is the one implementation of
+// section 12.2's activation contract -- the fail-closed gate and verbatim
+// activation -- and the lines it returns are typed per namespace, so there is
+// no call site here at which the activation ids could be written under the
+// acquisition key.
+func writeModLists(h *Ctx, sc *content.Schema, p *content.Plan, activation bool) error {
 	// Grouped by file, so a manifest writing both keys into the same ini
 	// commits once. Two commits to one file would mean two atomic replaces and
 	// two .bak rotations for one logical change.
@@ -588,46 +857,137 @@ func writeModLists(h *Ctx, block spec.ContentSpec, res *pz.Resolution, activatio
 		before []byte
 	}
 	open := map[string]*pending{}
-	for _, w := range writes {
-		if w.file == "" || w.key == "" {
-			continue
+	file := func(ns content.Namespace, name string) (*pending, error) {
+		if name == "" {
+			// A write key with no file writes nowhere. Refused rather than
+			// skipped: a block that declared one key and no file would produce
+			// a run that reported success and changed nothing, which on the
+			// acquisition half means a server that never downloads.
+			return nil, fmt.Errorf("%w: content block %q names a %s write key with no "+
+				"write_file, so there is nothing to write it into", ErrHook, sc.Block, ns)
 		}
-		if w.sep == "" {
-			// PZ's lists are semicolon-separated and a comma breaks them with
-			// NO error, which is a popular way to disable every mod at once by
-			// accident. The separator is data for exactly that reason, so an
-			// absent one is refused rather than guessed.
-			return fmt.Errorf("%w: content block %q declares no separator for %s, and the "+
-				"wrong one disables every mod with no error", ErrHook, block.Name, w.key)
+		if p := open[name]; p != nil {
+			return p, nil
 		}
-		p := open[w.file]
-		if p == nil {
-			doc, commit, err := h.openConfig(w.file)
-			if err != nil {
-				return err
-			}
-			p = &pending{doc: doc, commit: commit, before: doc.Bytes()}
-			open[w.file] = p
+		doc, commit, err := h.openConfig(name)
+		if err != nil {
+			return nil, err
 		}
-		if err := p.doc.Set(w.key, w.value); err != nil {
-			return fmt.Errorf("hook: setting %s in %q: %w", w.key, w.file, err)
-		}
-		h.Note("%s = %s", w.key, w.value)
+		pd := &pending{doc: doc, commit: commit, before: doc.Bytes()}
+		open[name] = pd
+		return pd, nil
 	}
 
-	for name, p := range open {
-		if bytes.Equal(p.before, p.doc.Bytes()) {
+	acqDoc, err := file(content.NamespaceAcquisition, sc.Acquisition.File)
+	if err != nil {
+		return err
+	}
+	var actDoc *pending
+	if activation {
+		if actDoc, err = file(content.NamespaceActivation, sc.Activation.File); err != nil {
+			return err
+		}
+	}
+
+	sl, err := p.Lock(sc)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrHook, err)
+	}
+	if sc.VerbatimActivation {
+		// The adoption switch, fed from the file itself. The live line is the
+		// ONLY copy of the operator's list -- the entries cannot reproduce a
+		// hand-pruned ordering -- so recording anything else here, including
+		// nothing, is how that edit gets lost.
+		if actDoc != nil {
+			live, _ := actDoc.doc.Get(sc.Activation.Key)
+			sl.ActivationLine = live
+		}
+	}
+
+	type write struct {
+		into *pending
+		file string
+		key  string
+		val  string
+	}
+	var writes []write
+
+	if activation {
+		l := content.NewLock(&content.Input{Instance: h.Name, Game: gameOf(h.Manifest)})
+		if err := l.Put(sc.Block, sl); err != nil {
+			return err
+		}
+		// The accept form only when the DECLARED list is empty, which is the
+		// one shape of "write an empty activation line" that is intent: the
+		// operator removed every mod. Keyed on the declared count and not on
+		// the live line, because an adopted server whose operator just removed
+		// every mod has a non-empty live Mods= and an empty declared list, and
+		// that is legitimate. Everything else -- including a list nobody read
+		// -- takes content.Activate and its refusal.
+		activate := content.Activate
+		if p.Declared == 0 {
+			activate = content.ActivateAllowingEmpty
+		}
+		act, err := activate(sc, l)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrHook, err)
+		}
+		if act.Verbatim() {
+			h.Note("%s", act.Note)
+		}
+		// Activation first, so the declared order of the two keys in a shared
+		// file is unchanged from when both were always written.
+		writes = []write{
+			{actDoc, sc.Activation.File, act.Activate.Key, act.Activate.Value()},
+			{acqDoc, sc.Acquisition.File, act.Acquisition.Key, act.Acquisition.Value()},
+		}
+
+		if !act.Verbatim() {
+			ids := make([]string, 0, len(act.Activate.IDs))
+			for _, id := range act.Activate.IDs {
+				ids = append(ids, id.String())
+			}
+			// SetActivation also refuses an undeclared block, but that is no
+			// longer what makes an undeclared block safe: the Declares guard at
+			// the top of Run is. Recorded here because this call's POSITION
+			// used to be the only defence, which made moving it -- a change
+			// with a legitimate motivation, since a failed commit below leaves
+			// the lock recording ids that never reached disk -- quietly
+			// catastrophic.
+			if err := h.Content.SetActivation(sc.Block, ids); err != nil {
+				return err
+			}
+		}
+	} else {
+		acq := sc.Acquisition.Line(sl.AcquireIDs(sc.Acquisition.KeepMissing))
+		writes = []write{{acqDoc, sc.Acquisition.File, acq.Key, acq.Value()}}
+	}
+
+	for _, w := range writes {
+		if err := w.into.doc.Set(w.key, w.val); err != nil {
+			return fmt.Errorf("hook: setting %s in %q: %w", w.key, w.file, err)
+		}
+		h.Note("%s = %s", w.key, w.val)
+	}
+
+	for name, pd := range open {
+		if bytes.Equal(pd.before, pd.doc.Bytes()) {
 			h.Note("%s already lists these mods; nothing was written", name)
 			continue
 		}
-		if err := p.commit(); err != nil {
+		if err := pd.commit(); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func join(ids []string, sep string) string { return strings.Join(ids, sep) }
+func gameOf(m *spec.Manifest) string {
+	if m == nil {
+		return ""
+	}
+	return m.Metadata.ID
+}
 
 // workshopBlock finds the content block this resolver is declared on.
 //
@@ -651,8 +1011,41 @@ func workshopBlock(m *spec.Manifest) (spec.ContentSpec, bool) {
 	return spec.ContentSpec{}, false
 }
 
-func resolverVar(block spec.ContentSpec, key string) string {
-	return block.Activation.ResolverVars[key]
+// targetBuildVar is the resolver_var Project Zomboid's manifest declares, as
+// `target_build: "{{ .Var.pz_build }}"`. It is spelled the same in
+// internal/content's resolver, which is the package that decodes it.
+const targetBuildVar = "target_build"
+
+// resolverVars renders the block's resolver_vars.
+//
+// A resolver NEVER renders: rendering needs the instance's vars, ports and
+// secrets, and a resolver that could render could read a secret into a path.
+// So the hook renders, and refuses a value that expanded a secret -- the same
+// refusal workshopRoots makes below, for the same reason: this map is handed
+// to a resolver whose whole output is written into a config file an operator
+// pastes into support threads.
+func resolverVars(h *Ctx, block spec.ContentSpec) (map[string]string, error) {
+	raw := block.Activation.ResolverVars
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if h.Render == nil {
+		return nil, fmt.Errorf("%w: no renderer; resolver_vars are templates", ErrNoSeam)
+	}
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		field := fmt.Sprintf("spec.content[%s].activation.resolver_vars.%s", block.Name, k)
+		val, taint, err := h.Render.Render(field, v)
+		if err != nil {
+			return nil, err
+		}
+		if taint.Has(spec.TaintSecret) {
+			return nil, fmt.Errorf("%w: %s renders a secret into a resolver variable", ErrHook,
+				field)
+		}
+		out[k] = val
+	}
+	return out, nil
 }
 
 // workshopRoots renders the block's roots and opens each one that exists.
@@ -661,8 +1054,8 @@ func resolverVar(block spec.ContentSpec, key string) string {
 // writes workshop content to different locations depending on version and both
 // may exist on the same box, which is why the manifest lists two. internal/pz
 // searches them in order and the first holding an item wins.
-func workshopRoots(h *Ctx, fsys JailedFS, block spec.ContentSpec) ([]pz.WorkshopRoot, error) {
-	var out []pz.WorkshopRoot
+func workshopRoots(h *Ctx, fsys JailedFS, block spec.ContentSpec) ([]content.Root, error) {
+	var out []content.Root
 	for i, r := range block.Roots {
 		field := fmt.Sprintf("spec.content[%s].roots[%d]", block.Name, i)
 		abs, taint, err := h.Render.Render(field, r)
@@ -687,7 +1080,7 @@ func workshopRoots(h *Ctx, fsys JailedFS, block spec.ContentSpec) ([]pz.Workshop
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, pz.WorkshopRoot{Name: abs, FS: sub})
+		out = append(out, content.Root{Name: abs, FS: sub})
 	}
 	return out, nil
 }

@@ -1,0 +1,89 @@
+{
+  "response": {
+    "result": 1,
+    "resultcount": 5,
+    "publishedfiledetails": [
+      {
+        "publishedfileid": "3171167894",
+        "result": 1,
+        "creator": "76561198012345678",
+        "creator_app_id": 108600,
+        "consumer_app_id": 108600,
+        "filename": "",
+        "file_size": 48211934,
+        "preview_url": "https://steamuserimages-a.akamaihd.net/ugc/0/",
+        "hcontent_preview": "0",
+        "title": "that DAMN Library",
+        "description": "Shared code for the KI5 vehicle mods.",
+        "time_created": 1709251200,
+        "time_updated": 1755749469,
+        "visibility": 0,
+        "banned": false,
+        "ban_reason": "",
+        "subscriptions": 412311,
+        "favorited": 2210,
+        "views": 980233,
+        "tags": [
+          {"tag": "Build 41"},
+          {"tag": "Build 42"},
+          {"tag": "Vehicles"}
+        ]
+      },
+      {
+        "publishedfileid": "3435796523",
+        "result": 1,
+        "creator_app_id": 108600,
+        "consumer_app_id": 108600,
+        "file_size": "193844120",
+        "title": "KI5 Toyota Hilux 1988",
+        "time_created": 1727568000,
+        "time_updated": 1756051200,
+        "visibility": 0,
+        "banned": false,
+        "ban_reason": "",
+        "tags": [
+          {"tag": "Build 42"},
+          {"tag": "Vehicles"}
+        ]
+      },
+      {
+        "publishedfileid": "2866258937",
+        "result": 1,
+        "creator_app_id": 108600,
+        "consumer_app_id": 108600,
+        "file_size": 211934,
+        "title": "Mini Health Panel [B41/B42.20]",
+        "time_created": 1643673600,
+        "time_updated": 1740787200,
+        "visibility": 0,
+        "banned": false,
+        "ban_reason": "",
+        "tags": [
+          {"tag": "Build 41"},
+          {"tag": "Build 42"},
+          {"tag": "Interface"}
+        ]
+      },
+      {
+        "publishedfileid": "3508537032",
+        "result": 1,
+        "creator_app_id": 108600,
+        "consumer_app_id": 108600,
+        "file_size": 1044112,
+        "title": "Neat UI Framework",
+        "time_created": 1733097600,
+        "time_updated": 1754352000,
+        "visibility": 0,
+        "banned": true,
+        "ban_reason": "Reported for reuploaded assets",
+        "tags": [
+          {"tag": "Build 42"}
+        ]
+      },
+      {
+        "publishedfileid": "9999999999",
+        "result": 9
+      }
+    ]
+  }
+}

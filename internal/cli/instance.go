@@ -29,6 +29,7 @@ import (
 
 	"github.com/S95F/gameVPSmanager/games"
 	"github.com/S95F/gameVPSmanager/internal/audit"
+	"github.com/S95F/gameVPSmanager/internal/content/steamworkshop"
 	"github.com/S95F/gameVPSmanager/internal/hostops"
 	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/lifecycle"
@@ -105,6 +106,30 @@ type HostEnv struct {
 	// destroy path could neither be driven nor safely driven on the machine it
 	// is written on.
 	Paths func(name string) instance.Paths
+	// ContentRoot opens one content root read-only, for the content verbs.
+	//
+	// Nil is os.DirFS behind an os.Stat, and the Stat is deliberately not an
+	// Lstat: a workshop root reached through a symlink is ordinary on an
+	// adopted box, and reporting it as absent would send a server_boot
+	// instance into an hour-long acquisition boot it does not need. A root
+	// that is not there returns an error wrapping fs.ErrNotExist, which the
+	// caller SKIPS with a note -- the server writes workshop content to
+	// different locations depending on version and a manifest lists both.
+	//
+	// It is a seam for the reason Paths is: these are absolute Linux paths,
+	// and os.DirFS("/srv/gvm/...") on the development machine resolves against
+	// C:. Without it the three-way diff could not be driven on the box it is
+	// written on.
+	ContentRoot func(abs string) (fs.FS, error)
+	// Workshop builds the Steam Workshop metadata client `gvm content
+	// collection sync` fetches through. Nil is steamworkshop.NewAPI.
+	//
+	// A seam so that a test points it at an httptest server through
+	// fetch.Loopback rather than at Steam. That is what makes "no test in this
+	// tree touches the network" a property of the construction: the only
+	// command here that fetches at all cannot reach a real host unless
+	// somebody replaces this field.
+	Workshop func(cfg steamworkshop.Config) (*steamworkshop.API, error)
 	// Shutdown drives the ladder for `gvm stop`. Nil makes a stop REFUSE:
 	// audit.InstanceStop requires `rung` on its success row, and a stop that
 	// cannot say whether the world saved is the record the bash suite already
@@ -158,6 +183,39 @@ func (h *HostEnv) paths(name string) instance.Paths {
 		return h.Paths(name)
 	}
 	return instance.PathsFor(name)
+}
+
+// contentRoot opens one content root, or reports that it is not there.
+func (h *HostEnv) contentRoot(abs string) (fs.FS, error) {
+	if h.ContentRoot != nil {
+		return h.ContentRoot(abs)
+	}
+	return osContentRoot(abs)
+}
+
+// osContentRoot is the production content root: os.DirFS, gated on a Stat that
+// FOLLOWS symlinks. See HostEnv.ContentRoot.
+func osContentRoot(abs string) (fs.FS, error) {
+	st, err := os.Stat(abs)
+	if err != nil {
+		return nil, err
+	}
+	if !st.IsDir() {
+		// Not a missing root and not a usable one. Reported as its own
+		// condition rather than as fs.ErrNotExist, because a FILE where a
+		// workshop root belongs is a mount that did not happen, and skipping
+		// it silently reports every mod as not downloaded.
+		return nil, &fs.PathError{Op: "open", Path: abs, Err: errors.New("not a directory")}
+	}
+	return os.DirFS(abs), nil
+}
+
+// workshopAPI builds the Steam Workshop client. See HostEnv.Workshop.
+func (h *HostEnv) workshopAPI(cfg steamworkshop.Config) (*steamworkshop.API, error) {
+	if h.Workshop != nil {
+		return h.Workshop(cfg)
+	}
+	return steamworkshop.NewAPI(cfg)
 }
 
 func (h *HostEnv) catalog() *spec.Catalog {
