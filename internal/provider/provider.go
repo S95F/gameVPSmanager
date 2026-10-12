@@ -214,6 +214,30 @@ type Plan struct {
 	// Apply does not fetch it twice.
 	Opaque any
 
+	// Current and Target are the diff's two numbers, structured.
+	//
+	// Reason already carries them inside a sentence, and a sentence is the
+	// wrong shape for the one caller that has to BRANCH on them: section
+	// 13.5's phase 1 compares an installed buildid to a published one while
+	// the server is still running, and D-43 turns that comparison into either
+	// a stop or `skipped`. A pipeline that had to read a provider's prose to
+	// learn which of the two it was would be a pipeline whose correctness
+	// depended on wording. Either may be unknown -- a provider that cannot
+	// name a version leaves Version.ID empty rather than inventing one.
+	Current Version
+	Target  Version
+
+	// UpdateAvailable is a newer version this plan is NOT going to fetch.
+	//
+	// It exists for one case, and it is the case that must not be silent: an
+	// adopted instance (managed_install:false) whose branch moved. The plan is
+	// empty because gvm may not write into a tree it does not own, and an
+	// empty plan with nothing else to say is indistinguishable from "there was
+	// nothing to do" -- which is how an operator loses a working nightly
+	// steamcmd update on the day after cutover without being told (section
+	// 13.5). `summary.update_available` is this field, carried through.
+	UpdateAvailable bool
+
 	// authorized is written only by Authorize. The field is unexported, so no
 	// composite literal in any other package can forge a stamp, which is what
 	// makes CheckAuthorized in Apply a guarantee instead of a convention.

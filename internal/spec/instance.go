@@ -254,7 +254,7 @@ type ContentRef struct {
 // fire when gvmd, gvm-web and the database are all dead (D-29).
 type Job struct {
 	Schedule string `yaml:"schedule"` // systemd OnCalendar, timezone included
-	Action   string `yaml:"action"`   // update | restart | backup | content_sync | rebuild
+	Action   string `yaml:"action"`   // update | restart | backup | content_sync
 
 	RandomizedDelay Duration `yaml:"randomized_delay,omitempty"`
 

@@ -1,0 +1,60 @@
+# /usr/lib/systemd/system/gvm-guard.timer  -- ARCHITECTURE.md 13.4
+#
+# Belt and braces beyond the `defer`.
+#
+# internal/jobs' RunningGuard survives an error return, a panic and a cancelled
+# context. What it cannot survive is SIGKILL of the job process -- the OOM
+# killer, `systemctl kill`, power loss mid-update -- because a deferred function
+# dies with its process. This timer is what turns "the nightly update crashed at
+# 05:03" into a five-minute outage rather than an eight-hour one.
+#
+# It runs `gvm job run _guard`, which asserts for every instance:
+#
+#     desired_running := spec.enabled
+#                     && the systemd unit is enabled
+#                     && no /run/gvm/<n>/hold
+#
+# The `hold` term is what stops it fighting the operator: `gvm stop` writes that
+# file with the actor and the reason, `gvm start` removes it, and /run is tmpfs
+# so a hold does not survive a reboot -- which exactly matches systemd's own
+# semantics, where a stopped-but-enabled unit comes back on boot.
+[Unit]
+Description=gvm recovery sweep: start any instance that should be running and is not
+Documentation=man:gvm(8)
+
+[Timer]
+Unit=gvm-job@_guard.service
+
+# Three minutes after boot, not zero. Every instance unit is starting at the
+# same time, and a Project Zomboid boot with a large workshop list is
+# `activating` for 40-60 minutes; a sweep that ran immediately would be judging
+# units that systemd has not got to yet. The guard counts `activating` as
+# running, so the delay is not what makes that safe -- it is what keeps the
+# first `guard` run of a reboot from being a page full of noise.
+OnBootSec=3min
+
+# Five minutes, which is the number section 13.4 promises an operator: it is
+# the worst-case gap between a SIGKILLed job and the server coming back.
+# OnUnitActiveSec rather than OnCalendar because what matters is the interval
+# since the last SWEEP, not a wall-clock grid -- and because a sweep that is
+# still running must not have a second one started on top of it.
+OnUnitActiveSec=5min
+
+# Thirty seconds. systemd's default AccuracySec is one minute, which would
+# turn the five-minute promise into "five to six"; the sweep is cheap (reads
+# only, plus a start for anything genuinely down) so there is nothing to save
+# by batching it.
+AccuracySec=30s
+
+# No RandomizedDelaySec, deliberately: this is the recovery path, and there is
+# nothing to spread out. One box, one sweep, and the only thing a delay would
+# add is seconds of outage.
+
+# false, and for the opposite reason to the backup timer's true. A missed guard
+# run is not work to catch up: the sweep derives everything from scratch every
+# time, so the next tick is strictly better than a stale one replayed at boot
+# -- and OnBootSec above already covers the reboot case.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

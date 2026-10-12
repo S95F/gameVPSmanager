@@ -279,18 +279,30 @@ func TestASubscriberThatNeverReadsCannotStallTheProducer(t *testing.T) {
 		}
 	}
 
-	start := time.Now()
-	for i := 0; i < lines; i++ {
-		r.Append(line("the quick brown fox jumps over the lazy dog"))
-		drain()
-	}
-	elapsed := time.Since(start)
-
-	// The budget is the assertion. 50 000 appends fanned out to two
-	// subscribers, one of which is wedged, is microseconds of work; anything
-	// approaching 200 ms means somebody made a send blocking.
-	if elapsed > 200*time.Millisecond {
-		t.Fatalf("50000 appends took %v with one wedged subscriber; the producer blocked", elapsed)
+	// A watchdog, not a stopwatch. The property under test is structural, and
+	// the assertions below are the ones that carry it: the healthy subscriber
+	// receives all 50 000 lines in order and loses none, while the wedged one
+	// sits with a full channel and the remainder counted as dropped. That is
+	// what "the ring drops for the slow subscriber instead of blocking the
+	// producer" means, and it holds no matter how loaded the machine is.
+	//
+	// The timeout exists only to catch the failure this test cannot otherwise
+	// observe: if a fan-out send were made blocking, the loop would never
+	// finish at all and the test would hang instead of failing. 30 s is
+	// deliberately far beyond any amount of real work here, so a busy box or
+	// parallel test packages cannot trip it.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < lines; i++ {
+			r.Append(line("the quick brown fox jumps over the lazy dog"))
+			drain()
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("50000 appends never finished with one wedged subscriber; the producer blocked")
 	}
 
 	if dropped != 0 {

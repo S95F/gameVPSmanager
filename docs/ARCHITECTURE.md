@@ -177,7 +177,7 @@ They must be written in cleartext into the game's own config file for the game t
 The nightly update, restart and backup must fire whether or not `gvmd` is alive, and `systemctl list-timers` plus `journalctl -u gvm-job@pz-main_nightly` are tools the operator already has and already trusts — which is exactly what `zomboid-restart.timer` gives them today. The "N instances × M kinds is an unmanageable pile of unit files" objection does not survive contact with 5 instances × 3 kinds = 15 generated files. Postgres records job runs; systemd triggers them. Never the reverse.
 
 **D-30 — The steamcmd lock is a `flock`, not a Postgres advisory lock.**
-Making the DB the primary lock reintroduces the dependency the design exists to delete. `/var/lib/gvm/locks/steamcmd.lock` is the host-wide lock and `/run/gvm/<name>/job.lock` the per-instance one; each lock file's first line names its holder (`pid:unit:kind:started_at`) so `doctor` can say who is blocking. Belt and braces: each instance also gets its **own** SteamCMD `HOME` under `/var/lib/gvm/cache/steam/homes/<name>`, which removes the shared `~/.steam` corruption class outright rather than only serialising around it.
+Making the DB the primary lock reintroduces the dependency the design exists to delete. `/var/lib/gvm/locks/steamcmd.lock` is the host-wide lock and `/var/lib/gvm/locks/job_<name>.lock` the per-instance JOB lock; each lock file's first line names its holder (`pid:unit:kind:started_at`) so `doctor` can say who is blocking. Belt and braces: each instance also gets its **own** SteamCMD `HOME` under `/var/lib/gvm/cache/steam/homes/<name>`, which removes the shared `~/.steam` corruption class outright rather than only serialising around it.
 
 **D-31 — The freeze watchdog is an out-of-process lease honoured by the runner.**
 A goroutine dies with its process, and the failure being guarded against is precisely the process dying between `save-off` and `save-on` — which leaves a running server that silently stops persisting, the worst failure in the system. `/run/gvm/<name>/freeze.lease` carries a deadline and the thaw steps; the runner arms a timer on it and thaws unconditionally when it expires, including on its own next start (`Sweep`) if the box died mid-freeze.
@@ -534,7 +534,7 @@ The consequence, which is the point: the `.acf`/VDF parser, the spec loader and 
 │   ├── shutdown.json                       0640  the rendered ladder, for run-shutdown
 │   ├── last-shutdown.json                  0640
 │   ├── freeze.lease                        0600  present iff a freeze is armed    (D-31)
-│   ├── job.lock                            0600  per-instance flock
+│   ├── job.lock                            0600  the RUNNER's world lock, held for the unit's life (11.7 lock 1)
 │   └── hold                                0644  present iff an operator stopped it
 └── caddy/admin.sock                        0660 root:caddy  (Caddy's RuntimeDirectory) (D-36)
 ```
@@ -3742,7 +3742,7 @@ func Alive(pid int, want uint64) bool {
 
 Three independent locks, because this is the failure that destroys a world:
 
-1. **`flock(LOCK_EX|LOCK_NB)` on `/run/gvm/<name>/job.lock`**, held for the runner's whole life. Catches an operator running `gvm run pz-main` by hand while the unit is up.
+1. **`flock(LOCK_EX|LOCK_NB)` on `/run/gvm/<name>/job.lock`**, held for the runner's whole life. Catches an operator running `gvm run pz-main` by hand while the unit is up. This is the RUNNER's lock and not the job engine's: the job engine serialises on `/var/lib/gvm/locks/job_<name>.lock` (D-30). They were one file in an earlier draft of this document, and sharing them means no instance-scoped job can run while the server is up — the runner already holds it — while a job that acquires it on a stopped instance makes its own `gvm run` exit 75. `/run/gvm/<name>` is also the unit's `RuntimeDirectory=`, which systemd deletes on a stop the job itself performs, unlinking a flocked file under its holder.
 2. **`Conflicts=` in both directions** with the legacy unit, so systemd itself refuses (§7.4). `gvm doctor` treats a simultaneously-enabled pair as a **hard error**.
 3. **Stale-identity check.** On start, if `runner.json` exists (preserved by `RuntimeDirectoryPreserve=restart`) and its pinned `(pid, start_ticks)` is still alive, the runner **refuses to spawn**, notifies `STATUS=orphaned game process <pid> still running`, and exits **75** so `Restart=on-failure` retries rather than racing.
 
@@ -4404,7 +4404,8 @@ This is the piece that turns "the nightly update crashed at 05:03" into a 5-minu
 The biggest win over `update.sh` is that on a normal night **nothing stops**. `update.sh` stops unconditionally and runs `app_update … validate` every time; on a multi-instance box that is N full validations a night.
 
 ```
-Phase 0  PREFLIGHT      free disk >= max(2 GiB, BytesToDownload * 1.5); instance lock; not held
+Phase 0  PREFLIGHT      free disk >= max(2 GiB, BytesToDownload * 1.5); the instance JOB lock
+                        (/var/lib/gvm/locks/job_<name>.lock); not held
 Phase 1  CHECK          purge every cached appinfo.vdf under the per-instance HOME, then
                         app_info_print. Compare remote branches.<branch>.buildid to the
                         local .acf buildid.

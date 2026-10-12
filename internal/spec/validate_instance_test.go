@@ -225,6 +225,33 @@ func TestValidateInstanceShape(t *testing.T) {
 			path: "spec.jobs.nightly.action",
 		},
 		{
+			// A destructive job cannot be scheduled, and the diagnostic has
+			// to say WHY rather than listing the four acceptable words:
+			// `rebuild` plainly IS a job action, so "is not a job action"
+			// teaches an operator nothing. Section 16.4 wants the instance
+			// name typed by a person and a timer cannot type one --
+			// gvm-job@.service's ExecStart carries no flags and
+			// jobs.Descriptor has no field for consent -- so such a timer
+			// could only fire and fail, with no job_runs row and no audit
+			// row to find it by.
+			name: "a scheduled rebuild could only ever fire and fail",
+			edit: func(in *Instance) {
+				in.Spec.Jobs = map[string]Job{
+					"wipe": {Action: "rebuild", Schedule: "Sun *-*-* 04:00:00"},
+				}
+			},
+			path: "spec.jobs.wipe.action",
+		},
+		{
+			name: "a scheduled restore is the same refusal",
+			edit: func(in *Instance) {
+				in.Spec.Jobs = map[string]Job{
+					"roll": {Action: "restore", Schedule: "Sun *-*-* 04:00:00"},
+				}
+			},
+			path: "spec.jobs.roll.action",
+		},
+		{
 			name: "a job with no schedule would never fire",
 			edit: func(in *Instance) { in.Spec.Jobs = map[string]Job{"backup": {}} },
 			path: "spec.jobs.backup.schedule",

@@ -50,6 +50,14 @@ func TestFileKindsDeriveSection5Paths(t *testing.T) {
 		// by an operator" rather than showing a stopped instance as down.
 		{FileHold, fileTarget{Instance: name},
 			"/run/gvm/pz-main/hold", 0o644, "", false},
+		// World-readable for the same reason as the hold, and its exact
+		// opposite in meaning: this one is what `gvm-guard.timer` acts on.
+		{FileDegraded, fileTarget{Instance: name},
+			"/run/gvm/pz-main/degraded", 0o644, "", false},
+		// No .bak. A stale copy of the document that says "a job is running
+		// NOW" is the one kind of litter that could be misread as live.
+		{FileLease, fileTarget{Instance: name},
+			"/var/lib/gvm/instances/pz-main/lease.json", 0o640, "", false},
 	}
 
 	seen := map[FileKind]bool{}

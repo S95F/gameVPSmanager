@@ -315,7 +315,12 @@ type Request struct {
 	LogDir     string
 	RunDir     string
 
-	JobLock    string
+	// RunnerLock is section 11.7's lock 1, Paths.RunnerLock: the "one
+	// supervisor per world" flock, held for the whole life of this process.
+	// Not the job engine's lock, which lives under /var/lib/gvm/locks and has
+	// a different lifetime -- the two were one file once, and then no
+	// instance-scoped job could run on a live server.
+	RunnerLock string
 	RunnerJSON string
 
 	// Secrets are the credential ids the instance needs from
@@ -367,16 +372,16 @@ func Gather(req Request) (Facts, *platform.FileLock) {
 	// supervisor. An empty path is a refusal, not a skip -- world safety must
 	// not be switchable off by leaving a field blank.
 	var held *platform.FileLock
-	if req.JobLock == "" {
-		f.Lock = LockFact{Err: errors.New("runner: preflight was given no job lock path")}
+	if req.RunnerLock == "" {
+		f.Lock = LockFact{Err: errors.New("runner: preflight was given no runner lock path")}
 	} else {
 		fn := req.Flock
 		if fn == nil {
 			fn = platform.Flock
 		}
 		var err error
-		held, err = fn(req.JobLock)
-		f.Lock = LockFact{Path: req.JobLock, Err: err}
+		held, err = fn(req.RunnerLock)
+		f.Lock = LockFact{Path: req.RunnerLock, Err: err}
 	}
 
 	f.Orphan = gatherOrphan(req)

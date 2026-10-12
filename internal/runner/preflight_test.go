@@ -222,7 +222,7 @@ func testRequest(t *testing.T) Request {
 		DataDir:    data,
 		LogDir:     logs,
 		RunDir:     run,
-		JobLock:    filepath.Join(run, "job.lock"),
+		RunnerLock: filepath.Join(run, "job.lock"),
 		RunnerJSON: filepath.Join(run, "runner.json"),
 		Flock:      fakeLock(nil),
 	}
@@ -342,7 +342,7 @@ func TestPreflightRefusesWithNoLockLeftHeld(t *testing.T) {
 func TestPreflightWithNoLockPathRefuses(t *testing.T) {
 	// World safety must not be switchable off by leaving a field blank.
 	req := testRequest(t)
-	req.JobLock = ""
+	req.RunnerLock = ""
 	if _, err := Preflight(req); err == nil {
 		t.Fatal("preflight ran with no job lock")
 	}

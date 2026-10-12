@@ -108,6 +108,30 @@ const (
 	// 0644 and world-readable on purpose: the unprivileged web tier has to be
 	// able to say "held by an operator" instead of showing a red "down".
 	FileHold FileKind = "hold"
+	// FileDegraded is /run/gvm/<name>/degraded: the breadcrumb a job leaves
+	// when it stopped a server and could not start it again (section 13.4).
+	//
+	// It is the exact opposite of FileHold and is declared beside it for that
+	// reason. A hold suppresses `gvm-guard.timer`; this one is what the guard
+	// timer acts on. Both are privileged writes with a consequence, so neither
+	// is left to whichever package happened to be holding the instance when
+	// things went wrong -- and routing it through here means the audit row
+	// that says a world was left down is written by the same call that left
+	// the marker.
+	//
+	// 0644 for the same reason as the hold: the web tier has to be able to
+	// show "a nightly update left this stopped" rather than a bare red dot.
+	FileDegraded FileKind = "degraded"
+	// FileLease is /var/lib/gvm/instances/<name>/lease.json: which job owns
+	// this instance right now (section 5.3, lifecycle.Lease).
+	//
+	// A privileged kind rather than a plain write because taking it is what
+	// makes `gvm start` refuse, so an unaudited lease is an unaudited refusal.
+	// It is under /var/lib/gvm rather than /run deliberately -- lifecycle's
+	// Lease doc has the reason: /run is tmpfs, and a lease that vanished on
+	// reboot could not tell "the job finished" from "the box died
+	// mid-update".
+	FileLease FileKind = "lease"
 )
 
 // fileDecl is one kind's declaration.
@@ -211,6 +235,21 @@ var fileKinds = map[FileKind]fileDecl{
 		// runner creates anything else in it (section 6.5).
 		Kind: FileHold, Mode: 0o644, ParentMode: 0o750,
 		Path: func(t fileTarget) (string, error) { return instance.PathsFor(t.Instance).Hold, nil },
+	},
+	FileDegraded: {
+		// ParentMode for the same reason the hold has one: the marker is
+		// written in the moments after a stop, and a clean stop takes
+		// /run/gvm/<name> with it (RuntimeDirectoryPreserve=restart).
+		Kind: FileDegraded, Mode: 0o644, ParentMode: 0o750,
+		Path: func(t fileTarget) (string, error) { return instance.PathsFor(t.Instance).Degraded, nil },
+	},
+	FileLease: {
+		// 0640 root:root inside a 0750 root:root directory. No .bak: a
+		// previous lease is not a human's work, and a stale copy of a
+		// document whose whole purpose is to say "a job is running NOW" is
+		// the one kind of litter that could be misread as live.
+		Kind: FileLease, Mode: 0o640,
+		Path: func(t fileTarget) (string, error) { return instance.PathsFor(t.Instance).Lease, nil },
 	},
 }
 

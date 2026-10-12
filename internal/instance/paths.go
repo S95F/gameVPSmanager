@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"fmt"
 	"path"
 
 	"github.com/S95F/gameVPSmanager/internal/spec"
@@ -56,8 +57,14 @@ const (
 	// the shared ~/.steam corruption class outright rather than only
 	// serialising around it (D-30, section 5.2).
 	SteamHomesDir = StateRoot + "/cache/steam/homes"
+	// LocksDir holds the flocks that serialise jobs (D-30). It is under
+	// StateRoot rather than RunRoot because a HOST-level job's lock has no
+	// instance runtime directory to live in, and because the directory has to
+	// exist before the first job runs rather than be created by whichever job
+	// got there first.
+	LocksDir = StateRoot + "/locks"
 	// SteamCMDLock is the host-wide flock, kept as belt-and-braces (D-30).
-	SteamCMDLock = StateRoot + "/locks/steamcmd.lock"
+	SteamCMDLock = LocksDir + "/steamcmd.lock"
 
 	// BlobsDir is the content-addressed store: every third-party byte gvm
 	// downloads itself lands here under its own digest before anything links
@@ -130,8 +137,26 @@ type Paths struct {
 	ShutdownJSON string // the rendered ladder, for run-shutdown
 	LastShutdown string
 	FreezeLease  string // present iff a freeze is armed (D-31)
-	JobLock      string // per-instance flock (D-30)
-	Hold         string // present iff an operator stopped it
+	// RunnerLock is section 11.7's lock 1: the runner flocks it in preflight
+	// and holds it for the whole life of the unit, which is what makes "one
+	// supervisor per world" true and what makes a second `gvm run` exit 75.
+	//
+	// It is NOT the job engine's lock -- that is InstanceJobLockPath, under
+	// LocksDir -- and the name says so because for a while the two were the
+	// same file and nothing in the codebase said which role it was playing.
+	// Its placement inside the RuntimeDirectory is correct for this role and
+	// only this one: the holder's lifetime IS the unit's, so systemd's
+	// removal of the directory coincides with the release. The on-disk name
+	// stays job.lock, which is what section 11.7 and preflight's STATUS line
+	// both quote.
+	RunnerLock string
+	Hold       string // present iff an operator stopped it
+	// Degraded is the breadcrumb a job leaves when it could not put the
+	// server back (section 13.4). It is the companion of Hold and the
+	// opposite of it: a hold says a human wants this instance down and the
+	// guard timer must leave it alone, while this says gvm wanted it up and
+	// failed, which is exactly what the guard timer is for.
+	Degraded string
 
 	// Logs and archives. Backups is 0700 root:root, which is the one thing in
 	// install.sh deliberately not ported: a compromised mod must not be able
@@ -182,8 +207,9 @@ func PathsFor(name string) Paths {
 		ShutdownJSON: path.Join(run, "shutdown.json"),
 		LastShutdown: path.Join(run, "last-shutdown.json"),
 		FreezeLease:  path.Join(run, "freeze.lease"),
-		JobLock:      path.Join(run, "job.lock"),
+		RunnerLock:   path.Join(run, "job.lock"),
 		Hold:         path.Join(run, "hold"),
+		Degraded:     path.Join(run, "degraded"),
 
 		Logs:        logs,
 		ConsoleLog:  path.Join(logs, "console.log"),
@@ -193,6 +219,52 @@ func PathsFor(name string) Paths {
 
 		Srv: path.Join(SrvRoot, name),
 	}
+}
+
+// HostJobLockPath is the flock a HOST-level job takes (D-13: `_guard`,
+// `_verify`).
+//
+// It is derived from the job name rather than from an instance because there
+// is no instance: the slug's instance half is empty. The file is named with
+// the slug's own spelling so that `fuser /var/lib/gvm/locks/job__verify.lock`
+// and `systemctl status gvm-job@_verify` name the same thing.
+func HostJobLockPath(job string) string {
+	if err := ValidateJobName(job); err != nil {
+		panic(fmt.Sprintf("instance: %v; call ValidateJobName before deriving a lock path", err))
+	}
+	return path.Join(LocksDir, "job_"+JobSlug("", job)+".lock")
+}
+
+// InstanceJobLockPath is the flock an INSTANCE-scoped job takes, so that one
+// instance runs one job at a time (D-30).
+//
+// It is keyed on the instance and not on the slug, because that is the
+// invariant: job_pz-main.lock has to serialise pz-main_nightly against
+// pz-main_update. A per-slug file would let a backup and an update into the
+// same install tree together.
+//
+// It is NOT Paths.RunnerLock, and the two must never be the same file again.
+// RunnerLock is §11.7 lock 1 -- the runner takes it in preflight and holds it
+// for the whole life of the unit, which is what "one supervisor per world"
+// means -- so a job that took it could not run on a live instance at all, and
+// the runner could not start while a job held it. Its placement inside
+// /run/gvm/<name> is right for THAT role, where the holder's lifetime is the
+// unit's; it is wrong for this one, because gvm@.service declares
+// RuntimeDirectory= and systemd deletes that directory on a stop the job
+// itself performs -- unlinking a flocked file under its holder and letting a
+// second job create a fresh inode at the same path.
+//
+// Under LocksDir with the host jobs' locks, where packaging's tmpfiles
+// already creates the directory 0750 root:root before the first job runs
+// rather than leaving it to whichever job got there first. Losing tmpfs costs
+// nothing: no flock survives a process death or a reboot wherever the file
+// lives, and a surviving holder LINE cannot be mistaken for contention,
+// because a *Busy is only ever produced after a real TryLock failure and
+// writeHolder truncates. D-45 forbids `_` in an instance name, so this can
+// never collide with job__guard.lock.
+func InstanceJobLockPath(name string) string {
+	MustValidName(name)
+	return path.Join(LocksDir, "job_"+name+".lock")
 }
 
 // Secret is the file backing one of this instance's credentials -- the path a

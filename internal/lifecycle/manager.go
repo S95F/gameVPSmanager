@@ -70,7 +70,22 @@ type Request struct {
 	Budget time.Duration
 	// Force overrides an overridable refusal. It never overrides one whose
 	// Refusal.Force is false.
-	Force     bool
+	Force bool
+	// NoHold suppresses a stop's hold marker, and it exists because
+	// /run/gvm/<n>/hold means exactly one thing: a HUMAN asked for this
+	// instance to be down. Both `gvm-guard.timer` (through
+	// FindingNotRunning's !Hold term) and internal/jobs' RunningGuard read it
+	// as operator intent and stand aside for it, so a stop issued by a JOB
+	// must not forge it -- an update that fails fatally between its own stop
+	// and its own start would otherwise leave the world down overnight with
+	// the five-minute recovery promise silently disarmed.
+	//
+	// It removes nothing that was load-bearing. What keeps a second writer
+	// out of an install tree mid-job is the LIVE lease (see Allowed), not the
+	// hold. Only internal/jobs' supervisor sets it; `gvm stop` from an
+	// operator keeps writing the marker, and VerbStart keeps clearing one
+	// whoever wrote it.
+	NoHold    bool
 	RequestID string
 }
 
@@ -211,12 +226,18 @@ func (m *Manager) execute(ctx context.Context, d Decl, req Request, res *Result)
 
 	var params audit.Params
 	if d.Hold == HoldSet {
-		body := FormatHold(m.now(), req.Actor, req.Reason)
-		if err := m.step(ctx, res, hostops.Request{
-			Verb: hostops.VerbFileWrite, Actor: req.Actor, Instance: req.Instance,
-			File: hostops.FileHold, Body: body, RequestID: req.RequestID,
-		}); err != nil {
-			return err
+		// NoHold turns HoldSet into HoldKeep: the ladder, the rung and the
+		// audit params below are unchanged, and only the marker is skipped.
+		// See Request.NoHold -- the hold is a claim about a human's intent and
+		// a job has none to record.
+		if !req.NoHold {
+			body := FormatHold(m.now(), req.Actor, req.Reason)
+			if err := m.step(ctx, res, hostops.Request{
+				Verb: hostops.VerbFileWrite, Actor: req.Actor, Instance: req.Instance,
+				File: hostops.FileHold, Body: body, RequestID: req.RequestID,
+			}); err != nil {
+				return err
+			}
 		}
 		out, err := m.Shutdown(ctx, req.Instance, req.Budget)
 		if err != nil {
@@ -246,7 +267,7 @@ func (m *Manager) execute(ctx context.Context, d Decl, req Request, res *Result)
 		return err
 	}
 
-	if d.Hold == HoldSet {
+	if d.Hold == HoldSet && !req.NoHold {
 		// The stop took the runtime directory with it. Write the marker again.
 		if err := m.step(ctx, res, hostops.Request{
 			Verb: hostops.VerbFileWrite, Actor: req.Actor, Instance: req.Instance,

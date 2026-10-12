@@ -27,9 +27,12 @@ const onCalendarPrefix = "OnCalendar="
 type TimerInput struct {
 	Instance string
 	Job      string
-	// Action is what the job does: update | restart | backup | content_sync |
-	// rebuild. It reaches the file only as the Description, but it is the
-	// thing an operator greps `systemctl list-timers` for.
+	// Action is what the job does: update | restart | backup | content_sync.
+	// It reaches the file only as the Description, but it is the thing an
+	// operator greps `systemctl list-timers` for. The destructive kinds are
+	// absent because they cannot be scheduled at all -- section 16.4's
+	// confirmation is a name a person types, and a timer has nowhere to put
+	// one (see spec.unschedulableActions).
 	Action string
 
 	Schedule        string

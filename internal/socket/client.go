@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/console"
@@ -15,6 +17,25 @@ import (
 // DefaultDialTimeout bounds a connect to a local unix socket. A runner that is
 // alive answers instantly; anything slower is a runner that is not.
 const DefaultDialTimeout = 5 * time.Second
+
+// DefaultCallTimeout bounds one request/response round trip.
+//
+// It exists because the runner can be alive and still never answer: a
+// `console.OpSend` is dispatched synchronously on the connection's own
+// goroutine and ends in a write to the pty master with no deadline, so a
+// blocked pty write wedges the dispatcher and no `ev:sent` is ever written.
+// With no bound the caller waits for TimeoutStartSec -- four hours for a job,
+// holding the instance lock and lease.json against the next nightly.
+//
+// It bounds Do and therefore every call built on it, and NOT Next: a
+// `tail follow:true` reader is legitimately silent for as long as an operator
+// leaves `gvm console` open, which is why NewClient switches the handshake
+// deadline off in the first place.
+//
+// Sixty seconds rather than five: a `verb` can legitimately take a while on a
+// loaded box, and the point of this number is to turn "forever" into
+// "eventually", not to second-guess the game.
+const DefaultCallTimeout = 60 * time.Second
 
 // ProtocolError is an `ev:error` frame the server sent back. Code is one of
 // console's closed set, so a caller branches on the code and renders only the
@@ -54,6 +75,13 @@ type Client struct {
 	instance string
 	build    string
 	peer     console.PeerInfo
+
+	// mu guards callTimeout only. A caller may narrow the bound per call --
+	// internal/cli's freeze channel derives it from the job's remaining
+	// context -- and the field is read by Do, so the two are serialised even
+	// though the surrounding protocol is not.
+	mu          sync.Mutex
+	callTimeout time.Duration
 }
 
 // Dial connects to an instance's console socket.
@@ -70,7 +98,23 @@ func Dial(ctx context.Context, path string) (*Client, error) {
 // client over a net.Pipe and how a caller that already holds a connection
 // (an accepted fd, a test double) reuses one.
 func NewClient(rw io.ReadWriteCloser) *Client {
-	return &Client{c: NewConn(rw, 0, -1)}
+	return &Client{c: NewConn(rw, 0, -1), callTimeout: DefaultCallTimeout}
+}
+
+// SetCallTimeout narrows or widens the bound Do applies to one call's reads.
+// Zero or negative switches it off, which is only ever right for a caller that
+// has its own ceiling.
+func (c *Client) SetCallTimeout(d time.Duration) {
+	c.mu.Lock()
+	c.callTimeout = d
+	c.mu.Unlock()
+}
+
+// CallTimeout reports the current bound.
+func (c *Client) CallTimeout() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.callTimeout
 }
 
 // Conn exposes the framing, for a caller that needs raw frames.
@@ -104,12 +148,28 @@ func (c *Client) Next() (console.Event, error) { return c.c.ReadEvent() }
 // already following, a shutdown step -- go to on, which may be nil to discard
 // them. An `ev:error` frame is returned as a *ProtocolError.
 func (c *Client) Do(req console.Request, want console.EventKind, on func(console.Event)) (console.Event, error) {
+	// A connection whose read deadline has already fired is unusable: the
+	// decoder may have stopped mid-frame and nothing can resynchronise from
+	// that. Refusing here is what makes a retry on the same client -- a
+	// freeze's thaw after its flush timed out -- fail fast instead of putting
+	// a second goroutine into ReadEvent, which Conn's own doc forbids.
+	if err := c.c.Err(); err != nil {
+		return console.Event{}, err
+	}
 	if err := c.Request(req); err != nil {
 		return console.Event{}, err
 	}
+	// Bounded for the whole call rather than per frame: the budget is for one
+	// answer, and a peer that dribbled intermediate events forever would
+	// otherwise reset it each time.
+	restore := c.c.armCall(c.CallTimeout())
+	defer restore()
 	for {
 		ev, err := c.Next()
 		if err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				c.c.fail(err)
+			}
 			return console.Event{}, err
 		}
 		switch ev.Ev {

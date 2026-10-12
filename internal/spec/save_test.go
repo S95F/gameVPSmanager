@@ -86,7 +86,7 @@ func TestFsyncOrderIsWriteSyncBackupRenameSyncDir(t *testing.T) {
 	}
 
 	p := &writeProbe{}
-	if err := writeAtomic(path, []byte("second\n"), ModeSpec, true, p); err != nil {
+	if err := writeAtomic(path, []byte("second\n"), ModeSpec, true, -1, -1, p); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	want := []string{stepWrite, stepSyncFile, stepCloseFile, stepChmod, stepBackup, stepRename, stepSyncDir}
@@ -107,7 +107,7 @@ func TestCrashBeforeRenameLeavesTheOriginalIntact(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			err := writeAtomic(path, []byte("REPLACEMENT\n"), ModeSpec, true, &writeProbe{failAt: failAt})
+			err := writeAtomic(path, []byte("REPLACEMENT\n"), ModeSpec, true, -1, -1, &writeProbe{failAt: failAt})
 			if !errors.Is(err, errProbeAbort) {
 				t.Fatalf("err = %v, want the injected abort", err)
 			}
@@ -134,7 +134,7 @@ func TestCrashAfterRenameHasAlreadyCommitted(t *testing.T) {
 	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := writeAtomic(path, []byte("new\n"), ModeSpec, true, &writeProbe{failAt: stepRename})
+	err := writeAtomic(path, []byte("new\n"), ModeSpec, true, -1, -1, &writeProbe{failAt: stepRename})
 	if !errors.Is(err, errProbeAbort) {
 		t.Fatalf("err = %v", err)
 	}
@@ -154,7 +154,7 @@ func TestLeftoverTempFromACrashIsNotAManifest(t *testing.T) {
 	if err := os.WriteFile(path, []byte(gameYAML("valheim", 3)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := writeAtomic(path, []byte(gameYAML("valheim", 4)), ModeSpec, true, &writeProbe{failAt: stepWrite})
+	err := writeAtomic(path, []byte(gameYAML("valheim", 4)), ModeSpec, true, -1, -1, &writeProbe{failAt: stepWrite})
 	if !errors.Is(err, errProbeAbort) {
 		t.Fatalf("err = %v", err)
 	}

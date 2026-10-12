@@ -370,17 +370,29 @@ func (p *Provider) Plan(ctx context.Context, c *provider.Ctx, in provider.Intent
 	// An update with nothing to fetch is the normal answer on most nights, and
 	// it must not stop the server or page anyone (D-43).
 	if in == provider.IntentUpdate && !check.UpdateAvailable() {
-		return provider.EmptyPlan(in, fmt.Sprintf("%s: %s, so nothing is downloaded and nothing "+
-			"stops", c.Name, check.Summary())), nil
+		pl := provider.EmptyPlan(in, fmt.Sprintf("%s: %s, so nothing is downloaded and nothing "+
+			"stops", c.Name, check.Summary()))
+		// BuildAhead lands here too, and it is reported as "no update" on
+		// purpose (see BuildState): rolling a live world backwards on a
+		// nightly timer is not something gvm does unasked. The two ids are
+		// still carried, so the job log says which pair produced the no-op.
+		stampBuilds(pl, check, false)
+		return pl, nil
 	}
 
 	// An adopted instance reaching here has an update available and no
 	// permission to perform it. The plan is empty and says what to do, verbatim
 	// from section 13.5.
 	if !c.ManagedInstall {
-		return provider.EmptyPlan(in, fmt.Sprintf(
+		pl := provider.EmptyPlan(in, fmt.Sprintf(
 			"%s; %s is adopted (managed_install: false). Allow gvm to update it with: "+
-				"gvm instance promote %s", check.Summary(), c.Name, c.Name)), nil
+				"gvm instance promote %s", check.Summary(), c.Name, c.Name))
+		// The one place UpdateAvailable is true. Without it the pipeline sees
+		// an empty plan and records `skipped` with no `update_available`, and
+		// the operator is never told that the nightly they had before adoption
+		// is now reporting nothing.
+		stampBuilds(pl, check, true)
+		return pl, nil
 	}
 
 	validate := validateFor(sc, in)
@@ -421,6 +433,7 @@ func (p *Provider) Plan(ctx context.Context, c *provider.Ctx, in provider.Intent
 		Destructive: validate && populated,
 		Opaque:      dec,
 	}
+	stampBuilds(pl, check, false)
 	pl.Artifacts = append(pl.Artifacts, provider.Artifact{
 		Digest:  provider.Digest(fmt.Sprintf("buildid:%d:%s", sc.InstallAppID, check.Remote)),
 		Size:    dec.bytes,
@@ -1069,6 +1082,26 @@ func validateFor(sc *spec.SteamCMDSpec, in provider.Intent) bool {
 		return false
 	}
 	return slices.Contains(sc.ValidateOn, in)
+}
+
+// stampBuilds puts the comparison's two ids on the plan in structured form.
+//
+// Every exit of Plan that performed a build check calls it, including the two
+// that return an EMPTY plan, because those are the two the update pipeline has
+// to tell apart: "current, nothing to do" and "stale, and this instance is
+// adopted so gvm will not touch it". The Label carries the branch so that a
+// diff printed for a beta instance does not read as if it were public.
+func stampBuilds(pl *provider.Plan, check BuildCheck, updateAvailable bool) {
+	if pl == nil {
+		return
+	}
+	if check.Local != "" {
+		pl.Current = provider.Version{ID: check.Local, Label: check.Branch}
+	}
+	if check.Remote != "" {
+		pl.Target = provider.Version{ID: check.Remote, Label: check.Branch}
+	}
+	pl.UpdateAvailable = updateAvailable
 }
 
 func planReason(c *provider.Ctx, sc *spec.SteamCMDSpec, check BuildCheck, in provider.Intent, validate bool) string {

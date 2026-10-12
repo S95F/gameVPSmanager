@@ -202,6 +202,21 @@ func (c *Conn) armRead() {
 	}
 }
 
+// armCall applies a read deadline for the duration of one request/response
+// call and returns the function that clears it.
+//
+// Deliberately not a connection-wide idle deadline: the handshake deadline is
+// switched off for a client (NewConn with a negative value) because a
+// following reader is allowed to be silent for hours, and this must not take
+// that back. Only Client.Do arms it.
+func (c *Conn) armCall(d time.Duration) func() {
+	if c.dl == nil || d <= 0 {
+		return func() {}
+	}
+	_ = c.dl.SetReadDeadline(time.Now().Add(d))
+	return func() { _ = c.dl.SetReadDeadline(time.Time{}) }
+}
+
 // Err reports the write error that broke this connection, if any.
 func (c *Conn) Err() error {
 	c.mu.Lock()

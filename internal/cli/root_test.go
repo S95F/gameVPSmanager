@@ -36,8 +36,7 @@ func TestVersionSucceeds(t *testing.T) {
 // would keep passing for a command that had grown a usage error instead of a
 // working body.
 func TestUnimplementedCommandExitsNonZero(t *testing.T) {
-	for _, name := range []string{"gvmd", "web", "backup", "restore",
-		"update", "rebuild", "adopt", "firewall", "doctor"} {
+	for _, name := range []string{"gvmd", "web", "adopt", "firewall", "doctor"} {
 		code, _, errb := run(t, name)
 		if code == 0 {
 			t.Errorf("%s: exit 0, want non-zero while unimplemented", name)
@@ -58,6 +57,11 @@ func TestImplementedCommandsAreNotStubs(t *testing.T) {
 		// Both spellings: `gvm mods` is an alias and an alias that answered
 		// "not implemented" would be a second verb to keep in step.
 		{"content"}, {"mods"},
+		// Phase 10. `job` in particular: `gvm-job@.service` runs `gvm job run
+		// %i`, so an unbuilt one would be a unit that fails at 05:00 with
+		// "not implemented" in the journal and no other clue.
+		{"job"}, {"job", "run", "_guard"}, {"job", "list"},
+		{"backup"}, {"restore"}, {"update"}, {"rebuild"},
 	} {
 		_, _, errb := run(t, args...)
 		if strings.Contains(errb, "not implemented") {

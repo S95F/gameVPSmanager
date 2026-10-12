@@ -1,0 +1,60 @@
+# /usr/lib/systemd/system/gvm-job@_guard.service  -- ARCHITECTURE.md 13.4, 7.5
+#
+# A CONCRETE unit for one template instance, which systemd prefers over
+# gvm-job@.service when the instance name is `_guard`. That is the mechanism
+# being used on purpose, and the reason is the budget: the template carries
+# TimeoutStartSec=14400, which is right for a rebuild and wrong for a sweep
+# that fires every five minutes. A wedged guard under the template's budget
+# would block its own next 48 runs, because a timer does not start a second
+# run while the first is still active -- so the one unit whose job is to
+# recover from a wedged job would be the one that could not.
+#
+# Everything else is the template's, repeated rather than inherited because a
+# concrete unit inherits nothing from the template it shadows.
+# TestTheHostJobUnitsCarryTheTemplatesHardening parses both files and fails if
+# any hardening directive here drifts from gvm-job@.service, so the duplication
+# cannot rot quietly -- which is the trade a drop-in would have avoided at the
+# cost of `systemctl cat` no longer showing an operator the whole unit.
+#
+# The instance part of %i is EMPTY, which is how D-13 spells a host-level job:
+# this one acts on every instance on the box and holds no instance's lease.
+[Unit]
+Description=gvm recovery sweep (host-level job %i)
+After=network-online.target
+Wants=network-online.target
+# Deliberately NOT PartOf=gvm.target: stopping gvm.target must not abort a
+# running job halfway through.
+
+[Service]
+Type=oneshot
+User=root
+Slice=gvm-jobs.slice
+ExecStart=/usr/local/bin/gvm job run %i
+
+# Ten minutes, against the template's four hours. The sweep is reads plus one
+# start per instance that is genuinely down; anything slower than this is a
+# D-Bus or a filesystem that has stopped answering, and the right response is
+# to fail and let the next tick re-derive the answer from scratch.
+TimeoutStartSec=600
+
+# The job runs its own shutdown ladder; systemd must not race it. (The guard
+# kind never stops anything, but the directives are the template's and a unit
+# that differed here would differ for no stated reason.)
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=600
+SendSIGKILL=yes
+
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=0
+LogRateLimitBurst=0
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+# jobs must reach /home/pzserver/Zomboid
+ProtectHome=no
+# systemd-run needs the manager
+ProtectControlGroups=no
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK

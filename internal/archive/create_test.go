@@ -140,6 +140,26 @@ func TestExcludePatterns(t *testing.T) {
 		{[]string{"*.log"}, "logs/server.log", false},
 		{[]string{"logs/*.log"}, "logs/server.log", true},
 		{nil, "Server/servertest.ini", false},
+
+		// The "**/" PREFIX is the third form, and Project Zomboid's manifest
+		// declares it: `**/*.lock`. path.Match's "*" does not cross a
+		// separator, so without the depth walk this pattern would match a
+		// lock file one directory down and miss the one in
+		// Saves/Multiplayer/<world>/ -- which is where a world actually is.
+		{[]string{"**/*.lock"}, "x.lock", true},
+		{[]string{"**/*.lock"}, "Saves/x.lock", true},
+		{[]string{"**/*.lock"}, "Saves/Multiplayer/gvm/map_t.bin.lock", true},
+		{[]string{"**/*.lock"}, "Saves/Multiplayer/gvm/map_t.bin", false},
+		{[]string{"**/cache"}, "a/b/cache/thing", true},
+		{[]string{"**/cache/**"}, "a/b/cache/thing", true},
+		{[]string{"**/cache/**"}, "a/b/cache", false},
+		// A bare "**" means everything, and the shipped manifests never write
+		// one. Pinned here because the reading is not obvious from the code:
+		// it falls through to the ancestor match, where "**" matches any
+		// single top-level directory. An operator who writes it has emptied
+		// their own archive, and spec's validator is where that should be
+		// caught rather than reinterpreted here.
+		{[]string{"**/"}, "Server/servertest.ini", true},
 	}
 	for _, tc := range cases {
 		if got := excluded(tc.patterns, tc.rel); got != tc.want {

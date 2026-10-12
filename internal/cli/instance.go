@@ -138,8 +138,17 @@ type HostEnv struct {
 	// BootID is this boot's id, for classifying a job lease. Empty only
 	// disables the boot check, which is the safe direction.
 	BootID string
+	// Audit is where the job layer's `job.run` spans go. Nil is a
+	// journal-only logger: section 3.3 is explicit that a verb works with the
+	// control plane dead and logs a warning if the record fails, so a missing
+	// sink must not be a missing verb.
+	Audit *audit.Logger
 	// Now is the clock.
 	Now func() time.Time
+
+	// Jobs are the work engines internal/jobs drives, and the seams that let
+	// a whole job run be driven from a Windows test (job.go).
+	Jobs JobSeams
 
 	// closers are released by Close. Production holds a systemd connection
 	// and an open spool file.
@@ -265,6 +274,11 @@ func (env *Env) host(ctx context.Context) (*HostEnv, error) {
 
 	lg, closeAudit := productionAudit()
 	h.closers = append(h.closers, closeAudit)
+	// The same logger hostops audits through, so a job's `job.run` span and
+	// the `instance_stop` row its ladder writes land in one spool in one
+	// order. Two loggers would be two spool files whose interleaving nothing
+	// preserved.
+	h.Audit = lg
 
 	ops, err := hostops.NewLocal(ctx, lg)
 	if err != nil {
@@ -410,15 +424,41 @@ func (h *HostEnv) observer() *lifecycle.Observer {
 // holder cannot be checked stays LIVE, because calling it stale lets a second
 // updater into an install tree the first one may still have open. Off Linux
 // there is no /proc to read, so the honest answer is Unknown and never No.
+// It asks whether the pid EXISTS, through ReadStat, and deliberately not
+// through platform.Alive. Alive answers a different question -- "is this pid
+// still the process that was pinned with these start ticks" -- and
+// lifecycle.Lease carries no such pin, so the only value to pass would be
+// zero. Alive ends in `st.StartTicks == wantStartTicks`, so a zero pin reads
+// every LIVE process as (false, nil): provably gone. That would classify every
+// running job's lease as STALE, which makes FindingStaleLease fire during
+// every nightly, makes Allowed refuse `gvm start` with "a job died holding
+// this instance" while one is working, and -- once gvm-guard.timer recovers a
+// stale-leased instance -- would have the guard start a server a LIVE job had
+// just stopped on purpose. There is no pin to lose: a reused pid reads as
+// alive, which is the safe direction Classify documents.
 func aliveTri(pid int) lifecycle.Tri {
 	if pid <= 0 {
 		return lifecycle.Unknown
 	}
-	ok, err := platform.Alive(pid, 0)
-	if err != nil {
+	_, err := platform.ReadStat(pid)
+	return aliveFrom(err)
+}
+
+// aliveFrom is the decision aliveTri makes, split out so the asymmetry is
+// assertable on a machine with no /proc.
+func aliveFrom(err error) lifecycle.Tri {
+	switch {
+	case err == nil:
+		return lifecycle.Yes
+	case errors.Is(err, fs.ErrNotExist):
+		// Looked, and it is gone. The only answer that may be No.
+		return lifecycle.No
+	default:
+		// Could not look: no /proc, a permission error, a malformed stat
+		// line. Spelling that the same way as "it is gone" lets a second
+		// updater into an install tree the first one may still have open.
 		return lifecycle.Unknown
 	}
-	return lifecycle.TriOf(ok)
 }
 
 // osFiles is the production read-only filesystem.

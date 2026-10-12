@@ -34,10 +34,52 @@ const (
 	ActivationDerive   = "derive"
 )
 
-// Job actions (section 13.3).
+// Job actions -- the actions an INSTANCE YAML may schedule. These four are
+// what section 6's canonical instance YAML enumerates.
+//
+// It is a subset of the job kinds internal/jobs can execute, and deliberately
+// so. The exclusions are in unschedulableActions below, each with its reason,
+// because the generic "%q is not a job action" diagnostic is actively
+// unhelpful for a word that plainly IS one.
 var jobActions = map[string]bool{
-	"update": true, "restart": true, "backup": true, "content_sync": true, "rebuild": true,
+	"update": true, "restart": true, "backup": true, "content_sync": true,
 }
+
+// unschedulableActions are kinds internal/jobs can run that an instance may
+// not put on a timer, and why.
+//
+// Spelled out here rather than derived, because internal/jobs imports this
+// package and not the reverse -- so the authority at RUNTIME is this list and
+// the authority in TEST is internal/jobs, whose
+// TestNoSchedulableActionNeedsAnOperatorToTypeAName asserts that nothing in
+// JobActions() is Destructive(). Either list growing a destructive kind fails
+// the build rather than producing a nightly that cannot run.
+var unschedulableActions = map[string]string{
+	// Host-level timers that sweep every instance. A per-instance copy of any
+	// of the three would be a second schedule racing the host one.
+	"prune":  "`prune` is a host-level timer that sweeps every instance; a per-instance copy would race it",
+	"verify": "`verify` is a host-level timer that sweeps every instance; a per-instance copy would race it",
+	"guard":  "`guard` IS the recovery sweep, and it runs host-wide every five minutes",
+	// Destructive, and section 16.4's confirmation is an instance name typed
+	// by a person. A timer cannot type one: gvm-job@.service's ExecStart is a
+	// bare `gvm job run %i` with no flags, and jobs.Descriptor is three
+	// fields with no room for consent. The engine checks the confirmation
+	// before it takes the lock or opens the audit span, so a scheduled one
+	// fires and fails with no job_runs row and no audit row -- the least
+	// observable failure in this subsystem.
+	"rebuild": "a rebuild archives the world and then DELETES it; section 16.4 requires the " +
+		"instance name typed by an operator, which a timer cannot supply",
+	"restore": "a restore overwrites the live world from an archive; section 16.4 requires the " +
+		"instance name typed by an operator, which a timer cannot supply",
+}
+
+// JobActions returns the actions an instance may schedule, sorted.
+//
+// Exported so the job layer can assert it has a runner for every one of them
+// without keeping a second copy of the list. A validator that accepts an
+// action nothing can execute produces a timer that fires nightly and fails
+// nightly, which is the least observable failure in the subsystem.
+func JobActions() []string { return sortedKeys(jobActions) }
 
 // collectionSyncModes are how often a Steam collection is re-read.
 var collectionSyncModes = map[string]bool{"manual": true, "on_update": true, "off": true}
@@ -188,8 +230,27 @@ func ValidateInstance(in *Instance, m *Manifest, vals ValidatorInput, ix *NodeIn
 			action = name
 		}
 		if !jobActions[action] {
-			c.add(c.errf("spec.jobs."+name+".action", "%q is not a job action (want %s)",
-				action, orList(sortedKeys(jobActions))))
+			path := "spec.jobs." + name + ".action"
+			if why, known := unschedulableActions[action]; known {
+				// A known action that cannot be scheduled. The generic list
+				// would be a worse message than no message: an operator told
+				// that `rebuild` "is not a job action" goes looking for a
+				// typo. A hard error and not a warning, because a warning
+				// leaves the timer written.
+				d := c.errf(path, "%q cannot be scheduled on an instance: %s", action, why)
+				switch action {
+				case "rebuild", "restore":
+					d = d.WithFix("run it from a terminal instead: gvm %s %s --confirm %s",
+						action, in.Metadata.Name, in.Metadata.Name)
+				default:
+					d = d.WithFix("the host timer already covers every instance; remove this " +
+						"jobs entry")
+				}
+				c.add(d)
+			} else {
+				c.add(c.errf(path, "%q is not a job action (want %s)",
+					action, orList(sortedKeys(jobActions))))
+			}
 		}
 		if j.Schedule == "" {
 			c.add(c.errf("spec.jobs."+name+".schedule", "a job needs a schedule (a systemd OnCalendar expression)"))

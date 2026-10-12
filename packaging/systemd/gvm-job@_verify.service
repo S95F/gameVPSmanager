@@ -1,0 +1,66 @@
+# /usr/lib/systemd/system/gvm-job@_verify.service  -- ARCHITECTURE.md 13.2, 7.5
+#
+# A CONCRETE unit for the `_verify` template instance, for one reason the
+# template cannot express: this job re-hashes gigabytes of archives on a box
+# whose other job is serving a game. Nightly verification is the only thing in
+# gvm that is both unimportant to finish quickly and capable of saturating a
+# small VPS's disk, so it runs at idle I/O priority and with a CPU nice value.
+# Without that, the one night an operator notices this unit is the night it
+# makes their world stutter -- and the fix they will reach for is disabling it,
+# which costs them the check that discovers a truncated archive before a restore
+# needs it.
+#
+# Everything else is gvm-job@.service's, repeated because a concrete unit
+# inherits nothing from the template it shadows, and asserted against it by
+# TestTheHostJobUnitsCarryTheTemplatesHardening.
+#
+# The instance part of %i is EMPTY (D-13): this job covers every instance's
+# archive directory, which is what makes it work on a box with no database --
+# the instances come from the directories under /var/backups/gvm, never from a
+# query.
+[Unit]
+Description=gvm archive verification (host-level job %i)
+After=network-online.target
+Wants=network-online.target
+# Deliberately NOT PartOf=gvm.target: stopping gvm.target must not abort a
+# running job halfway through.
+
+[Service]
+Type=oneshot
+User=root
+Slice=gvm-jobs.slice
+ExecStart=/usr/local/bin/gvm job run %i
+
+# The template's four hours, kept: a deep verification of the newest preserve
+# archive on every instance of a full box is legitimately slow, and this is the
+# one job where slow is fine. Finite all the same (D-12).
+TimeoutStartSec=14400
+
+# Idle I/O and a nice value, which is the whole reason this file exists. The
+# slice already caps CPUWeight and IOWeight against the games; these two put
+# this particular job behind the other provisioning work as well, because a
+# backup or an update has somebody waiting for it and a verification does not.
+IOSchedulingClass=idle
+Nice=10
+
+# The job runs its own shutdown ladder; systemd must not race it. (Verification
+# never touches a server, but the directives are the template's and a unit that
+# differed here would differ for no stated reason.)
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=600
+SendSIGKILL=yes
+
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=0
+LogRateLimitBurst=0
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+# jobs must reach /home/pzserver/Zomboid
+ProtectHome=no
+# systemd-run needs the manager
+ProtectControlGroups=no
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK

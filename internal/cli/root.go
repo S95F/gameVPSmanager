@@ -132,10 +132,15 @@ var commands = []Command{
 	// is hidden so the usage listing names one spelling: two visible entries
 	// for one verb invites the question of how they differ.
 	{Name: "mods", Group: "content", Summary: "alias for `gvm content`", Hidden: true, Run: runContent},
-	{Name: "backup", Group: "operations", Summary: "archive an instance", Run: notImplemented},
-	{Name: "restore", Group: "operations", Summary: "restore an archive", Run: notImplemented},
-	{Name: "update", Group: "operations", Summary: "update an instance", Run: notImplemented},
-	{Name: "rebuild", Group: "operations", Summary: "rebuild a world, archiving it first", Run: notImplemented},
+	{Name: "backup", Group: "operations", Summary: "archive an instance, verify and prune archives", Run: runBackup},
+	{Name: "restore", Group: "operations", Summary: "restore an archive over a world", Run: runRestore},
+	{Name: "update", Group: "operations", Summary: "update an instance, deciding before it stops", Run: runUpdate},
+	{Name: "rebuild", Group: "operations", Summary: "rebuild a world, archiving it first", Run: runRebuild},
+	// `gvm job run %i` is gvm-job@.service's ExecStart (section 7.5) and is
+	// also how an operator fires a scheduled job by hand, so it is listed
+	// rather than hidden: `gvm job list` is the answer to "what does this box
+	// run at 05:00", which is a question asked far more often than it is run.
+	{Name: "job", Group: "operations", Summary: "run and inspect the scheduled work", Run: runJob},
 
 	{Name: "adopt", Group: "migration", Summary: "import an existing server install", Run: notImplemented},
 	{Name: "firewall", Group: "host", Summary: "manage host firewall rules", Run: notImplemented},

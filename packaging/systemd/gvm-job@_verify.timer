@@ -1,0 +1,49 @@
+# /usr/lib/systemd/system/gvm-job@_verify.timer  -- ARCHITECTURE.md 13.2
+#
+# The nightly archive check. `backup.sh` had no integrity story at all: it
+# wrote a tarball, chmod'ed it and moved on, and a truncated archive was
+# discovered at restore time -- which is to say at the exact moment it was
+# needed. Per-member sha256 in the archive manifest is what makes a check
+# possible, and this timer is what makes it happen without anybody remembering.
+#
+# `gvm job run _verify` shallow-verifies every archive on the box (gzip CRC,
+# manifest parse, member count, whole-file sha256 -- seconds each) and
+# deep-verifies the newest `preserve` archive per instance (every member
+# re-hashed -- minutes). The split is a cost decision: preserve archives are
+# what a rebuild, a restore and an adopt cutover leave behind, so they are the
+# ones a restore is most likely to reach for.
+[Unit]
+Description=gvm nightly archive verification
+Documentation=man:gvm(8)
+
+[Timer]
+Unit=gvm-job@_verify.service
+
+# 06:30 UTC, and the time matters less than the ORDER. It has to run after the
+# night's backups so that the archive it checks is the one last night produced
+# -- verifying yesterday's copy every morning would leave each newest archive
+# unchecked for a full day, which is the day a restore is most likely to want
+# it. The shipped examples back up at 04:00 and update at 05:00 in the
+# operator's own timezone, so an operator whose windows differ should move this
+# rather than leave the two overlapping.
+#
+# UTC explicitly: an instance timer carries the operator's timezone because a
+# player-facing restart window is a local decision, and this one is not. A
+# host timer whose hour shifted twice a year for daylight saving would drift
+# into a backup window nobody moved.
+OnCalendar=*-*-* 06:30:00 UTC
+
+# Ten minutes of jitter, so a fleet of VPSes imaged from one template does not
+# start hashing at the same second on a shared host.
+RandomizedDelaySec=600
+
+# true, and for the backup timer's reason rather than the restart timer's: a
+# missed verification is a gap in EVIDENCE. If the box was off at 06:30, the
+# check that would have caught a bad archive did not happen, and running it
+# late is strictly better than skipping a night.
+Persistent=true
+
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

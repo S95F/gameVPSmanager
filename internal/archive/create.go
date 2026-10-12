@@ -683,22 +683,54 @@ func excluded(patterns []string, rel string) bool {
 		return false
 	}
 	for _, raw := range patterns {
-		p := cleanRel(strings.TrimSuffix(cleanRel(raw), "/**"))
-		if p == "" {
-			continue
-		}
-		deep := strings.HasSuffix(cleanRel(raw), "/**")
-		if deep {
-			if strings.HasPrefix(rel, p+"/") {
-				return true
-			}
-			continue
-		}
-		if matchPathOrAncestor(p, rel) {
+		if excludedBy(cleanRel(raw), rel) {
 			return true
 		}
 	}
 	return false
+}
+
+// excludedBy applies ONE already-cleaned pattern.
+//
+// The "**/" PREFIX means "at any depth", which is the other half of the
+// manifests' vocabulary and the half path.Match cannot express: path.Match's
+// "*" does not cross a separator, so "**/*.lock" on its own matches
+// "Saves/x.lock" and not "Saves/Multiplayer/gvm/x.lock" -- and a world three
+// directories deep is the normal case, not the exception. Project Zomboid's
+// manifest declares exactly that pattern, so without this the lock files it
+// names would travel in every nightly.
+//
+// It is strictly additive: a pattern with no "**/" prefix behaves exactly as
+// it did, and this branch can only ever exclude MORE, which is the direction
+// the manifest asked for.
+func excludedBy(pattern, rel string) bool {
+	if rest, ok := strings.CutPrefix(pattern, "**/"); ok {
+		rest = cleanRel(rest)
+		if rest == "" {
+			return false
+		}
+		// Try the remainder against the path and against every tail of it, so
+		// the depth at which it matches does not matter. The tail shrinks each
+		// time, so this terminates.
+		for tail := rel; ; {
+			if excludedBy(rest, tail) {
+				return true
+			}
+			i := strings.Index(tail, "/")
+			if i < 0 {
+				return false
+			}
+			tail = tail[i+1:]
+		}
+	}
+	p := cleanRel(strings.TrimSuffix(pattern, "/**"))
+	if p == "" {
+		return false
+	}
+	if strings.HasSuffix(pattern, "/**") {
+		return strings.HasPrefix(rel, p+"/")
+	}
+	return matchPathOrAncestor(p, rel)
 }
 
 func matchPathOrAncestor(pattern, rel string) bool {

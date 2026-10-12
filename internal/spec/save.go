@@ -74,7 +74,7 @@ func (p *writeProbe) done(step string) error {
 // would lose the previous version entirely — which is the one moment anybody
 // wants it.
 func WriteFileAtomic(path string, data []byte, perm fs.FileMode) error {
-	return writeAtomic(path, data, perm, true, nil)
+	return writeAtomic(path, data, perm, true, -1, -1, nil)
 }
 
 // WriteFileAtomicNoBackup is WriteFileAtomic for a file whose previous
@@ -87,10 +87,29 @@ func WriteFileAtomic(path string, data []byte, perm fs.FileMode) error {
 // ordering the probe points in this file pin down — sync, then rename, then
 // sync the directory — holds for secrets too.
 func WriteFileAtomicNoBackup(path string, data []byte, perm fs.FileMode) error {
-	return writeAtomic(path, data, perm, false, nil)
+	return writeAtomic(path, data, perm, false, -1, -1, nil)
 }
 
-func writeAtomic(path string, data []byte, perm fs.FileMode, keepBackup bool, p *writeProbe) (err error) {
+// WriteFileAtomicOwned is WriteFileAtomicNoBackup with the owner set on the
+// temporary file, before the rename, for the same reason the mode is: a file
+// that appears at its final path owned by the wrong account -- even for a
+// microsecond -- is a file its intended reader cannot open.
+//
+// It takes NUMBERS and not names, so this package needs no os/user lookup and
+// the account resolution stays with the caller that knows which account it
+// means. -1 leaves that half alone, which is what every caller outside
+// internal/backup passes.
+//
+// internal/backup's freeze lease is the reason it exists. The runner reads
+// that file as the instance user and treats one it cannot read as a freeze
+// that IS armed -- so it thaws, and clears the lease -- which makes a
+// published-then-chowned lease a published thaw.
+func WriteFileAtomicOwned(path string, data []byte, perm fs.FileMode, uid, gid int) error {
+	return writeAtomic(path, data, perm, false, uid, gid, nil)
+}
+
+func writeAtomic(path string, data []byte, perm fs.FileMode, keepBackup bool,
+	uid, gid int, p *writeProbe) (err error) {
 	dir := filepath.Dir(path)
 
 	prev, prevErr := os.ReadFile(path)
@@ -155,10 +174,21 @@ func writeAtomic(path string, data []byte, perm fs.FileMode, keepBackup bool, p 
 		return err
 	}
 
+	// Beside the chmod and for the same reason. Deliberately NOT a probe
+	// point: a crash here leaves exactly what a crash at the chmod leaves --
+	// the original file whole and a temp file nothing points at -- so adding
+	// one would assert the same thing twice and change every trace the
+	// ownerless callers produce.
+	if uid != -1 || gid != -1 {
+		if err = os.Chown(tmp, uid, gid); err != nil {
+			return fmt.Errorf("chown %s: %w", tmp, err)
+		}
+	}
+
 	if keepBackup && prev != nil {
 		// Atomic in its own right, so the .bak is always a complete previous
 		// version rather than whatever survived a crash mid-copy.
-		if err = writeAtomic(path+BackupSuffix, prev, perm, false, nil); err != nil {
+		if err = writeAtomic(path+BackupSuffix, prev, perm, false, uid, gid, nil); err != nil {
 			return fmt.Errorf("keep %s: %w", path+BackupSuffix, err)
 		}
 	}

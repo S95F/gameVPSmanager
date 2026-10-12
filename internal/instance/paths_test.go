@@ -40,7 +40,7 @@ func TestPathsForIsSectionFive(t *testing.T) {
 		{"ShutdownJSON", p.ShutdownJSON, "/run/gvm/pz-main/shutdown.json"},
 		{"LastShutdown", p.LastShutdown, "/run/gvm/pz-main/last-shutdown.json"},
 		{"FreezeLease", p.FreezeLease, "/run/gvm/pz-main/freeze.lease"},
-		{"JobLock", p.JobLock, "/run/gvm/pz-main/job.lock"},
+		{"RunnerLock", p.RunnerLock, "/run/gvm/pz-main/job.lock"},
 		{"Hold", p.Hold, "/run/gvm/pz-main/hold"},
 
 		{"Logs", p.Logs, "/var/log/gvm/pz-main"},

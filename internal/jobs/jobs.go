@@ -812,3 +812,233 @@ func (e *ExitError) Error() string {
 // trimDiagnostic keeps a subprocess's complaint short enough to read in a job
 // log line.
 func trimDiagnostic(s string) string { return truncate(strings.Join(strings.Fields(s), " "), 400) }
+
+// ============================================================================
+// The job layer
+//
+// Everything above is the D-16 sandbox: how a process gvm did not write is
+// started. Everything below is the job that starts it -- the record one run
+// leaves behind, the vocabulary the ledger uses, and the failure policy that
+// decides whether a broken step is a page or a shrug.
+//
+// They share a package because they share exactly one boundary, and it is the
+// one worth keeping visible: a job ORCHESTRATES as root and EXECUTES through
+// RunSandboxed, never the other way round. noshell_test.go is that sentence
+// as an assertion.
+// ============================================================================
+
+// State is `job_state_t` from the schema (section 14.4), and it is the whole
+// vocabulary a job run is allowed to end in.
+//
+// StateSkipped is a first-class SUCCESS and the register says so (D-43): "no
+// Steam build change, no content change, the server was never touched" is the
+// correct outcome on most nights and must not page anyone. A design that spelt
+// that `ok` would make the one night that mattered unfindable; one that spelt
+// it `failed` would train the operator to ignore the alert.
+type State string
+
+const (
+	// StateQueued exists for the ledger's sake: gvmd marks a row queued
+	// before systemd has started the unit. Nothing in this package writes it.
+	StateQueued State = "queued"
+	// StateRunning is written on entry, before any work.
+	StateRunning State = "running"
+	// StateOK is the work happened and nothing was wrong.
+	StateOK State = "ok"
+	// StateSkipped is the work was not needed (D-43).
+	StateSkipped State = "skipped"
+	// StateDegraded is the work happened, something was wrong, and the server
+	// is up. This is the state `start_anyway` buys.
+	StateDegraded State = "degraded"
+	// StateFailed is the work did not happen -- or, worse, left the server
+	// stopped, which is the one outcome this whole package exists to prevent.
+	StateFailed State = "failed"
+	// StateCancelled is the job was told to stop. It is separate from failed
+	// because `systemctl stop gvm-job@...` during a maintenance window is not
+	// a defect, and a nightly that pages because an operator cancelled it is
+	// a nightly nobody cancels.
+	StateCancelled State = "cancelled"
+)
+
+var states = []State{
+	StateQueued, StateRunning, StateOK, StateSkipped, StateDegraded,
+	StateFailed, StateCancelled,
+}
+
+// States returns every declared state in schema order.
+func States() []State { return append([]State(nil), states...) }
+
+func (s State) Valid() bool {
+	for _, q := range states {
+		if s == q {
+			return true
+		}
+	}
+	return false
+}
+
+func (s State) String() string { return string(s) }
+
+// Terminal reports whether the run is over.
+func (s State) Terminal() bool {
+	return s == StateOK || s == StateSkipped || s == StateDegraded ||
+		s == StateFailed || s == StateCancelled
+}
+
+// Bad reports whether a human should look at this run.
+//
+// `skipped` is deliberately absent and `degraded` is deliberately present: a
+// degraded run is one where gvm did something it could not fully account for,
+// which is exactly the run worth reading.
+func (s State) Bad() bool { return s == StateDegraded || s == StateFailed }
+
+// Trigger is `job_trigger_t` (section 14.4): what caused this run.
+//
+// It is recorded because the same kind means different things from different
+// triggers. A nightly `update` that fails at 05:03 is an unattended failure
+// with nobody watching -- which is the case update.sh's comment is about -- and
+// the same failure from `gvm update pz-main` has an operator reading the
+// output.
+type Trigger string
+
+const (
+	TriggerTimer   Trigger = "timer"
+	TriggerCLI     Trigger = "cli"
+	TriggerWeb     Trigger = "web"
+	TriggerAPI     Trigger = "api"
+	TriggerGuard   Trigger = "guard"
+	TriggerChained Trigger = "chained"
+)
+
+var triggers = []Trigger{
+	TriggerTimer, TriggerCLI, TriggerWeb, TriggerAPI, TriggerGuard, TriggerChained,
+}
+
+// Triggers returns every declared trigger.
+func Triggers() []Trigger { return append([]Trigger(nil), triggers...) }
+
+func (t Trigger) Valid() bool {
+	for _, q := range triggers {
+		if t == q {
+			return true
+		}
+	}
+	return false
+}
+
+func (t Trigger) String() string { return string(t) }
+
+// Policy is a job kind's failure policy -- section 13.3's fourth column.
+//
+// It does NOT decide whether the server comes back up: the RunningGuard
+// decides that, unconditionally, for every kind. What it decides is how a
+// failure is REPORTED, and the three values exist because the same broken step
+// deserves three different answers. A backup that did not happen is a gap in
+// history and must be loud. An update that did not happen leaves a working
+// server running slightly older binaries, which is what update.sh chose on
+// purpose. A prune that did not happen costs disk space.
+type Policy string
+
+const (
+	// PolicyFail is the default for `backup`: a failed step fails the run.
+	PolicyFail Policy = "fail"
+	// PolicyStartAnyway is the default for `update`, `restart`,
+	// `content_sync`, `rebuild` and `restore`: a failed step degrades the run
+	// provided the server is serving at the end of it.
+	//
+	// It is spelt after the ACTION rather than after the verdict because the
+	// action is the point: an outdated server beats one left stopped.
+	PolicyStartAnyway Policy = "start_anyway"
+	// PolicyWarn is the default for `prune`, `verify` and `guard`: kinds that
+	// never touch the server, where a failure costs disk or evidence and
+	// never availability.
+	PolicyWarn Policy = "warn"
+)
+
+var policies = []Policy{PolicyFail, PolicyStartAnyway, PolicyWarn}
+
+// Policies returns every declared policy.
+func Policies() []Policy { return append([]Policy(nil), policies...) }
+
+func (p Policy) Valid() bool {
+	for _, q := range policies {
+		if p == q {
+			return true
+		}
+	}
+	return false
+}
+
+func (p Policy) String() string { return string(p) }
+
+// Scope is whether a kind runs against one instance or the whole box.
+//
+// It exists because of D-13's empty instance part. `_guard` and `_verify`
+// carry no instance, and a job layer that derived an instance name from an
+// empty string would address /run/gvm//job.lock -- or, with one careless
+// path join, /run/gvm/job.lock, which is a lock two different host jobs would
+// then share.
+type Scope uint8
+
+const (
+	// ScopeInstance needs an instance and refuses a host slug.
+	ScopeInstance Scope = iota + 1
+	// ScopeHost refuses an instance.
+	ScopeHost
+	// ScopeEither works both ways: `gvm backup verify pz-main` and the
+	// nightly host-level `_verify` are the same code over a different set.
+	ScopeEither
+)
+
+func (s Scope) String() string {
+	switch s {
+	case ScopeInstance:
+		return "instance"
+	case ScopeHost:
+		return "host"
+	case ScopeEither:
+		return "instance-or-host"
+	}
+	return "invalid"
+}
+
+// Accepts reports whether this scope can run against the given instance name,
+// where the empty string is a host-level slug.
+func (s Scope) Accepts(instanceName string) bool {
+	switch s {
+	case ScopeInstance:
+		return instanceName != ""
+	case ScopeHost:
+		return instanceName == ""
+	case ScopeEither:
+		return true
+	}
+	return false
+}
+
+// StepResult is one step of one run, as the job log and the summary record it.
+type StepResult struct {
+	Name    string        `json:"name"`
+	Started time.Time     `json:"started,omitzero"`
+	Took    time.Duration `json:"took,omitzero"`
+	// Err is the failure's message, not the error: this struct is serialised
+	// into the ledger's summary column and read back by things that cannot
+	// reconstruct a Go error.
+	Err string `json:"error,omitempty"`
+	// Fatal records whether the failure ENDED the job, which is the
+	// difference between update.sh's `|| warn` and its `|| die`.
+	Fatal bool `json:"fatal,omitempty"`
+	// Skipped is a step whose `when` said no. It is recorded rather than
+	// omitted so that a phase list with a hole in it is readable: "phase 5 did
+	// not run because the build had not changed" is the answer an operator
+	// wants, and an absent row is not it.
+	Skipped bool   `json:"skipped,omitempty"`
+	Why     string `json:"why,omitempty"`
+	// UndoErr is the failure of this step's own cleanup -- a thaw that did not
+	// thaw, a timer that stayed masked. It is a separate field because it is a
+	// separate, and usually worse, problem than the step's own failure.
+	UndoErr string `json:"undo_error,omitempty"`
+}
+
+// Failed reports whether the step's own work failed.
+func (s StepResult) Failed() bool { return s.Err != "" }

@@ -225,6 +225,32 @@ func (r *Reconciler) mirror(ctx context.Context, ir InstanceReport, rep *SweepRe
 	}
 }
 
+// DesiredRunningAndDown is section 13.4's `desired_running` with the unit
+// observed down -- minus the lease, which is the one term its two callers
+// legitimately disagree about.
+//
+// It is exported so that there is exactly ONE copy of the predicate. The guard
+// timer's sweep (internal/jobs) and FindingNotRunning above both have to
+// answer "should this be running, and is it not", and a second derivation
+// would mean `gvm doctor` reporting a box healthy while the guard started
+// something, or the reverse, the first night one of the two grew a term.
+//
+// The lease clause stays with each caller because the two needs are different
+// and both are right. A finding is a SENTENCE, and "a job is working on it" is
+// the better sentence for any lease at all, so Findings suppresses on all of
+// them. The sweep ACTS, and a lease whose holder is provably gone is proof
+// that nobody is working on it -- which is the whole case gvm-guard.timer
+// exists for, since a `defer` does not survive SIGKILL.
+//
+// The unit-file-enabled term of section 13.4 is absent because the
+// platform.Systemd seam does not report it yet; the terms that can be seen are
+// reported honestly rather than guessed at.
+func (o Observation) DesiredRunningAndDown() bool {
+	return o.Enabled && !o.Hold && o.UnitChecked && !o.Unit.Running() &&
+		o.Unit.ActiveState != "activating" &&
+		o.DropIn.SpecSHA256 != ""
+}
+
 // Findings is the pure half of the sweep: what is worth saying about one
 // observation.
 //
@@ -292,9 +318,7 @@ func Findings(o Observation, v Verdict) []Finding {
 	// worked on; an unchecked manager means the unit state is not evidence of
 	// anything. Reporting all four conditions for one instance would make the
 	// finding list a place operators skim rather than read.
-	if o.Enabled && !o.Hold && o.UnitChecked && !o.Unit.Running() &&
-		o.Unit.ActiveState != "activating" &&
-		o.DropIn.SpecSHA256 != "" &&
+	if o.DesiredRunningAndDown() &&
 		!o.LeaseUnreadable && (o.LeaseState == "" || o.LeaseState == LeaseNone) {
 		add(FindingNotRunning, SevProblem,
 			"enabled, not held, and the unit is "+o.Unit.ActiveState,

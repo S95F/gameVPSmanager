@@ -39,6 +39,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/S95F/gameVPSmanager/internal/backup"
 	"github.com/S95F/gameVPSmanager/internal/console"
 	"github.com/S95F/gameVPSmanager/internal/control"
 	"github.com/S95F/gameVPSmanager/internal/control/rconctl"
@@ -412,7 +413,7 @@ func supervise(ctx context.Context, env *Env, opt runOptions) error {
 		DataDir:        ld.Instance.Spec.Paths.Data,
 		LogDir:         paths.Logs,
 		RunDir:         paths.Run,
-		JobLock:        paths.JobLock,
+		RunnerLock:     paths.RunnerLock,
 		RunnerJSON:     paths.RunnerJSON,
 		Secrets:        ld.CredIDs,
 		CredentialsDir: ld.CredDir,
@@ -454,6 +455,18 @@ func supervise(ctx context.Context, env *Env, opt runOptions) error {
 	r.SetConnCounter(srv.Conns)
 
 	go r.StatusLoop(runCtx)
+
+	// D-31's out-of-process half. Both channels exist by here, which is why it
+	// goes after serveConsole and not earlier, and it rides runCtx rather than
+	// ctx for the same reason the status loop does: the lease that matters
+	// most is the one a backup armed seconds before systemd sent this process
+	// a SIGTERM, and a watcher cancelled by that signal is a watcher that
+	// never fires. Stopped explicitly below, and the stop WAITS -- this defer
+	// is registered after the teardown closure, so LIFO runs it first and the
+	// control channel cannot be closed underneath a thaw still on the wire.
+	stopFreezeWatch := startFreezeWatch(runCtx, freezeWatcher(paths.FreezeLease, backup.OS,
+		ld.Manifest, ld.Renderer, leaseThawer{console: r, control: ctrl}, time.Now, log), r.Note)
+	defer stopFreezeWatch()
 
 	if err := r.AwaitReady(ctx, portAddr(ld)); err != nil {
 		if stopEndedTheBoot(ctx, err) {
