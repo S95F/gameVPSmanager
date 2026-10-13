@@ -1,0 +1,7 @@
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 22/tcp                     LIMIT IN    Anywhere                   # gvm:host:ssh
+[??] GARBAGE LINE THAT MAKES NO SENSE AT ALL
+[ 3] 80/tcp                     ALLOW IN    Anywhere

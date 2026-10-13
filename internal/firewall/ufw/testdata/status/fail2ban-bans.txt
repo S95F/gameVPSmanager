@@ -1,0 +1,8 @@
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 22/tcp                     LIMIT IN    Anywhere                   # gvm:host:ssh
+[ 2] Anywhere                   REJECT IN   1.2.3.4
+[ 3] Anywhere                   REJECT IN   5.6.7.8
+[ 4] 22/tcp (v6)                LIMIT IN    Anywhere (v6)              # gvm:host:ssh

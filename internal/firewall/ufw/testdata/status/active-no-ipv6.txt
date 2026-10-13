@@ -1,0 +1,7 @@
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 22/tcp                     LIMIT IN    Anywhere                   # gvm:host:ssh
+[ 2] 80/tcp                     ALLOW IN    Anywhere
+[ 3] 443                        ALLOW IN    Anywhere

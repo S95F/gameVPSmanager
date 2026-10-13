@@ -1,0 +1,7 @@
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 22/tcp                     LIMIT IN    Anywhere                   # gvm:host:ssh
+[ 2] 9000/tcp                   ALLOW IN    Anywhere                   # manual rule #2
+[ 3] 9001/tcp                   ALLOW IN    Anywhere

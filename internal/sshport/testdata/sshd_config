@@ -1,0 +1,6 @@
+# Default sshd_config for testing
+Port 22
+Port 2222
+#Port 2223  # commented, must not be included
+AddressFamily any
+PermitRootLogin no

@@ -1,0 +1,8 @@
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 22/tcp                     LIMIT IN    Anywhere                   # gvm:host:ssh
+[ 2] 27000:27030/udp             ALLOW IN    Anywhere                   # gvm:pz1:steam-relay
+[ 3] 22/tcp                     ALLOW IN    192.168.1.0/24             # gvm:host:ssh-admin
+[ 4] 8080/tcp                   ALLOW IN    10.0.0.0/8
