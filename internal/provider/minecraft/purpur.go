@@ -54,9 +54,13 @@ func (p *purpurResolver) plan(ctx context.Context, c *provider.Ctx, in provider.
 	}
 
 	dlURL := fmt.Sprintf("%s/purpur/%s/%s/download", purpurAPIBase, mc.MCVersion, latestBuild)
-	// Purpur provides MD5; we record it as sha1 (same hex length, algorithm label differs).
-	// For now use a placeholder that makes the artifact structurally valid.
-	digest := provider.Digest("sha1:" + buildResp.MD5)
+	// The Purpur API v2 provides only MD5, which is not a supported blob-store
+	// algorithm. Stream the JAR at plan time to compute the real SHA256.
+	// Apply re-downloads via fetchToBlobs; the blob store verifies on Put.
+	digest, err := fetchURLDigest(ctx, p.client, dlURL)
+	if err != nil {
+		return nil, fmt.Errorf("purpur: compute plan digest: %w", err)
+	}
 	versionID := fmt.Sprintf("purpur-%s-b%s", mc.MCVersion, latestBuild)
 	art := provider.Artifact{
 		Digest:  digest,

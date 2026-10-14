@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/content"
@@ -34,6 +35,7 @@ const modrinthAPIBase = "https://api.modrinth.com/v2"
 // Source is the Modrinth content backend.
 type Source struct {
 	http         *http.Client
+	mu           sync.Mutex
 	downloadURLs map[content.Digest]string // digest → download URL, populated by Resolve
 }
 
@@ -247,7 +249,9 @@ func (s *Source) resolveOne(ctx context.Context, in *content.Input, ref content.
 		Path:   primary.Filename,
 	}
 	// Record the download URL for Materialize to use.
+	s.mu.Lock()
 	s.downloadURLs[digest] = primary.URL
+	s.mu.Unlock()
 
 	return &content.PlanEntry{
 		Ordinal:    ordinal,
@@ -333,7 +337,10 @@ func (s *Source) modrinthArtifactURL(pe content.PlanEntry) string {
 	if pe.Artifact == nil {
 		return ""
 	}
-	return s.downloadURLs[pe.Artifact.Digest]
+	s.mu.Lock()
+	u := s.downloadURLs[pe.Artifact.Digest]
+	s.mu.Unlock()
+	return u
 }
 
 // jarPath returns the destination path for a mod JAR.

@@ -19,10 +19,15 @@ import (
 //  4. manual — scan the operator's drop-box directory.
 //  5. mirror_modrinth — fingerprint search on Modrinth (best-effort).
 //  6. blocked — the author opted out; record and continue. NEVER aborts.
-func (s *Source) resolveRef(ctx context.Context, in *content.Input, ref content.Ref, ordinal int) (*content.PlanEntry, error) {
+//
+// embeddedIDs contains the project IDs of any dep_type==embedded dependencies
+// declared by the resolved file. The caller must skip any subsequent ref whose
+// project ID appears here: embedded files are bundled inside the parent JAR and
+// must not be downloaded separately.
+func (s *Source) resolveRef(ctx context.Context, in *content.Input, ref content.Ref, ordinal int) (entry *content.PlanEntry, embeddedIDs []int, err error) {
 	projectID, fileID, err := parseRef(content.RefID(ref))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Rung 1: API.
@@ -43,16 +48,33 @@ func (s *Source) resolveRef(ctx context.Context, in *content.Input, ref content.
 		file = nil
 	}
 
+	// Dependency checks (section 12.8 rules):
+	//   - depRelationIncompatible aborts the plan immediately.
+	//   - depRelationEmbedded deps are bundled inside this file; collect their
+	//     project IDs so the caller can skip any separate ref for them.
+	if file != nil {
+		for _, dep := range file.Dependencies {
+			switch dep.RelationType {
+			case depRelationIncompatible:
+				return nil, nil, fmt.Errorf("curseforge: %s declares incompatible dependency on project %d; aborting plan",
+					file.FileName, dep.ModID)
+			case depRelationEmbedded:
+				embeddedIDs = append(embeddedIDs, dep.ModID)
+			}
+		}
+	}
+
 	// Rung 2: download_url (from API response, verbatim).
 	if file != nil && !isBlocked(file) {
 		// The URL came from the API; it is never constructed here.
-		return s.rungDownloadURL(ctx, in, ref, ordinal, file)
+		e, rungErr := s.rungDownloadURL(ctx, in, ref, ordinal, file)
+		return e, embeddedIDs, rungErr
 	}
 
 	// Rung 3: cache (check blob store by fingerprint).
 	if file != nil && file.Fingerprint != 0 && in.Blobs != nil {
-		if entry, ok := s.rungCache(in, ref, ordinal, file); ok {
-			return entry, nil
+		if e, ok := s.rungCache(in, ref, ordinal, file); ok {
+			return e, embeddedIDs, nil
 		}
 	}
 
@@ -63,20 +85,20 @@ func (s *Source) resolveRef(ctx context.Context, in *content.Input, ref content.
 		if file != nil {
 			fn, fp = file.FileName, file.Fingerprint
 		}
-		if entry, ok := s.rungManual(in, ref, ordinal, fn, fp); ok {
-			return entry, nil
+		if e, ok := s.rungManual(in, ref, ordinal, fn, fp); ok {
+			return e, embeddedIDs, nil
 		}
 	}
 
 	// Rung 5: mirror_modrinth (fingerprint search).
 	if file != nil && file.Fingerprint != 0 {
-		if entry, ok := s.rungMirrorModrinth(ctx, in, ref, ordinal, file); ok {
-			return entry, nil
+		if e, ok := s.rungMirrorModrinth(ctx, in, ref, ordinal, file); ok {
+			return e, embeddedIDs, nil
 		}
 	}
 
 	// Rung 6: blocked. Record the entry and continue (never abort).
-	return s.rungBlocked(in, ref, ordinal, file), nil
+	return s.rungBlocked(in, ref, ordinal, file), embeddedIDs, nil
 }
 
 // rungDownloadURL materializes using the verbatim API downloadUrl.

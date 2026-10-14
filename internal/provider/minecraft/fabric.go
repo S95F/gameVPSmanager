@@ -85,13 +85,20 @@ func (f *fabricResolver) plan(ctx context.Context, c *provider.Ctx, in provider.
 	dlURL := fmt.Sprintf("%s/versions/loader/%s/%s/%s/server/jar",
 		fabricMetaBase, mc.MCVersion, loaderVersion, installer.Version)
 
+	// The Fabric meta API does not publish hash sidecar files for the server
+	// launcher JAR, so we stream the download now to compute the real SHA256.
+	// Apply will re-download via fetchToBlobs; the blob store verifies on Put.
+	digest, err := fetchURLDigest(ctx, f.client, dlURL)
+	if err != nil {
+		return nil, fmt.Errorf("fabric: compute plan digest: %w", err)
+	}
+
 	versionID := fmt.Sprintf("fabric-%s-%s", mc.MCVersion, loaderVersion)
 	art := provider.Artifact{
-		Digest:  provider.Digest("sha256:0000000000000000000000000000000000000000000000000000000000000000"),
+		Digest:  digest,
 		Source:  dlURL,
 		DestRel: "fabric-server-launch.jar",
 	}
-	_ = art // will be populated with real digest in production
 	return &provider.Plan{
 		Intent:    in,
 		Reason:    fmt.Sprintf("install Fabric %s (loader %s)", mc.MCVersion, loaderVersion),

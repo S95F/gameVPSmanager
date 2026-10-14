@@ -116,6 +116,14 @@ func (c *Client) Exec(ctx context.Context, cmd string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if !c.gate() {
+		reason := c.reason
+		if reason == "" {
+			reason = "waiting for the Minecraft server to finish starting up"
+		}
+		return "", fmt.Errorf("mcmgmt: not ready: %s", reason)
+	}
+
 	conn, err := c.dial("tcp", c.addr, dialTimeout)
 	if err != nil {
 		return "", fmt.Errorf("mcmgmt: dial %s: %w", c.addr, err)
@@ -157,6 +165,9 @@ func (c *Client) Exec(ctx context.Context, cmd string) (string, error) {
 	var resp rpcResponse
 	if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
 		return "", fmt.Errorf("mcmgmt: decode response: %w", err)
+	}
+	if resp.ID != id {
+		return "", fmt.Errorf("mcmgmt: response id %d does not match request id %d", resp.ID, id)
 	}
 	if resp.Error != nil {
 		return "", fmt.Errorf("mcmgmt: rpc error %d: %s", resp.Error.Code, resp.Error.Message)

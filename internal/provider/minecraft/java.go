@@ -2,11 +2,16 @@ package minecraft
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/S95F/gameVPSmanager/internal/provider"
 )
 
 // pistonManifestURL is the Mojang version manifest endpoint.
@@ -102,3 +107,58 @@ func javaHomePaths(majorVersion int) []string {
 
 // javaVersionComponent is only here to make the piston JSON decoding type-safe.
 var _ = json.Unmarshal
+
+// fetchSHA1File downloads the Maven-convention <artifact>.sha1 sidecar file and
+// returns its hex string. Maven repositories publish these adjacent to every
+// artifact, so a single 40-char GET provides the verified digest at plan time
+// without downloading the full JAR.
+func fetchSHA1File(ctx context.Context, client *http.Client, artifactURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL+".sha1", nil)
+	if err != nil {
+		return "", fmt.Errorf("sha1 sidecar: prepare: %w", err)
+	}
+	req.Header.Set("User-Agent", "gvm/"+time.Now().Format("2006"))
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("sha1 sidecar: fetch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("sha1 sidecar: HTTP %d from %s", resp.StatusCode, artifactURL+".sha1")
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 128))
+	if err != nil {
+		return "", fmt.Errorf("sha1 sidecar: read: %w", err)
+	}
+	// Maven sha1 files contain the hex, optionally followed by two spaces and a filename.
+	fields := strings.Fields(string(b))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("sha1 sidecar: empty response from %s", artifactURL+".sha1")
+	}
+	return strings.ToLower(fields[0]), nil
+}
+
+// fetchURLDigest streams artURL to completion, computing its SHA256 without
+// retaining the bytes. This is the plan-time call for providers whose upstream
+// does not publish a hash sidecar (e.g. Fabric, Purpur). Apply downloads the
+// same URL again through fetchToBlobs and the blob store verifies the hash.
+func fetchURLDigest(ctx context.Context, client *http.Client, artURL string) (provider.Digest, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, artURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("plan digest: prepare: %w", err)
+	}
+	req.Header.Set("User-Agent", "gvm/"+time.Now().Format("2006"))
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("plan digest: fetch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("plan digest: HTTP %d from %s", resp.StatusCode, artURL)
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, resp.Body); err != nil {
+		return "", fmt.Errorf("plan digest: hash: %w", err)
+	}
+	return provider.NewDigest(provider.AlgoSHA256, h.Sum(nil)), nil
+}

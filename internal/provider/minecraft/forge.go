@@ -71,8 +71,14 @@ func (f *forgeResolver) plan(ctx context.Context, c *provider.Ctx, in provider.I
 	installerJar := fmt.Sprintf("forge-%s-installer.jar", forgeVersion)
 	dlURL := fmt.Sprintf("%s/%s/%s", forgeBaseURL, forgeVersion, installerJar)
 
+	// Maven publishes a .sha1 sidecar adjacent to every artifact.
+	sha1hex, err := fetchSHA1File(ctx, f.client, dlURL)
+	if err != nil {
+		return nil, fmt.Errorf("Forge: fetch installer sha1: %w", err)
+	}
+
 	art := provider.Artifact{
-		Digest:  provider.Digest("sha1:0000000000000000000000000000000000000000"),
+		Digest:  provider.Digest("sha1:" + sha1hex),
 		Source:  dlURL,
 		DestRel: installerJar,
 	}

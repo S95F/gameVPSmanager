@@ -107,8 +107,14 @@ func (n *neoforgeResolver) plan(ctx context.Context, c *provider.Ctx, in provide
 	installerJar := fmt.Sprintf("neoforge-%s-installer.jar", nfVersion)
 	dlURL := fmt.Sprintf("%s/%s/%s", neoforgeBaseURL, nfVersion, installerJar)
 
+	// Maven publishes a .sha1 sidecar adjacent to every artifact.
+	sha1hex, err := fetchSHA1File(ctx, n.client, dlURL)
+	if err != nil {
+		return nil, fmt.Errorf("NeoForge: fetch installer sha1: %w", err)
+	}
+
 	art := provider.Artifact{
-		Digest:  provider.Digest("sha1:0000000000000000000000000000000000000000"),
+		Digest:  provider.Digest("sha1:" + sha1hex),
 		Source:  dlURL,
 		DestRel: installerJar,
 	}

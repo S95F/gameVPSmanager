@@ -47,14 +47,33 @@ func (s *Source) Resolve(ctx context.Context, in *content.Input, want []content.
 		Declared: len(want),
 	}
 
+	// embeddedProjects tracks project IDs declared as depRelationEmbedded by
+	// already-resolved files. An embedded dep is physically bundled inside its
+	// parent JAR; a separate ref for it would download the file twice.
+	embeddedProjects := make(map[int]bool)
+
 	for i, ref := range want {
-		entry, err := s.resolveRef(ctx, in, ref, i)
+		// Skip a ref whose project was declared as embedded by a previously
+		// resolved file to prevent double-download.
+		if pid, _, parseErr := parseRef(content.RefID(ref)); parseErr == nil && embeddedProjects[pid] {
+			plan.Unaccounted = append(plan.Unaccounted, content.Unaccounted{
+				ID: content.RefID(ref),
+				Reason: fmt.Sprintf("project %d is embedded in an already-resolved file; "+
+					"skipping to avoid double-download", pid),
+			})
+			continue
+		}
+
+		entry, embedded, err := s.resolveRef(ctx, in, ref, i)
 		if err != nil {
 			plan.Unaccounted = append(plan.Unaccounted, content.Unaccounted{
 				ID:     content.RefID(ref),
 				Reason: err.Error(),
 			})
 			continue
+		}
+		for _, eid := range embedded {
+			embeddedProjects[eid] = true
 		}
 		plan.Entries = append(plan.Entries, *entry)
 	}
