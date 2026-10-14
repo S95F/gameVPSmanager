@@ -59,3 +59,48 @@ jobs:
           # findings without failing the build.
           shellcheck -S warning legacy/projectzomboid-bash/*.sh \
             legacy/projectzomboid-bash/lib/*.sh || true
+
+  gates:
+    # Phase 17 hardening gates. Run on Linux only (bash + file paths).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: control-plane-dead
+        run: bash ci/control-plane-dead.sh
+
+      - name: golden-units
+        run: bash ci/golden-units.sh
+
+      - name: no-shell-in-gvm
+        # gvm must never spawn a shell. Grep for exec.Command calls that could
+        # launch sh/bash/python directly.
+        run: |
+          if grep -r 'exec\.Command.*"\(sh\|bash\|python\|/bin/sh\)"' internal/ cmd/ 2>/dev/null | grep -v '_test\.go'; then
+            echo "FAIL: shell invocation found in non-test code"
+            exit 1
+          fi
+          echo "OK: no shell invocations found"
+
+      - name: no-kill-9-in-gvm
+        # gvm must never SIGKILL a game server (corrupts worlds).
+        run: |
+          if grep -r 'syscall\.SIGKILL\|kill.*-9\|Signal(9)' internal/ cmd/ 2>/dev/null | grep -v '_test\.go' | grep -v 'adopt\|rollback'; then
+            echo "FAIL: SIGKILL found in non-test, non-rollback code"
+            exit 1
+          fi
+          echo "OK: no SIGKILL in game-facing code"
+
+      - name: no-unauthenticated-api
+        # /api/v1 routes must require auth. Verify no handler is registered
+        # without going through the auth middleware.
+        run: |
+          if grep -r 'http\.HandleFunc.*api/v1\|mux\.HandleFunc.*api/v1' internal/web/ 2>/dev/null; then
+            echo "FAIL: bare /api/v1 route found (must go through auth middleware)"
+            exit 1
+          fi
+          echo "OK: no bare /api/v1 routes"
