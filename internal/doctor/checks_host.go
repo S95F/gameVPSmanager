@@ -9,13 +9,13 @@ import (
 	"github.com/S95F/gameVPSmanager/internal/spec"
 )
 
-// HostChecks returns the HOST-* checks that don't require a database.
-// HOST-001..005, 011, 012 are added in Phase 14 (they need Postgres).
+// HostChecks returns all HOST-* checks.
+// HOST-001..005, 011, 012 need Postgres and skip gracefully when unavailable.
 // HOST-006..008 are added in Phase 15 (they need the identity layer).
 //
 // unitFS is the embedded filesystem holding the installed unit files (packaging.FS).
 func HostChecks(unitFS fs.FS) []lifecycle.DoctorCheck {
-	return []lifecycle.DoctorCheck{
+	checks := []lifecycle.DoctorCheck{
 		{
 			ID:      "HOST-009",
 			Summary: "/run/gvm and /run/gvm/web have the correct ownership and mode",
@@ -29,6 +29,8 @@ func HostChecks(unitFS fs.FS) []lifecycle.DoctorCheck {
 			Run:     checkNoUnitDependsOnPostgres(unitFS),
 		},
 	}
+	checks = append(checks, DBHostChecks()...)
+	return checks
 }
 
 // checkNoUnitDependsOnPostgres reads the embedded unit files and fails if any

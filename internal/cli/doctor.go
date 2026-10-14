@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/S95F/gameVPSmanager/internal/lifecycle"
 	"github.com/S95F/gameVPSmanager/internal/spec"
 	"github.com/S95F/gameVPSmanager/internal/sshport"
+	"github.com/S95F/gameVPSmanager/internal/store"
 	"github.com/S95F/gameVPSmanager/packaging"
 )
 
@@ -97,14 +99,36 @@ type doctorCheckEnv struct {
 	reached bool
 }
 
-func (e *doctorCheckEnv) PostgresReachable(_ context.Context) bool {
+func (e *doctorCheckEnv) PostgresReachable(ctx context.Context) bool {
 	if e.checked {
 		return e.reached
 	}
 	e.checked = true
-	// Without the database package (Phase 14) we cannot connect — always false.
-	e.reached = false
-	return false
+
+	// Only probe if the socket file exists; Postgres may be legitimately
+	// absent and doctor must still run.
+	const sockPath = "/var/run/postgresql/.s.PGSQL.5432"
+	if _, err := os.Stat(sockPath); err != nil {
+		e.reached = false
+		return false
+	}
+
+	s, err := store.Open(ctx, "")
+	if err != nil {
+		e.reached = false
+		return false
+	}
+	defer s.Close()
+
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	select {
+	case <-s.Ready():
+		e.reached = true
+	case <-waitCtx.Done():
+		e.reached = false
+	}
+	return e.reached
 }
 
 func doctorLoadHostConfig() (*spec.HostConfig, error) {
