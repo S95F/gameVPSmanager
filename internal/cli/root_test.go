@@ -66,6 +66,14 @@ func TestImplementedCommandsAreNotStubs(t *testing.T) {
 		{"doctor"},
 		// Phase 13.
 		{"adopt"},
+		// Phase 14.
+		{"db"},
+		// Phase 15.
+		{"user"},
+		{"token"},
+		{"secret"},
+		// Phase 17.
+		{"audit"},
 	} {
 		_, _, errb := run(t, args...)
 		if strings.Contains(errb, "not implemented") {

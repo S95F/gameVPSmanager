@@ -143,8 +143,15 @@ var commands = []Command{
 	{Name: "job", Group: "operations", Summary: "run and inspect the scheduled work", Run: runJob},
 
 	{Name: "adopt", Group: "migration", Summary: "import an existing server install", Run: runAdopt},
+
+	{Name: "user", Group: "admin", Summary: "manage dashboard users and roles", Run: runUser},
+	{Name: "token", Group: "admin", Summary: "manage API tokens", Run: runToken},
+	{Name: "secret", Group: "admin", Summary: "manage instance secrets", Run: runSecret},
+	{Name: "audit", Group: "admin", Summary: "view audit log records", Run: runAudit},
+
 	{Name: "firewall", Group: "host", Summary: "manage host firewall rules", Run: notImplemented},
 	{Name: "doctor", Group: "host", Summary: "check the host for problems", Run: runDoctor},
+	{Name: "db", Group: "host", Summary: "manage the datastore schema", Run: runDB},
 }
 
 // help is registered here rather than in the literal above because it calls
@@ -161,6 +168,7 @@ var groupOrder = []struct{ key, title string }{
 	{"content", "Content"},
 	{"operations", "Operations"},
 	{"migration", "Migration"},
+	{"admin", "Administration"},
 	{"host", "Host"},
 	{"manifests", "Manifests"},
 }

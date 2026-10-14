@@ -268,6 +268,11 @@ var routes = map[string]Route{
 	"adopt":    RouteHostOp,
 	"firewall": RouteHostOp,
 	"doctor":   RouteHostOp,
+	"user":     RouteHostOp,
+	"token":    RouteHostOp,
+	"secret":   RouteHostOp,
+	"audit":    RouteHostOp,
+	"db":       RouteHostOp,
 }
 
 func routeOf(verb string) Route { return routes[verb] }
