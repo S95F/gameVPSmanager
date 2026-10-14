@@ -1,0 +1,149 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: vrising
+  name: V Rising Dedicated Server
+  revision: 1
+  tags: [steam, survival, rcon, windows-depot]
+  doc: |
+    V Rising has no native Linux dedicated server binary. The Windows build
+    (appid 1604030) runs under Proton. SteamCMD must fetch the Windows depot
+    (platform: windows).
+
+    RCON uses a simple line protocol (not Source RCON). The password is set in
+    ServerGameSettings.json and also passed via -rconPassword on the command
+    line so the operator does not need to edit the JSON file manually.
+
+    The world name determines the save directory under the data path. Changing
+    it orphans the world, so it is marked for restart in vars.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 1604030
+      anonymous: true
+      branch: public
+      platform: windows
+      validate_on: [install, repair]
+      sentinel: {path: VRisingServer.exe, executable: false}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: "{{ .Install }}/VRisingServer.exe"
+    cwd: "{{ .Install }}"
+    wrapper:
+      kind: proton
+      args:
+        - "{{ .Var.proton_path }}"
+        - run
+    args:
+      - "-persistentDataPath"
+      - "{{ .Data }}"
+      - "-serverName"
+      - "{{ .Var.server_name }}"
+      - "-saveName"
+      - "{{ .Var.world_name }}"
+      - "-gamePort"
+      - "{{ .Port.game }}"
+      - "-queryPort"
+      - "{{ .Port.query }}"
+      - "-rconEnabled"
+      - "-rconPort"
+      - "{{ .Port.rcon }}"
+      - "-rconPassword"
+      - "{{ .Secret.rcon_password }}"
+    env:
+      HOME: "{{ .Home }}"
+    console: {mode: pipe, charset: utf8, echo_input: false}
+    process_group: false
+    arch: native
+    jit: false
+    limits: {nofile: 65535, tasks_max: 4096}
+
+  readiness:
+    hard_deadline: 600s
+    stall_timeout: 300s
+    progress: ["Setting breakpad minidump", "Server started"]
+    probes:
+      - {kind: a2s, port: query, timeout: 600s, every: 5s}
+    fail_markers:
+      - {pattern: "(?i)address already in use", fatal: true,
+         hint: "another server holds this port; check `gvm doctor` and `ss -lunp`"}
+
+  shutdown:
+    budget: 125s
+    steps:
+      - {via: wait_exit, wait: 90s}
+      - {via: signal, signal: SIGTERM, scope: process, wait: 20s}
+
+  control:
+    kind: source_rcon
+    port: rcon
+    password: "{{ .Secret.rcon_password }}"
+    dialect: source
+    available_only_when_ready: true
+    not_ready_reason: "V Rising RCON only binds after the world finishes loading"
+    min_poll: 60s
+
+  verbs:
+    players:   {control: "listusers"}
+    broadcast: {control: "announcerestart {{ .Msg }}"}
+    kick:      {control: "kick {{ .Player }}"}
+    ban:       {control: "ban {{ .Player }}"}
+
+  port_stride: {base: 9876, count: 3}
+  ports:
+    - {name: game,  proto: udp, default: 9876, expose: public}
+    - {name: query, proto: udp, default: 9877, expose: public,
+       note: "Steam query port; typically game+1"}
+    - {name: rcon,  proto: tcp, default: 25575, expose: none, bind: 127.0.0.1,
+       note: "RCON; reach with ssh -L 25575:127.0.0.1:25575"}
+
+  content: []
+
+  backup:
+    include:
+      - "{{ .Data }}/Saves/v1/{{ .Var.world_name }}"
+      - "{{ .Data }}/Settings"
+    exclude: []
+    world_paths:
+      - "{{ .Data }}/Saves/v1/{{ .Var.world_name }}"
+    destroy_protected: []
+    freeze:
+      before: none
+      after:  none
+      lease_budget: 60s
+
+  vars:
+    server_name:
+      type: string
+      required: true
+      apply: restart
+      help: "Shown in the server browser"
+    world_name:
+      type: string
+      required: true
+      apply: restart
+      help: "Name of the save world directory; changing this starts a new world"
+    proton_path:
+      type: string
+      required: true
+      apply: restart
+      help: "Absolute path to the Proton binary"
+
+  sizing:
+    memory_model: flat
+    native_headroom: 2G
+    high_margin: 512M
+    ram_floor_mb: 4096
+    disk_floor_gb: 10
+
+  recommended_jobs:
+    backup: {at: "04:00", keep: 7, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD depot download"}
+    - {host: "*.steamcontent.com", why: "Steam CDN"}

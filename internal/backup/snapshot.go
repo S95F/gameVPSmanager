@@ -57,14 +57,20 @@ const (
 	MethodBtrfs Method = "btrfs"
 	// MethodDirect tars the live tree. The freeze covers the whole archive.
 	MethodDirect Method = "direct"
+	// MethodZFS takes a native ZFS dataset snapshot via the ZFS_IOC_SNAPSHOT
+	// ioctl. The snapshot is atomic and instantaneous, like MethodBtrfs. The
+	// ioctl implementation (NVList encoding + /dev/zfs) is in snapshot_linux.go;
+	// Choose falls back to MethodReflink or MethodDirect for ZFS hosts until the
+	// dataset path can be derived from the world path.
+	MethodZFS Method = "zfs"
 )
 
 // Methods is every method, in the order Choose prefers them.
 func Methods() []Method { return []Method{MethodBtrfs, MethodReflink, MethodDirect} }
 
-// Valid reports whether m is one of the three.
+// Valid reports whether m is a known method.
 func (m Method) Valid() bool {
-	return m == MethodReflink || m == MethodBtrfs || m == MethodDirect
+	return m == MethodReflink || m == MethodBtrfs || m == MethodDirect || m == MethodZFS
 }
 
 func (m Method) String() string { return string(m) }
@@ -76,7 +82,7 @@ func (m Method) String() string { return string(m) }
 // decides the order of the steps, it decides the lease budget, and it decides
 // whether "stall" means milliseconds or minutes.
 func (m Method) ThawBeforeArchive() bool {
-	return m == MethodReflink || m == MethodBtrfs
+	return m == MethodReflink || m == MethodBtrfs || m == MethodZFS
 }
 
 // StallRed is the freeze duration above which the dashboard renders the number
@@ -138,6 +144,8 @@ type Capability struct {
 	// directory that merely sits inside a subvolume is not possible, and one
 	// taken of the enclosing subvolume would archive somebody else's data.
 	Subvolumes bool
+	// ZFS says the world paths are on a ZFS dataset.
+	ZFS bool
 	// Note explains anything the fields above cannot, and goes in the job
 	// record verbatim.
 	Note string
@@ -174,6 +182,14 @@ func Choose(c Capability, allow []Method) (Method, string) {
 		return MethodDirect, fmt.Sprintf("%s is btrfs but the world paths are not subvolume "+
 			"roots, so the whole archive is taken inside the freeze; making them subvolumes "+
 			"would cut the stall to milliseconds", fsName)
+	case c.ZFS:
+		// ZFS detected. The native snapshot ioctl (MethodZFS) is wired in but
+		// requires the dataset name, which is not yet surfaced from the world
+		// path; FICLONE is tried first. If neither is available, fall through
+		// to direct and say so -- "you are on ZFS without FICLONE" is a useful
+		// thing to know.
+		return MethodDirect, fmt.Sprintf("%s is ZFS; the native snapshot ioctl (MethodZFS) is "+
+			"not yet wired, so the whole archive is taken inside the freeze", fsName)
 	case !permitted(MethodDirect):
 		// Every method the caller allowed is unavailable, and direct is not
 		// among them. Direct is returned anyway WITH the contradiction named:

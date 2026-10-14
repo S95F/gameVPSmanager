@@ -102,6 +102,9 @@ func Probe(worldPaths []string, snapDir string) (Capability, error) {
 		if !containsInt64(magics, magic) {
 			magics = append(magics, magic)
 		}
+		if magic == zfsMagic {
+			cap.ZFS = true
+		}
 		if magic != unix.BTRFS_SUPER_MAGIC {
 			allBtrfs = false
 			allSubvol = false
@@ -263,6 +266,8 @@ func Clone(ctx context.Context, m Method, src, dst string) ([]string, error) {
 		return nil, btrfsSnapshot(src, dst)
 	case MethodReflink:
 		return reflinkTree(ctx, src, dst)
+	case MethodZFS:
+		return nil, zfsSnapshot(src, dst)
 	default:
 		return nil, fmt.Errorf("%w: %q is not a cloning method", ErrNoClone, m)
 	}
@@ -314,6 +319,17 @@ func btrfsSnapshot(src, dst string) error {
 		return fmt.Errorf("%w: BTRFS_IOC_SNAP_CREATE_V2 on %s: %w", ErrSnapshot, src, errno)
 	}
 	return nil
+}
+
+// zfsSnapshot stubs the native ZFS snapshot ioctl.
+//
+// A full implementation issues ZFS_IOC_SNAPSHOT against /dev/zfs with an
+// NVList-encoded property set; the NVList encoding is non-trivial and is
+// deferred to a future phase. The stub returns ErrNoClone so that the engine
+// falls back to the direct method rather than attempting a partial clone.
+func zfsSnapshot(src, _ string) error {
+	return fmt.Errorf("%w: native ZFS snapshot (ZFS_IOC_SNAPSHOT via /dev/zfs) is not yet "+
+		"implemented; use the direct method for ZFS hosts (world path: %s)", ErrNoClone, src)
 }
 
 // reflinkTree copies src to dst, cloning every regular file.
@@ -404,6 +420,8 @@ func fsTypeName(magics []int64) string {
 			names = append(names, "tmpfs")
 		case unix.OVERLAYFS_SUPER_MAGIC:
 			names = append(names, "overlayfs")
+		case zfsMagic:
+			names = append(names, "zfs")
 		default:
 			names = append(names, "0x"+strconv.FormatInt(m, 16))
 		}

@@ -22,20 +22,31 @@ import (
 var shippedGames = []string{
 	"7daystodie",
 	"7daystodie-telnet",
+	"ark-se",
 	"corekeeper",
+	"cs2",
+	"enshrouded",
 	"generic-steam",
 	"minecraft-forge",
 	"minecraft-neoforge",
 	"minecraft-paper",
 	"palworld",
 	"projectzomboid",
+	"rust",
+	"satisfactory",
 	"valheim",
+	"vrising",
 }
 
 // allowedWarnings is the complete set of warnings a shipped manifest may carry,
 // per game id. Every entry needs a reason that stays true; anything else is a
 // manifest bug.
-var allowedWarnings = map[string][]string{}
+var allowedWarnings = map[string][]string{
+	// websocket_rcon is a known control kind that is not yet implemented in this
+	// build (gvm v1.1). The dialect is valid; the control channel renders as
+	// unavailable until the kind is wired up.
+	"rust": {"control kind \"websocket_rcon\" is known but not implemented in this build"},
+}
 
 func shippedManifest(t *testing.T, id string) (*Manifest, Diags) {
 	t.Helper()

@@ -218,7 +218,7 @@ func BuildLaunch(m *spec.Manifest, r *spec.Renderer, base []string) (Launch, err
 	// honest answer for a build that does not implement it: silently dropping
 	// `xvfb` would start a headless engine with no X server and produce a
 	// failure whose cause is three layers away from its symptom.
-	if rt.Wrapper != nil {
+	if rt.Wrapper != nil && rt.Wrapper.Kind != "proton" {
 		return Launch{}, fmt.Errorf("runner: spec.runtime.wrapper (kind %q) is not implemented in this build", rt.Wrapper.Kind)
 	}
 
@@ -246,6 +246,8 @@ func BuildLaunch(m *spec.Manifest, r *spec.Renderer, base []string) (Launch, err
 	}
 
 	l := Launch{Path: full, Dir: dir, Console: cc}
+	// protonWrapper is applied after the full argv is built; see wrapper_proton.go.
+	protonWrap := rt.Wrapper != nil && rt.Wrapper.Kind == "proton"
 	data := r.Data()
 	for i, a := range rt.Args {
 		field := fmt.Sprintf("spec.runtime.args[%d]", i)
@@ -301,6 +303,12 @@ func BuildLaunch(m *spec.Manifest, r *spec.Renderer, base []string) (Launch, err
 	}
 	sort.Strings(l.SecretEnv)
 	l.Env = mergeEnv(base, env, runnerOnlyEnv)
+	if protonWrap {
+		l, err = applyProtonWrapper(l, rt.Wrapper, r)
+		if err != nil {
+			return Launch{}, err
+		}
+	}
 	return l, nil
 }
 

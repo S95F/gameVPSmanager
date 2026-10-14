@@ -201,15 +201,16 @@ func TestGameListNamesEveryShippedGame(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, errb)
 	}
 	for _, id := range []string{
-		"7daystodie", "7daystodie-telnet", "corekeeper", "generic-steam",
+		"7daystodie", "7daystodie-telnet", "ark-se", "corekeeper",
+		"cs2", "enshrouded", "generic-steam",
 		"minecraft-forge", "minecraft-neoforge", "minecraft-paper",
-		"palworld", "projectzomboid", "valheim",
+		"palworld", "projectzomboid", "rust", "satisfactory", "valheim", "vrising",
 	} {
 		if !strings.Contains(out, id) {
 			t.Errorf("%q is missing from the listing:\n%s", id, out)
 		}
 	}
-	if !strings.Contains(out, "10 games") {
+	if !strings.Contains(out, "16 games") {
 		t.Errorf("no count line:\n%s", out)
 	}
 	// Where a manifest came from is half the answer: three shadowing layers

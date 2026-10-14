@@ -245,6 +245,10 @@ type dropInModel struct {
 	TimeoutStart int
 	TimeoutStop  int
 	TimeoutNote  string
+
+	// EgressLines holds the IPAddressDeny= / IPAddressAllow= directives for
+	// instances with spec.egress.policy=allowlist. Empty for open policy.
+	EgressLines []string
 }
 
 type envLine struct{ Key, Value string }
@@ -369,6 +373,7 @@ func BuildDropIn(in DropInInput) ([]byte, Sandbox, error) {
 		TimeoutStop:  stop,
 		TimeoutNote: fmt.Sprintf("readiness.hard_deadline=%s (D-12); shutdown.budget=%s",
 			m.Spec.Readiness.HardDeadline, m.Spec.Shutdown.Budget),
+		EgressLines: buildEgressDirectives(inst.Spec.Egress),
 	}
 
 	var buf bytes.Buffer

@@ -1,0 +1,150 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: ark-se
+  name: ARK Survival Evolved Dedicated Server
+  revision: 1
+  tags: [steam, survival, rcon, windows-depot]
+  doc: |
+    ARK: Survival Evolved has no native Linux dedicated server binary. The
+    Windows build runs under Proton. SteamCMD must fetch the Windows depot
+    (platform: windows, appid 376030) even on Linux hosts.
+
+    Source RCON is used for control commands. Ark's RCON dialect is Source RCON
+    with the password supplied via -ServerAdminPassword on the command line.
+
+    The Windows depot requires @sSteamCmdForcePlatformType windows in the
+    SteamCMD runscript, which steamcmd.go emits when platform=windows.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 376030
+      anonymous: true
+      branch: public
+      platform: windows
+      validate_on: [install, repair]
+      sentinel: {path: ShooterGame/Binaries/Win64/ShooterGameServer.exe, executable: false}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: "{{ .Install }}/ShooterGame/Binaries/Win64/ShooterGameServer.exe"
+    cwd: "{{ .Install }}"
+    wrapper:
+      kind: proton
+      args:
+        - "{{ .Var.proton_path }}"
+        - run
+    args:
+      - "{{ .Var.map_name }}?listen"
+      - "?SessionName={{ .Var.session_name }}"
+      - "?ServerAdminPassword={{ .Secret.admin_password }}"
+      - "?MaxPlayers={{ .Var.max_players }}"
+      - "?QueryPort={{ .Port.query }}"
+      - "?RCONEnabled=True"
+      - "?RCONPort={{ .Port.rcon }}"
+      - "-port={{ .Port.game }}"
+      - "-NoTransferFromFiltering"
+    env:
+      HOME: "{{ .Home }}"
+    console: {mode: pipe, charset: utf8, echo_input: false}
+    process_group: false
+    arch: native
+    jit: false
+    limits: {nofile: 65535, tasks_max: 4096}
+
+  readiness:
+    hard_deadline: 1800s
+    stall_timeout: 600s
+    progress: ["Setting breakpad minidump", "Server has started"]
+    probes:
+      - {kind: a2s, port: query, timeout: 1800s, every: 10s}
+    fail_markers:
+      - {pattern: "(?i)address already in use", fatal: true,
+         hint: "another server holds this port; check `gvm doctor` and `ss -lunp`"}
+
+  shutdown:
+    budget: 125s
+    steps:
+      - {via: control, send: "saveworld", wait: 30s}
+      - {via: wait_exit, wait: 60s}
+      - {via: signal, signal: SIGTERM, scope: process, wait: 20s}
+
+  control:
+    kind: source_rcon
+    port: rcon
+    password: "{{ .Secret.admin_password }}"
+    dialect: source
+    available_only_when_ready: true
+    not_ready_reason: "RCON is only available once the map has finished loading"
+    min_poll: 60s
+
+  verbs:
+    save:      {control: "saveworld"}
+    players:   {control: "listplayers"}
+    broadcast: {control: "broadcast {{ .Msg }}"}
+    kick:      {control: "kickplayer {{ .Player }}"}
+    ban:       {control: "banplayer {{ .Player }}"}
+
+  port_stride: {base: 7778, count: 3}
+  ports:
+    - {name: game,  proto: udp, default: 7778, expose: public}
+    - {name: query, proto: udp, default: 27015, expose: public,
+       note: "Steam query port"}
+    - {name: rcon,  proto: tcp, default: 27020, expose: none, bind: 127.0.0.1,
+       note: "Source RCON; reach with ssh -L 27020:127.0.0.1:27020"}
+
+  content: []
+
+  backup:
+    include:
+      - "{{ .Install }}/ShooterGame/Saved/SavedArks"
+      - "{{ .Install }}/ShooterGame/Saved/Config/WindowsServer"
+    exclude: []
+    world_paths:
+      - "{{ .Install }}/ShooterGame/Saved/SavedArks"
+    destroy_protected: []
+    freeze:
+      before: {via: control, send: "saveworld", wait: 30s}
+      after:  none
+      lease_budget: 60s
+
+  vars:
+    map_name:
+      type: string
+      required: true
+      apply: restart
+      help: "The map to load, e.g. TheIsland, TheCenter, ScorchedEarth_P"
+    session_name:
+      type: string
+      required: true
+      apply: restart
+      help: "Shown in the server browser"
+    max_players:
+      type: int
+      default: "70"
+      min: 1
+      max: 255
+      apply: restart
+    proton_path:
+      type: string
+      required: true
+      apply: restart
+      help: "Absolute path to the Proton binary, e.g. /usr/share/steam/compatibilitytools.d/GE-Proton9-27/proton"
+
+  sizing:
+    memory_model: flat
+    native_headroom: 4G
+    high_margin: 1G
+    ram_floor_mb: 8192
+    disk_floor_gb: 50
+
+  recommended_jobs:
+    backup: {at: "04:00", keep: 7, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD depot download"}
+    - {host: "*.steamcontent.com", why: "Steam CDN"}

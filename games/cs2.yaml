@@ -1,0 +1,155 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: cs2
+  name: Counter-Strike 2 Dedicated Server
+  revision: 1
+  tags: [steam, shooter, rcon]
+  doc: |
+    CS2 publishes a native Linux dedicated server binary (appid 730).
+
+    Source RCON is used for control commands. The rcon_password is passed via
+    +rcon_password on the command line.
+
+    A Steam Game Server Login Token (GSLT) is required to host a public server.
+    It is stored as the gslt secret. Servers without a valid GSLT are hidden
+    from the public browser but are still joinable by direct IP.
+
+    The CS2 dedicated server requires a valid Steam account to download; set
+    anonymous: false and supply credentials via the steamcmd_login secret if
+    downloading a non-public branch.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 730
+      anonymous: true
+      branch: public
+      platform: linux
+      validate_on: [install, repair]
+      sentinel: {path: game/bin/linuxsteamrt64/cs2, executable: true}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: ./game/bin/linuxsteamrt64/cs2
+    cwd: "{{ .Install }}"
+    args:
+      - "-dedicated"
+      - "-console"
+      - "-usercon"
+      - "+sv_setsteamaccount"
+      - "{{ .Secret.gslt }}"
+      - "+map"
+      - "{{ .Var.start_map }}"
+      - "+game_type"
+      - "{{ .Var.game_type }}"
+      - "+game_mode"
+      - "{{ .Var.game_mode }}"
+      - "+sv_maxplayers"
+      - "{{ .Var.max_players }}"
+      - "+net_port"
+      - "{{ .Port.game }}"
+      - "+tv_port"
+      - "{{ .Port.tv }}"
+      - "+rcon_password"
+      - "{{ .Secret.rcon_password }}"
+    env:
+      HOME: "{{ .Home }}"
+      LD_LIBRARY_PATH: "{{ .Install }}/bin/linuxsteamrt64:{{ .Install }}/game/bin/linuxsteamrt64"
+    console: {mode: pipe, charset: utf8, echo_input: true}
+    process_group: false
+    arch: native
+    jit: false
+    limits: {nofile: 65535, tasks_max: 2048}
+
+  readiness:
+    hard_deadline: 300s
+    stall_timeout: 120s
+    progress: ["Network initialized", "Server is hibernating"]
+    probes:
+      - {kind: a2s, port: game, timeout: 300s, every: 5s}
+    fail_markers:
+      - {pattern: "(?i)address already in use", fatal: true,
+         hint: "another server holds this port; check `gvm doctor` and `ss -lunp`"}
+
+  shutdown:
+    budget: 70s
+    steps:
+      - {via: control, send: "quit", wait: 15s}
+      - {via: wait_exit, wait: 30s}
+      - {via: signal, signal: SIGTERM, scope: process, wait: 10s}
+
+  control:
+    kind: source_rcon
+    port: game
+    password: "{{ .Secret.rcon_password }}"
+    dialect: source
+    available_only_when_ready: true
+    not_ready_reason: "CS2 RCON only accepts connections after the map loads"
+    min_poll: 30s
+
+  verbs:
+    players:   {control: "status"}
+    broadcast: {control: "say {{ .Msg }}"}
+    kick:      {control: "kickid {{ .Player }}"}
+
+  port_stride: {base: 27015, count: 2}
+  ports:
+    - {name: game, proto: udp, default: 27015, expose: public,
+       note: "Game and Steam query on the same port"}
+    - {name: tv,   proto: udp, default: 27020, expose: public,
+       note: "SourceTV relay port"}
+
+  content: []
+
+  backup:
+    include:
+      - "{{ .Install }}/game/csgo/cfg"
+    exclude: []
+    world_paths:
+      - "{{ .Install }}/game/csgo/cfg"
+    destroy_protected: []
+    freeze:
+      before: none
+      after:  none
+      lease_budget: 30s
+
+  vars:
+    start_map:
+      type: string
+      default: de_dust2
+      apply: restart
+      help: "Map to load on startup"
+    game_type:
+      type: int
+      default: "0"
+      apply: restart
+      help: "Game type (0=Classic, 1=Deathmatch)"
+    game_mode:
+      type: int
+      default: "0"
+      apply: restart
+      help: "Game mode within the game type"
+    max_players:
+      type: int
+      default: "10"
+      min: 2
+      max: 64
+      apply: restart
+
+  sizing:
+    memory_model: flat
+    native_headroom: 1G
+    high_margin: 256M
+    ram_floor_mb: 2048
+    disk_floor_gb: 35
+
+  recommended_jobs:
+    backup: {at: "04:00", keep: 14, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD depot download and GSLT validation"}
+    - {host: "*.steamcontent.com", why: "Steam CDN and workshop downloads"}

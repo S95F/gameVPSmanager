@@ -86,3 +86,14 @@ MemoryDenyWriteExecute={{ .MDWE }}
 # {{ .TimeoutNote }}
 TimeoutStartSec={{ .TimeoutStart }}
 TimeoutStopSec={{ .TimeoutStop }}
+{{- if .EgressLines }}
+
+# spec.egress.policy=allowlist: deny all outbound then re-admit each allowed
+# CIDR. systemd wires this through the cgroup-BPF address filter (section 18.4).
+# Use CIDRs, not hostnames: systemd resolves hostnames once at unit start and
+# caches the result; a backend that rotates its IP between restarts would
+# break silently.
+{{- range .EgressLines }}
+{{ . }}
+{{- end }}
+{{- end }}

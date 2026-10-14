@@ -1,0 +1,174 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: rust
+  name: Rust Dedicated Server
+  revision: 1
+  tags: [steam, survival, rcon]
+  doc: |
+    Rust publishes a native Linux dedicated server binary (appid 258550).
+
+    RCON is a WebSocket JSON protocol on the rcon port, not Source RCON.
+    The password is passed via +rcon.password on the command line.
+
+    The world seed and size are immutable after first start: changing them
+    creates a new world at the same path, silently overwriting the old one.
+    They are marked immutable_after_create in the vars block.
+
+    server.seed 0 generates a random seed on each wipe. An explicit seed is
+    recommended so that a server that crashes during generation can resume.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 258550
+      anonymous: true
+      branch: public
+      platform: linux
+      validate_on: [install, repair]
+      sentinel: {path: RustDedicated, executable: true}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: ./RustDedicated
+    cwd: "{{ .Install }}"
+    args:
+      - "-batchmode"
+      - "+server.port"
+      - "{{ .Port.game }}"
+      - "+server.queryport"
+      - "{{ .Port.query }}"
+      - "+server.hostname"
+      - "{{ .Var.server_hostname }}"
+      - "+server.identity"
+      - "{{ .Var.server_identity }}"
+      - "+server.seed"
+      - "{{ .Var.seed }}"
+      - "+server.worldsize"
+      - "{{ .Var.world_size }}"
+      - "+server.maxplayers"
+      - "{{ .Var.max_players }}"
+      - "+rcon.port"
+      - "{{ .Port.rcon }}"
+      - "+rcon.password"
+      - "{{ .Secret.rcon_password }}"
+      - "+rcon.web"
+      - "1"
+    env:
+      HOME: "{{ .Home }}"
+      LD_LIBRARY_PATH: "{{ .Install }}/RustDedicated_Data/Plugins/x86_64"
+    console: {mode: pipe, charset: utf8, echo_input: false}
+    process_group: false
+    arch: native
+    jit: false
+    limits: {nofile: 65535, tasks_max: 4096}
+
+  readiness:
+    hard_deadline: 900s
+    stall_timeout: 300s
+    progress: ["Server startup complete", "Server startup time"]
+    probes:
+      - {kind: a2s, port: query, timeout: 900s, every: 5s}
+    fail_markers:
+      - {pattern: "(?i)address already in use", fatal: true,
+         hint: "another server holds this port; check `gvm doctor` and `ss -lunp`"}
+      - {pattern: "Couldn't load world from", fatal: true,
+         hint: "world file is corrupt; restore from backup or wipe with a new seed"}
+
+  shutdown:
+    budget: 185s
+    steps:
+      - {via: control, send: "server.save", wait: 30s}
+      - {via: console, send: "quit", wait: 30s}
+      - {via: wait_exit, wait: 90s}
+      - {via: signal, signal: SIGTERM, scope: process, wait: 20s}
+
+  control:
+    kind: websocket_rcon
+    port: rcon
+    password: "{{ .Secret.rcon_password }}"
+    dialect: rust
+    available_only_when_ready: true
+    not_ready_reason: "Rust RCON only accepts connections after world generation completes"
+    min_poll: 30s
+
+  verbs:
+    save:      {control: "server.save"}
+    players:   {control: "playerlist"}
+    broadcast: {control: "say {{ .Msg }}"}
+    kick:      {control: "kick {{ .Player }} {{ .Msg }}"}
+    ban:       {control: "ban {{ .Player }} {{ .Msg }}"}
+
+  port_stride: {base: 28015, count: 3}
+  ports:
+    - {name: game,  proto: udp, default: 28015, expose: public}
+    - {name: query, proto: udp, default: 28016, expose: public,
+       note: "Steam query port; usually game+1"}
+    - {name: rcon,  proto: tcp, default: 28017, expose: none, bind: 127.0.0.1,
+       note: "WebSocket JSON RCON; reach with ssh -L 28017:127.0.0.1:28017"}
+
+  content: []
+
+  backup:
+    include:
+      - "{{ .Data }}/{{ .Var.server_identity }}"
+    exclude:
+      - "{{ .Data }}/{{ .Var.server_identity }}/backup/**"
+    world_paths:
+      - "{{ .Data }}/{{ .Var.server_identity }}"
+    destroy_protected:
+      - "{{ .Data }}/{{ .Var.server_identity }}/player.blueprints.db"
+    freeze:
+      before: {via: control, send: "server.save", wait: 30s}
+      after:  none
+      lease_budget: 60s
+
+  vars:
+    server_hostname:
+      type: string
+      required: true
+      apply: restart
+      help: "Shown in the community server list"
+    server_identity:
+      type: string
+      required: true
+      apply: restart
+      help: "Sub-directory name under the data path where world files are stored"
+    seed:
+      type: int
+      default: "0"
+      min: 0
+      max: 2147483647
+      apply: rebuild
+      help: "World seed; 0 picks a random seed on each wipe"
+    world_size:
+      type: int
+      default: "3500"
+      min: 1000
+      max: 6000
+      apply: rebuild
+      help: "World size in metres; larger worlds take longer to generate"
+    max_players:
+      type: int
+      default: "100"
+      min: 1
+      max: 500
+      apply: restart
+
+  sizing:
+    memory_model: flat
+    native_headroom: 2G
+    high_margin: 512M
+    ram_floor_mb: 6144
+    disk_floor_gb: 20
+
+  recommended_jobs:
+    backup: {at: "04:00", keep: 7, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD depot download"}
+    - {host: "*.steamcontent.com", why: "Steam CDN"}
+    - {host: "api.facepunch.com", why: "Rust EAC server verification"}
