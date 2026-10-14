@@ -115,10 +115,8 @@ func TestEveryShippedLadderRenders(t *testing.T) {
 
 	t.Run("7 days to die follows each control rung with a console one", func(t *testing.T) {
 		steps := ladders["7daystodie"]
-		// Its control kind is telnet, which this build does not implement, so
-		// every control rung is recorded as skipped -- and the console rung
-		// behind it is what actually stops the server. The pairing only works
-		// because a skipped control rung does not escalate.
+		// The manifest pairs each control rung with a console fallback on the
+		// next step; the console rung fires if the control channel is down.
 		var pairs int
 		for i := 0; i+1 < len(steps); i++ {
 			if steps[i].Via == spec.ViaControl && steps[i+1].Via == spec.ViaConsole &&

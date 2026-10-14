@@ -42,11 +42,13 @@ var registry = map[string]Hook{
 	"pal.settings_seed": palSettingsSeed{},
 	"sdtd.seed_config":  sdtdSeedConfig{},
 
-	// The minecraft hooks (mc.accept_eula, mc.select_jdk, mc.write_properties,
-	// mc.gamerule_fallback) are v1.1 and are deliberately ABSENT rather than
-	// stubbed. internal/spec lists them as SupportPlanned so a manifest naming
-	// one fails with "planned for v1.1" instead of "unknown hook", and a stub
-	// here would instead run, do nothing and report success.
+	// Minecraft. These four complete the provider installation and the per-start
+	// JVM selection. They are separate names for the same reason as the Steam
+	// hooks: a manifest can take two of them and not the third.
+	"mc.accept_eula":       mcAcceptEULA{},
+	"mc.select_jdk":        mcSelectJDK{},
+	"mc.write_properties":  mcWriteProperties{},
+	"mc.gamerule_fallback": mcGameruleFallback{},
 }
 
 // Get returns a hook by name.

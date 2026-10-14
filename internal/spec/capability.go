@@ -123,10 +123,10 @@ const plannedRelease = "v1.1"
 var controlSupport = map[ControlKind]Support{
 	ControlNone:       SupportImplemented,
 	ControlSourceRCON: SupportImplemented,
-	ControlTelnet:     SupportPlanned,
+	ControlTelnet:     SupportImplemented,
 	ControlWSRCON:     SupportPlanned,
 	ControlHTTPAPI:    SupportPlanned,
-	ControlMCMgmt:     SupportPlanned,
+	ControlMCMgmt:     SupportImplemented,
 }
 
 // ControlSupport reports how well this build implements a control kind.

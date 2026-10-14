@@ -48,18 +48,20 @@ func TestGameValidateReportsAShippedManifestClean(t *testing.T) {
 }
 
 // A game whose control kind this build has not implemented still validates:
-// that is what lets 7daystodie ship in v1 (section 10.2). It must report as a
-// warning, and a warning must not be exit-coded like an error.
+// it must report as a warning, and a warning must not be exit-coded like an
+// error. We use a patched copy of projectzomboid with websocket_rcon (still
+// planned in this build) to exercise the path.
 func TestGameValidateReportsAPlannedControlKindAsAWarning(t *testing.T) {
-	code, out, _ := run(t, "game", "validate", "7daystodie")
+	path := brokenManifest(t, "projectzomboid", "kind: source_rcon", "kind: websocket_rcon")
+	code, out, _ := run(t, "game", "validate", path)
 	if code != 0 {
 		t.Fatalf("exit %d, want 0\n%s", code, out)
 	}
 	if !strings.Contains(out, "0 errors, 1 warning.") {
 		t.Errorf("count line is wrong:\n%s", out)
 	}
-	if !strings.Contains(out, `! `) || !strings.Contains(out, `"telnet" is known but not implemented`) {
-		t.Errorf("the telnet warning is missing or not marked as a warning:\n%s", out)
+	if !strings.Contains(out, `! `) || !strings.Contains(out, `"websocket_rcon" is known but not implemented`) {
+		t.Errorf("the websocket_rcon warning is missing or not marked as a warning:\n%s", out)
 	}
 	if strings.Contains(out, "✗") {
 		t.Errorf("a warning was rendered with the error marker:\n%s", out)
@@ -199,13 +201,15 @@ func TestGameListNamesEveryShippedGame(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, errb)
 	}
 	for _, id := range []string{
-		"7daystodie", "corekeeper", "generic-steam", "palworld", "projectzomboid", "valheim",
+		"7daystodie", "7daystodie-telnet", "corekeeper", "generic-steam",
+		"minecraft-forge", "minecraft-neoforge", "minecraft-paper",
+		"palworld", "projectzomboid", "valheim",
 	} {
 		if !strings.Contains(out, id) {
 			t.Errorf("%q is missing from the listing:\n%s", id, out)
 		}
 	}
-	if !strings.Contains(out, "6 games") {
+	if !strings.Contains(out, "10 games") {
 		t.Errorf("no count line:\n%s", out)
 	}
 	// Where a manifest came from is half the answer: three shadowing layers
@@ -249,8 +253,8 @@ func TestGameHooksListsTheClosedRegistries(t *testing.T) {
 	if !strings.Contains(out, "pz.first_boot") || !strings.Contains(out, "ready") {
 		t.Errorf("implemented hooks are missing:\n%s", out)
 	}
-	if !strings.Contains(out, "mc.accept_eula") || !strings.Contains(out, "planned") {
-		t.Errorf("planned hooks are missing or unlabelled:\n%s", out)
+	if !strings.Contains(out, "mc.accept_eula") {
+		t.Errorf("mc hooks are missing:\n%s", out)
 	}
 	if !strings.Contains(out, "pz.server_name_is_world_dir") {
 		t.Errorf("validators are missing:\n%s", out)

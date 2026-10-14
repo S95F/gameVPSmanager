@@ -42,8 +42,10 @@ import (
 	"github.com/S95F/gameVPSmanager/internal/backup"
 	"github.com/S95F/gameVPSmanager/internal/console"
 	"github.com/S95F/gameVPSmanager/internal/control"
+	"github.com/S95F/gameVPSmanager/internal/control/mcmgmt"
 	"github.com/S95F/gameVPSmanager/internal/control/rconctl"
 	"github.com/S95F/gameVPSmanager/internal/control/stdinctl"
+	"github.com/S95F/gameVPSmanager/internal/control/telnetctl"
 	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/platform"
 	"github.com/S95F/gameVPSmanager/internal/runner"
@@ -712,6 +714,22 @@ func buildControlChannel(r *runner.Runner, ld *runSpec) (control.Channel, error)
 	if err != nil {
 		return nil, err
 	}
+
+	switch kind {
+	case spec.ControlTelnet:
+		return telnetctl.New(telnetctl.Options{
+			Addr:           addr,
+			Gate:           r.ControlGateOpen,
+			NotReadyReason: c.NotReadyReason,
+		})
+	case spec.ControlMCMgmt:
+		return mcmgmt.New(mcmgmt.Options{
+			Addr:           addr,
+			Gate:           r.ControlGateOpen,
+			NotReadyReason: c.NotReadyReason,
+		})
+	}
+
 	pw, _, err := ld.Renderer.Render("spec.control.password", c.Password)
 	if err != nil {
 		return nil, err

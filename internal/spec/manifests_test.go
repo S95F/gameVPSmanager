@@ -21,8 +21,12 @@ import (
 // test that derives its expectations from the thing under test proves nothing.
 var shippedGames = []string{
 	"7daystodie",
+	"7daystodie-telnet",
 	"corekeeper",
 	"generic-steam",
+	"minecraft-forge",
+	"minecraft-neoforge",
+	"minecraft-paper",
 	"palworld",
 	"projectzomboid",
 	"valheim",
@@ -31,12 +35,7 @@ var shippedGames = []string{
 // allowedWarnings is the complete set of warnings a shipped manifest may carry,
 // per game id. Every entry needs a reason that stays true; anything else is a
 // manifest bug.
-var allowedWarnings = map[string][]string{
-	// Section 9's whole point for this file: it declares a control kind this
-	// build does not implement, loads anyway, and renders as an unavailable
-	// capability rather than failing (section 10.2).
-	"7daystodie": {`control kind "telnet" is known but not implemented in this build`},
-}
+var allowedWarnings = map[string][]string{}
 
 func shippedManifest(t *testing.T, id string) (*Manifest, Diags) {
 	t.Helper()

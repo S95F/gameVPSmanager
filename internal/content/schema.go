@@ -126,6 +126,15 @@ type Schema struct {
 	// names one.
 	Collection     string
 	CollectionMode string
+
+	// GameVersion is the target Minecraft version string (e.g. "1.21.4").
+	// Populated by the job layer for Modrinth content blocks so the source
+	// can filter and re-verify versions against the right MC release.
+	GameVersion string
+
+	// Loader is the mod loader ("fabric", "neoforge", "forge", "paper", etc.).
+	// Populated alongside GameVersion for Modrinth content blocks.
+	Loader string
 }
 
 // Compile reconciles the manifest's content block with the instance's list.

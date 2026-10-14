@@ -21,6 +21,7 @@ import (
 	// fails the build if a package appears in this directory and not in this
 	// list, so the enumeration below cannot quietly stop covering a driver.
 	_ "github.com/S95F/gameVPSmanager/internal/provider/adopted"
+	_ "github.com/S95F/gameVPSmanager/internal/provider/minecraft"
 	_ "github.com/S95F/gameVPSmanager/internal/provider/none"
 	_ "github.com/S95F/gameVPSmanager/internal/provider/steamcmd"
 )

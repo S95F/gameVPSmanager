@@ -160,19 +160,25 @@ func TestTheTwoRegistriesNameTheSameSet(t *testing.T) {
 	}
 }
 
-// TestTheMinecraftHooksAreAbsentRatherThanStubbed: a stub would run, do nothing
-// and report success, and "mc.accept_eula ran" with no EULA accepted is the one
-// outcome that must not be possible. Absent, a manifest naming it gets
-// internal/spec's "planned for v1.1" warning with a capability reason.
-func TestTheMinecraftHooksAreAbsentRatherThanStubbed(t *testing.T) {
+// TestTheMinecraftHooksAreRegisteredAndRunnable verifies that the v1.1
+// Minecraft hooks are in the registry and callable via Get.
+func TestTheMinecraftHooksAreRegisteredAndRunnable(t *testing.T) {
 	for _, n := range []string{
 		"mc.accept_eula", "mc.select_jdk", "mc.write_properties", "mc.gamerule_fallback",
 	} {
-		if _, ok := registry[n]; ok {
-			t.Errorf("%q is registered; it is v1.1 work and a stub would report success", n)
+		if _, ok := registry[n]; !ok {
+			t.Errorf("%q is not in the registry", n)
 		}
-		if _, err := Get(n); err == nil {
-			t.Errorf("Get(%q) succeeded", n)
+		h, err := Get(n)
+		if err != nil {
+			t.Errorf("Get(%q) failed: %v", n, err)
+			continue
+		}
+		if h.Name() != n {
+			t.Errorf("Get(%q).Name() = %q", n, h.Name())
+		}
+		if len(h.Phases()) == 0 {
+			t.Errorf("%q declares no phases", n)
 		}
 	}
 }

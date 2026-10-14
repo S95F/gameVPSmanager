@@ -1,0 +1,235 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: 7daystodie-telnet
+  name: 7 Days to Die Dedicated Server (Telnet)
+  revision: 1
+  tags: [steam, survival, telnet]
+  doc: |
+    Variant of the 7 Days to Die manifest that uses the telnet control channel
+    as the primary shutdown path now that gvm implements it (v1.1+). The
+    console fallback remains in the shutdown ladder as a belt-and-suspenders
+    measure, but the control rungs now fire first and are expected to succeed.
+
+    startserver.sh launches 7DaysToDieServer.x86_64 as a child without exec,
+    so signals go to the process group. sdtd.seed_config copies the shipped
+    serverconfig.xml into the data directory on install.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: steamcmd
+    steamcmd:
+      install_appid: 294420
+      anonymous: true
+      branch: public
+      platform: linux
+      validate_on: [install, repair]
+      sentinel: {path: 7DaysToDieServer.x86_64, executable: true}
+      verify: {appmanifest: true, byte_parity: true, single_acf: true}
+
+  runtime:
+    exec: ./startserver.sh
+    cwd: "{{ .Install }}"
+    args:
+      - "-configfile={{ .Data }}/serverconfig.xml"
+      - "-UserDataFolder={{ .Data }}"
+    env:
+      HOME: "{{ .Home }}"
+      LANG: en_US.UTF-8
+      TERM: dumb
+    console: {mode: pipe, charset: utf8, echo_input: true}
+    process_group: true
+    arch: native
+    jit: false
+    limits: {nofile: 65535, tasks_max: 4096}
+
+  readiness:
+    hard_deadline: 1800s
+    stall_timeout: 600s
+    progress: ["Generating World", "Loading", "StartGame"]
+    probes:
+      - {kind: log_marker, pattern: "StartGame done", timeout: 1800s}
+      - {kind: a2s, port: game, after: log_marker, timeout: 120s, every: 5s}
+    fail_markers:
+      - {pattern: "(?i)address already in use", fatal: true,
+         hint: "another server holds this port; check `gvm doctor` and `ss -lntup`"}
+      - {pattern: "(?i)could not find or load", fatal: true,
+         hint: "install tree is incomplete; run `gvm update <name> --repair`"}
+
+  shutdown:
+    budget: 300s
+    extend_while_progressing: true
+    progress_window: 30s
+    steps:
+      - {via: control, send: "saveworld", wait: 45s}
+      - {via: console, send: "saveworld", wait: 45s}
+      - {via: control, send: "shutdown", wait: 10s}
+      - {via: console, send: "shutdown", wait: 10s}
+      - {via: wait_exit, wait: 120s}
+      - {via: signal, signal: SIGTERM, scope: process_group, wait: 30s}
+
+  control:
+    kind: telnet
+    port: telnet
+    password: "{{ .Secret.telnet_password }}"
+    dialect: simple
+    available_only_when_ready: true
+    not_ready_reason: "the telnet console binds only after the world finishes generating"
+    min_poll: 60s
+
+  verbs:
+    save:      {console: "saveworld", control: "saveworld"}
+    stop:      {console: "shutdown",  control: "shutdown"}
+    players:   {console: "lp",        control: "lp"}
+    broadcast: {console: "say \"{{ .Msg }}\"",  control: "say \"{{ .Msg }}\""}
+    kick:      {console: "kick \"{{ .Player }}\" \"{{ .Reason }}\"",
+                control: "kick \"{{ .Player }}\" \"{{ .Reason }}\""}
+    ban:       {console: "ban add \"{{ .Player }}\" 1 year \"{{ .Reason }}\"",
+                control: "ban add \"{{ .Player }}\" 1 year \"{{ .Reason }}\""}
+
+  port_stride: {sdtd: 10, admin: 10}
+  ports:
+    - {name: game,   proto: both, default: 26900, group: sdtd, expose: public,
+       config_key: ServerPort, config_file: serverconfig}
+    - {name: steam1, proto: udp, default: 26901, group: sdtd, expose: public}
+    - {name: steam2, proto: udp, default: 26902, group: sdtd, expose: public}
+    - {name: telnet, proto: tcp, default: 8081, group: admin, expose: none,
+       bind: 127.0.0.1, config_key: TelnetPort, config_file: serverconfig}
+    - {name: web,    proto: tcp, default: 8080, group: admin, expose: none,
+       config_key: WebDashboardPort, config_file: serverconfig}
+
+  config_files:
+    - name: serverconfig
+      path: "{{ .Data }}/serverconfig.xml"
+      format: xml_property_list
+      owner: gvm
+      create_if_missing: false
+      mode: "0640"
+      keys:
+        ServerName:           "{{ .Var.server_name }}"
+        ServerDescription:    "{{ .Var.server_description }}"
+        ServerPassword:       "{{ .Secret.join_password }}"
+        ServerMaxPlayerCount: "{{ .Var.max_players }}"
+        ServerVisibility:     "{{ .Var.visibility }}"
+        GameWorld:            "{{ .Var.game_world }}"
+        WorldGenSeed:         "{{ .Var.world_gen_seed }}"
+        WorldGenSize:         "{{ .Var.world_gen_size }}"
+        GameName:             "{{ .Var.game_name }}"
+        GameDifficulty:       "{{ .Var.game_difficulty }}"
+        DropOnDeath:          "{{ .Var.drop_on_death }}"
+        EACEnabled:           "{{ .Var.eac_enabled }}"
+        TelnetEnabled:        "true"
+        TelnetPassword:       "{{ .Secret.telnet_password }}"
+        WebDashboardEnabled:  "false"
+
+  content: []
+
+  hooks:
+    post_install: [steam.home_layout, steam.link_sdk, sdtd.seed_config]
+
+  backup:
+    include:
+      - "{{ .Data }}/Saves"
+      - "{{ .Data }}/serverconfig.xml"
+      - "{{ .Data }}/serveradmin.xml"
+    exclude:
+      - "{{ .Data }}/Logs/**"
+    world_paths:
+      - "{{ .Data }}/Saves"
+    destroy_protected:
+      - "{{ .Data }}/serveradmin.xml"
+      - "{{ .Data }}/serverconfig.xml"
+    freeze:
+      before: {via: control, send: "saveworld", wait: 45s}
+      after:  none
+      lease_budget: 90s
+
+  vars:
+    game_name:
+      type: string
+      default: gvm
+      immutable: true
+      apply: rebuild
+    server_name:
+      type: string
+      required: true
+      apply: restart
+      group: Identity
+    server_description:
+      type: string
+      default: ""
+      apply: restart
+      group: Identity
+    visibility:
+      type: int
+      default: "2"
+      min: 0
+      max: 2
+      apply: restart
+      group: Identity
+    max_players:
+      type: int
+      default: "8"
+      min: 1
+      max: 64
+      apply: restart
+    game_world:
+      type: enum
+      values: [Navezgane, PREGEN10k, PREGEN8k, PREGEN6k, PREGEN4k, RWG]
+      default: Navezgane
+      apply: rebuild
+      group: World
+    world_gen_seed:
+      type: string
+      default: ""
+      immutable: true
+      apply: rebuild
+      group: World
+    world_gen_size:
+      type: int
+      default: "6144"
+      min: 2048
+      max: 16384
+      immutable: true
+      apply: rebuild
+      group: World
+    game_difficulty:
+      type: int
+      default: "2"
+      min: 0
+      max: 5
+      apply: restart
+      group: Difficulty
+    drop_on_death:
+      type: int
+      default: "0"
+      min: 0
+      max: 4
+      apply: restart
+      group: Difficulty
+    eac_enabled:
+      type: bool
+      default: "true"
+      apply: restart
+
+  sizing:
+    memory_model: flat
+    native_headroom: 2G
+    high_margin: 512M
+    ram_floor_mb: 8192
+    disk_floor_gb: 16
+
+  recommended_jobs:
+    nightly:
+      action: restart
+      at: "05:00"
+      jitter: 120s
+      persistent: false
+      why: "the engine's memory footprint and chunk-unload debt grow across a long uptime"
+    backup: {at: "04:00", keep: 14, persistent: true}
+
+  egress:
+    - {host: "*.steampowered.com", why: "SteamCMD"}
+    - {host: "*.steamcontent.com", why: "Steam CDN"}

@@ -146,12 +146,11 @@ func TestAnEarlierCheckSilencesTheLaterOnesOnTheSameNode(t *testing.T) {
 	})
 }
 
-// TestAKnownButUnimplementedNameIsAWarning is what lets 7daystodie.yaml ship in
-// v1 declaring a telnet control channel: it loads, it validates, and the
-// capability renders as unavailable with a reason (10.2).
+// TestAKnownButUnimplementedNameIsAWarning verifies that a planned-but-not-yet-
+// implemented control kind loads, validates, and renders as unavailable (10.2).
 func TestAKnownButUnimplementedNameIsAWarning(t *testing.T) {
 	m, ix := fixture(t, "good/rich.yaml")
-	m.Spec.Control.Kind = string(ControlTelnet)
+	m.Spec.Control.Kind = string(ControlWSRCON)
 
 	got := Validate(m, ix)
 	if got.HasErrors() {

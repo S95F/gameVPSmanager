@@ -1,0 +1,276 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: minecraft-paper
+  name: Minecraft Paper Server
+  revision: 1
+  tags: [minecraft, java, paper, rcon]
+  doc: |
+    Paper is a high-performance Minecraft server with plugin support. gvm
+    installs the Paperclip launcher JAR, which downloads the patched server on
+    first start (materialize_is_explicit: true captures this network step as an
+    explicit install action rather than a silent side effect of the first Start
+    click).
+
+    Java is selected from piston-meta's javaVersion.majorVersion and pinned
+    per-instance via a ./gvm-jre symlink created by mc.select_jdk. Neither
+    update-alternatives nor any system-wide state is touched.
+
+    RCON (Source RCON) is enabled for remote console commands. The password is
+    a random secret generated at create time and stored in the instance's secret
+    store.
+
+    The Modrinth content block lets operators declare plugin JARs; they are
+    resolved against Paper's loader and the declared mc_version before any file
+    is written.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: minecraft
+    minecraft:
+      loader:
+        kind: paper
+        version: latest                  # Paper always tracks the latest build for the MC version
+      mc_version: "{{ .Var.mc_version }}"
+      java:
+        from: piston_meta
+      materialize_is_explicit: true      # Paperclip first boot fetches the patched server JAR
+      sentinel:
+        path: paperclip.jar
+        executable: false
+        min_bytes: 65536
+
+  runtime:
+    exec: ./gvm-jre/bin/java
+    cwd: "{{ .Install }}"
+    args:
+      - "-Xms{{ .Var.heap_size }}"
+      - "-Xmx{{ .Var.heap_size }}"
+      - "-XX:+UseG1GC"
+      - "-XX:+ParallelRefProcEnabled"
+      - "-XX:MaxGCPauseMillis=200"
+      - "-jar"
+      - "paperclip.jar"
+      - "--log-strip-color"
+      - "nogui"
+      - "--port={{ .Port.game }}"
+    env:
+      HOME: "{{ .Home }}"
+      LANG: en_US.UTF-8
+    console: {mode: pipe, charset: utf8, echo_input: false}
+    process_group: false
+    arch: native
+    jit: true                            # JVM process
+
+  readiness:
+    hard_deadline: 300s
+    stall_timeout: 120s
+    progress: ["Starting minecraft server", "Preparing level", "Done"]
+    probes:
+      - {kind: log_marker, pattern: "Done \\(", timeout: 300s}
+    fail_markers:
+      - {pattern: "(?i)address already in use", fatal: true,
+         hint: "another server holds this port; check `gvm doctor` and `ss -lntup`"}
+      - {pattern: "(?i)failed to bind port", fatal: true,
+         hint: "port conflict; check other Minecraft instances"}
+
+  shutdown:
+    budget: 150s
+    steps:
+      - {via: control, send: "save-all", wait: 20s}
+      - {via: console, send: "save-all", wait: 20s}
+      - {via: control, send: "stop", wait: 10s}
+      - {via: console, send: "stop", wait: 10s}
+      - {via: wait_exit, wait: 45s}
+      - {via: signal, signal: SIGTERM, scope: process, wait: 15s}
+
+  control:
+    kind: source_rcon
+    port: rcon
+    password: "{{ .Secret.rcon_password }}"
+    dialect: minecraft
+    available_only_when_ready: true
+    not_ready_reason: "RCON is available only after the server finishes loading"
+
+  verbs:
+    save:      {console: "save-all", control: "save-all"}
+    stop:      {console: "stop",     control: "stop"}
+    players:   {console: "list",     control: "list"}
+    broadcast: {console: "say {{ .Msg }}", control: "say {{ .Msg }}"}
+    kick:      {console: "kick {{ .Player }} {{ .Reason }}",
+                control: "kick {{ .Player }} {{ .Reason }}"}
+    ban:       {console: "ban {{ .Player }} {{ .Reason }}",
+                control: "ban {{ .Player }} {{ .Reason }}"}
+
+  port_stride: {mc: 5, admin: 5}
+  ports:
+    - {name: game,  proto: both, default: 25565, group: mc, expose: public,
+       note: "Minecraft game and query port"}
+    - {name: rcon,  proto: tcp,  default: 25575, group: admin, expose: none,
+       bind: 127.0.0.1,
+       config_key: rcon.port, config_file: server.properties,
+       note: "Source RCON; bind to loopback, reach it with ssh -L"}
+    - {name: query, proto: udp,  default: 25585, group: admin, expose: none,
+       bind: 127.0.0.1,
+       config_key: query.port, config_file: server.properties,
+       note: "GameSpy4 query; disabled by default"}
+
+  config_files:
+    - name: server.properties
+      path: "{{ .Data }}/server.properties"
+      format: java_properties
+      owner: server                      # Minecraft writes it back on every restart
+      create_if_missing: false           # mc.write_properties seeds it from manifest vars
+      mode: "0640"
+      keys:
+        server-port:        "{{ .Port.game }}"
+        server-ip:          ""
+        motd:               "{{ .Var.motd }}"
+        max-players:        "{{ .Var.max_players }}"
+        difficulty:         "{{ .Var.difficulty }}"
+        level-name:         "{{ .Var.level_name }}"
+        level-seed:         "{{ .Var.level_seed }}"
+        gamemode:           "{{ .Var.gamemode }}"
+        pvp:                "{{ .Var.pvp }}"
+        online-mode:        "{{ .Var.online_mode }}"
+        white-list:         "{{ .Var.whitelist }}"
+        spawn-protection:   "{{ .Var.spawn_protection }}"
+        enable-rcon:        "true"
+        rcon.password:      "{{ .Secret.rcon_password }}"
+        enable-query:       "false"
+        view-distance:      "{{ .Var.view_distance }}"
+        simulation-distance: "{{ .Var.simulation_distance }}"
+
+  content:
+    - name: plugins
+      source: modrinth
+      acquisition:
+        mechanism: http
+      activation: {}
+      roots: ["{{ .Data }}/plugins"]
+      impact:
+        add:    restart
+        remove: restart
+        update: restart
+
+  hooks:
+    post_install: [mc.accept_eula, mc.write_properties, mc.gamerule_fallback]
+    pre_start:    [mc.select_jdk]
+
+  backup:
+    include:
+      - "{{ .Data }}/world"
+      - "{{ .Data }}/world_nether"
+      - "{{ .Data }}/world_the_end"
+      - "{{ .Data }}/server.properties"
+      - "{{ .Data }}/ops.json"
+      - "{{ .Data }}/whitelist.json"
+      - "{{ .Data }}/banned-players.json"
+      - "{{ .Data }}/banned-ips.json"
+    world_paths:
+      - "{{ .Data }}/world"
+      - "{{ .Data }}/world_nether"
+      - "{{ .Data }}/world_the_end"
+    freeze:
+      before: {via: control, send: "save-all", wait: 20s}
+      after:  none
+      lease_budget: 30s
+
+  vars:
+    mc_version:
+      type: string
+      required: true
+      immutable: true
+      apply: rebuild
+      help: "Minecraft version, e.g. 1.21.4. Immutable after creation."
+    heap_size:
+      type: memory
+      default: 2G
+      apply: restart
+      help: "JVM heap size (both -Xms and -Xmx). Use G suffix for gigabytes."
+    motd:
+      type: string
+      default: "A Minecraft Server"
+      apply: restart
+      group: Identity
+    max_players:
+      type: int
+      default: "20"
+      min: 1
+      max: 100
+      apply: restart
+    difficulty:
+      type: enum
+      values: [peaceful, easy, normal, hard]
+      default: normal
+      apply: restart
+    level_name:
+      type: string
+      default: world
+      immutable: true
+      apply: rebuild
+      help: "World directory name. Changing it abandons the existing world."
+    level_seed:
+      type: string
+      default: ""
+      immutable: true
+      apply: rebuild
+      help: "World seed. Empty means random."
+    gamemode:
+      type: enum
+      values: [survival, creative, adventure, spectator]
+      default: survival
+      apply: restart
+    pvp:
+      type: bool
+      default: "true"
+      apply: restart
+    online_mode:
+      type: bool
+      default: "true"
+      apply: restart
+      help: "Authenticate players against Mojang. Set false only for LAN or offline play."
+    whitelist:
+      type: bool
+      default: "false"
+      apply: restart
+    spawn_protection:
+      type: int
+      default: "16"
+      min: 0
+      max: 256
+      apply: restart
+    view_distance:
+      type: int
+      default: "10"
+      min: 2
+      max: 32
+      apply: restart
+    simulation_distance:
+      type: int
+      default: "10"
+      min: 2
+      max: 32
+      apply: restart
+
+  sizing:
+    memory_model: heap_plus_headroom
+    heap_var: heap_size
+    native_headroom: 512M
+    high_margin: 256M
+    ram_floor_mb: 2048
+    disk_floor_gb: 10
+
+  recommended_jobs:
+    backup: {at: "04:00", keep: 14, persistent: true}
+
+  egress:
+    - {host: "launchermeta.mojang.com", why: "Minecraft version manifest (piston-meta)"}
+    - {host: "piston-meta.mojang.com",  why: "Minecraft version metadata"}
+    - {host: "piston-data.mojang.com",  why: "Minecraft server JAR download"}
+    - {host: "api.papermc.io",          why: "Paper build API"}
+    - {host: "*.papermc.io",            why: "Paper JAR downloads"}
+    - {host: "api.modrinth.com",        why: "Modrinth plugin metadata"}
+    - {host: "cdn.modrinth.com",        why: "Modrinth plugin downloads"}

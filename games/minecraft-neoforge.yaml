@@ -1,0 +1,244 @@
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: minecraft-neoforge
+  name: Minecraft NeoForge Server
+  revision: 1
+  tags: [minecraft, java, neoforge]
+  doc: |
+    NeoForge is the community continuation of Minecraft Forge. gvm installs the
+    NeoForge installer JAR, which runs on first install to produce the patched
+    server JAR tree. materialize_is_explicit: true marks this network-touching
+    step as an explicit install action.
+
+    NeoForge version resolution parses the full Maven versions XML list; gvm
+    never trusts the <latest> or <release> elements because they can lag behind
+    the real list.
+
+    Java is selected from piston-meta's javaVersion.majorVersion and pinned
+    per-instance via a ./gvm-jre symlink created by mc.select_jdk.
+
+    NeoForge does not ship a built-in RCON; Minecraft's source_rcon can be
+    enabled via server.properties but it is off by default in this manifest.
+    Shutdown uses the server console instead.
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: minecraft
+    minecraft:
+      loader:
+        kind: neoforge
+        version: latest                  # resolved from Maven XML, never trusts <latest>/<release>
+      mc_version: "{{ .Var.mc_version }}"
+      java:
+        from: piston_meta
+      materialize_is_explicit: true      # installer downloads and patches the server JAR
+      sentinel:
+        path: server.jar
+        executable: false
+        min_bytes: 65536
+
+  runtime:
+    exec: ./gvm-jre/bin/java
+    cwd: "{{ .Install }}"
+    args:
+      - "-Xms{{ .Var.heap_size }}"
+      - "-Xmx{{ .Var.heap_size }}"
+      - "-XX:+UseG1GC"
+      - "@libraries/net/neoforged/neoforge/{{ .Var.neoforge_version }}/unix_args.txt"
+      - "nogui"
+    env:
+      HOME: "{{ .Home }}"
+      LANG: en_US.UTF-8
+    console: {mode: pipe, charset: utf8, echo_input: false}
+    process_group: false
+    arch: native
+    jit: true
+
+  readiness:
+    hard_deadline: 600s
+    stall_timeout: 180s
+    progress: ["Loading Minecraft", "Preparing spawn area", "Done"]
+    probes:
+      - {kind: log_marker, pattern: "Done \\(", timeout: 600s}
+    fail_markers:
+      - {pattern: "(?i)address already in use", fatal: true,
+         hint: "port conflict; check `gvm doctor` and `ss -lntup`"}
+      - {pattern: "(?i)failed to load mod", fatal: false,
+         hint: "a mod failed to load; check the server log for details"}
+
+  shutdown:
+    budget: 150s
+    steps:
+      - {via: console, send: "save-all", wait: 20s}
+      - {via: console, send: "stop", wait: 10s}
+      - {via: wait_exit, wait: 60s}
+      - {via: signal, signal: SIGTERM, scope: process, wait: 30s}
+
+  control: null
+
+  verbs:
+    save:      {console: "save-all"}
+    stop:      {console: "stop"}
+    players:   {console: "list"}
+    broadcast: {console: "say {{ .Msg }}"}
+    kick:      {console: "kick {{ .Player }} {{ .Reason }}"}
+    ban:       {console: "ban {{ .Player }} {{ .Reason }}"}
+
+  port_stride: {mc: 5}
+  ports:
+    - {name: game, proto: both, default: 25565, group: mc, expose: public,
+       config_key: server-port, config_file: server.properties,
+       note: "Minecraft game and query port"}
+
+  config_files:
+    - name: server.properties
+      path: "{{ .Data }}/server.properties"
+      format: java_properties
+      owner: server
+      create_if_missing: false
+      mode: "0640"
+      keys:
+        motd:               "{{ .Var.motd }}"
+        max-players:        "{{ .Var.max_players }}"
+        difficulty:         "{{ .Var.difficulty }}"
+        level-name:         "{{ .Var.level_name }}"
+        level-seed:         "{{ .Var.level_seed }}"
+        gamemode:           "{{ .Var.gamemode }}"
+        pvp:                "{{ .Var.pvp }}"
+        online-mode:        "{{ .Var.online_mode }}"
+        white-list:         "{{ .Var.whitelist }}"
+        view-distance:      "{{ .Var.view_distance }}"
+        simulation-distance: "{{ .Var.simulation_distance }}"
+
+  content:
+    - name: mods
+      source: modrinth
+      acquisition:
+        mechanism: http
+      activation: {}
+      roots: ["{{ .Data }}/mods"]
+      impact:
+        add:    restart
+        remove: restart
+        update: restart
+
+  hooks:
+    post_install: [mc.accept_eula, mc.write_properties, mc.gamerule_fallback]
+    pre_start:    [mc.select_jdk]
+
+  backup:
+    include:
+      - "{{ .Data }}/world"
+      - "{{ .Data }}/world_nether"
+      - "{{ .Data }}/world_the_end"
+      - "{{ .Data }}/server.properties"
+      - "{{ .Data }}/ops.json"
+      - "{{ .Data }}/whitelist.json"
+      - "{{ .Data }}/banned-players.json"
+      - "{{ .Data }}/banned-ips.json"
+    world_paths:
+      - "{{ .Data }}/world"
+      - "{{ .Data }}/world_nether"
+      - "{{ .Data }}/world_the_end"
+    freeze:
+      before: {via: console, send: "save-all", wait: 20s}
+      after:  none
+      lease_budget: 30s
+
+  vars:
+    mc_version:
+      type: string
+      required: true
+      immutable: true
+      apply: rebuild
+      help: "Minecraft version, e.g. 1.21.4. Immutable after creation."
+    neoforge_version:
+      type: string
+      default: ""
+      immutable: false
+      apply: rebuild
+      help: "NeoForge version, e.g. 21.4.0. Empty means latest for mc_version."
+    heap_size:
+      type: memory
+      default: 4G
+      apply: restart
+      help: "JVM heap size (both -Xms and -Xmx)."
+    motd:
+      type: string
+      default: "A Minecraft Server"
+      apply: restart
+      group: Identity
+    max_players:
+      type: int
+      default: "20"
+      min: 1
+      max: 100
+      apply: restart
+    difficulty:
+      type: enum
+      values: [peaceful, easy, normal, hard]
+      default: normal
+      apply: restart
+    level_name:
+      type: string
+      default: world
+      immutable: true
+      apply: rebuild
+    level_seed:
+      type: string
+      default: ""
+      immutable: true
+      apply: rebuild
+    gamemode:
+      type: enum
+      values: [survival, creative, adventure, spectator]
+      default: survival
+      apply: restart
+    pvp:
+      type: bool
+      default: "true"
+      apply: restart
+    online_mode:
+      type: bool
+      default: "true"
+      apply: restart
+    whitelist:
+      type: bool
+      default: "false"
+      apply: restart
+    view_distance:
+      type: int
+      default: "10"
+      min: 2
+      max: 32
+      apply: restart
+    simulation_distance:
+      type: int
+      default: "10"
+      min: 2
+      max: 32
+      apply: restart
+
+  sizing:
+    memory_model: heap_plus_headroom
+    heap_var: heap_size
+    native_headroom: 512M
+    high_margin: 256M
+    ram_floor_mb: 4096
+    disk_floor_gb: 15
+
+  recommended_jobs:
+    backup: {at: "04:00", keep: 14, persistent: true}
+
+  egress:
+    - {host: "launchermeta.mojang.com",    why: "Minecraft version manifest"}
+    - {host: "piston-meta.mojang.com",     why: "Minecraft version metadata"}
+    - {host: "piston-data.mojang.com",     why: "Minecraft server JAR download"}
+    - {host: "maven.neoforged.net",        why: "NeoForge installer download"}
+    - {host: "libraries.minecraft.net",    why: "Minecraft library downloads"}
+    - {host: "files.minecraftforge.net",   why: "Forge/NeoForge file CDN"}
+    - {host: "api.modrinth.com",           why: "Modrinth mod metadata"}
+    - {host: "cdn.modrinth.com",           why: "Modrinth mod downloads"}

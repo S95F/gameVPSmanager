@@ -133,12 +133,12 @@ var (
 		ProviderSteamCMD:  SupportImplemented,
 		ProviderAdopted:   SupportImplemented,
 		ProviderNone:      SupportImplemented,
-		ProviderMinecraft: SupportPlanned,
+		ProviderMinecraft: SupportImplemented,
 	}}
 
 	contentSources = registry{what: "content source", entries: map[string]Support{
 		SourceSteamWorkshop: SupportImplemented,
-		SourceModrinth:      SupportPlanned,
+		SourceModrinth:      SupportImplemented,
 		SourceCurseForge:    SupportPlanned,
 	}}
 
@@ -181,10 +181,10 @@ var (
 		"pal.settings_seed":  SupportImplemented,
 		"sdtd.seed_config":   SupportImplemented,
 
-		"mc.accept_eula":       SupportPlanned,
-		"mc.select_jdk":        SupportPlanned,
-		"mc.write_properties":  SupportPlanned,
-		"mc.gamerule_fallback": SupportPlanned,
+		"mc.accept_eula":       SupportImplemented,
+		"mc.select_jdk":        SupportImplemented,
+		"mc.write_properties":  SupportImplemented,
+		"mc.gamerule_fallback": SupportImplemented,
 	}}
 
 	resolverNames = registry{what: "activation resolver", entries: map[string]Support{

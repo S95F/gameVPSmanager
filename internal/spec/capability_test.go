@@ -120,11 +120,11 @@ func TestVerbsInheritTheirChannelsAvailability(t *testing.T) {
 	}
 }
 
-// TestAPlannedControlKindIsNotSupportedAndSaysSo is what lets 7daystodie.yaml
-// ship in v1 declaring `kind: telnet` (10.2).
+// TestAPlannedControlKindIsNotSupportedAndSaysSo verifies that a control kind
+// this build has not implemented is reported as unavailable (10.2).
 func TestAPlannedControlKindIsNotSupportedAndSaysSo(t *testing.T) {
 	m := pzLike()
-	m.Spec.Control.Kind = string(ControlTelnet)
+	m.Spec.Control.Kind = string(ControlWSRCON)
 
 	got := capOf(t, m, managed(), Live{State: StateReady, ControlReady: true}, CapControl)
 	if got.Supported || got.Available {
