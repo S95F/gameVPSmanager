@@ -144,7 +144,7 @@ var commands = []Command{
 
 	{Name: "adopt", Group: "migration", Summary: "import an existing server install", Run: notImplemented},
 	{Name: "firewall", Group: "host", Summary: "manage host firewall rules", Run: notImplemented},
-	{Name: "doctor", Group: "host", Summary: "check the host for problems", Run: notImplemented},
+	{Name: "doctor", Group: "host", Summary: "check the host for problems", Run: runDoctor},
 }
 
 // help is registered here rather than in the literal above because it calls
