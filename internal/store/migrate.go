@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -13,6 +14,9 @@ import (
 // SchemaVersion is the expected migration version that this binary requires.
 // It equals the highest migration file number.
 const SchemaVersion = 10
+
+// gooseMu guards goose's package-level globals (SetBaseFS, SetDialect).
+var gooseMu sync.Mutex
 
 //go:embed migrations/*.sql
 var migrations embed.FS
@@ -27,6 +31,8 @@ func NewMigrator(pool *pgxpool.Pool) *Migrator { return &Migrator{pool: pool} }
 func (m *Migrator) Migrate(ctx context.Context) error {
 	db := stdlib.OpenDBFromPool(m.pool)
 	defer db.Close()
+	gooseMu.Lock()
+	defer gooseMu.Unlock()
 	goose.SetBaseFS(migrations)
 	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("store: set dialect: %w", err)
@@ -38,6 +44,12 @@ func (m *Migrator) Migrate(ctx context.Context) error {
 func (m *Migrator) Version(ctx context.Context) (int64, error) {
 	db := stdlib.OpenDBFromPool(m.pool)
 	defer db.Close()
+	gooseMu.Lock()
+	defer gooseMu.Unlock()
+	goose.SetBaseFS(migrations)
+	if err := goose.SetDialect("postgres"); err != nil {
+		return 0, fmt.Errorf("store: set dialect: %w", err)
+	}
 	v, err := goose.GetDBVersionContext(ctx, db)
 	if err != nil {
 		return 0, fmt.Errorf("store: get version: %w", err)

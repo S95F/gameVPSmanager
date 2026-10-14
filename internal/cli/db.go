@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/S95F/gameVPSmanager/internal/audit"
@@ -167,12 +168,18 @@ func runDBCheckGrants(ctx context.Context, env *Env, args []string) error {
 	var dummy []byte
 	queryErr := pool.QueryRow(ctx, `SELECT totp_secret_ct FROM users LIMIT 1`).Scan(&dummy)
 	if queryErr == nil {
+		// A row was returned: SELECT was permitted and a value was readable.
 		fmt.Fprintln(env.Stderr, "FAIL: gvm_web can read totp_secret_ct (D-27 violation)")
 		return errors.New("db check-grants: totp_secret_ct is readable by gvm_web")
 	}
 	if isPermissionDenied(queryErr) {
 		fmt.Fprintln(env.Stdout, "OK: gvm_web cannot read totp_secret_ct (D-27 satisfied)")
 		return nil
+	}
+	if errors.Is(queryErr, pgx.ErrNoRows) {
+		// No rows, but the query was permitted — the column IS readable.
+		fmt.Fprintln(env.Stderr, "FAIL: gvm_web can read totp_secret_ct (table empty but SELECT was not denied; D-27 violation)")
+		return errors.New("db check-grants: totp_secret_ct is readable by gvm_web")
 	}
 	// Any other error (e.g. table doesn't exist yet) counts as inconclusive.
 	fmt.Fprintf(env.Stdout, "SKIP: unexpected error checking totp_secret_ct: %v\n", queryErr)

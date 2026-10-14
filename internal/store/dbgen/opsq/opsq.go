@@ -65,6 +65,9 @@ func ReapStaleRuns(ctx context.Context, pool *pgxpool.Pool, bootID string) (int6
 
 // MarkInstancesAbsent sets absent_since on instances not in present.
 func MarkInstancesAbsent(ctx context.Context, pool *pgxpool.Pool, present []string) (int64, error) {
+	if present == nil {
+		present = []string{} // nil encodes as SQL NULL; NOT (name = ANY(NULL)) = NULL, updating nothing
+	}
 	tag, err := pool.Exec(ctx, `
 		UPDATE instances SET absent_since = now()
 		 WHERE deleted_at IS NULL AND absent_since IS NULL
@@ -90,14 +93,15 @@ func mapActorKind(k audit.ActorKind) string {
 }
 
 // mapOutcome maps Go outcome values to Postgres outcome_t enum values.
+// audit.Started has no outcome_t counterpart; callers must skip those rows.
 func mapOutcome(o audit.Outcome) string {
 	switch o {
 	case audit.OK:
 		return "ok"
 	case audit.Failed:
 		return "failed"
-	default: // "started" and any other values map to ok
-		return "ok"
+	default:
+		return "failed"
 	}
 }
 

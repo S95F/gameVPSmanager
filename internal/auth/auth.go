@@ -94,7 +94,14 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 
 		cookie, err := r.Cookie(SessionCookieName)
 		if err != nil {
-			// No session cookie — proceed unauthenticated.
+			// No session cookie. /api/v1/* always requires auth; all other
+			// paths (login page, static assets, health) may be unauthenticated.
+			if strings.HasPrefix(r.URL.Path, "/api/v1/") {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"authentication required"}`))
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}

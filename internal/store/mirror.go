@@ -16,6 +16,9 @@ UPDATE instances SET absent_since = now()
 // setting absent_since. It never deletes rows. Returns the number of rows
 // updated.
 func MirrorInstances(ctx context.Context, pool *pgxpool.Pool, present []string) (int64, error) {
+	if present == nil {
+		present = []string{} // nil encodes as SQL NULL; NOT (name = ANY(NULL)) = NULL, updating nothing
+	}
 	tag, err := pool.Exec(ctx, mirrorInstancesSQL, present)
 	if err != nil {
 		return 0, fmt.Errorf("store: mirror instances: %w", err)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,6 +19,7 @@ import (
 // expected to wire a MultiSink{PgSink, Spool} so that Postgres failures are
 // covered by the spool.
 type PgSink struct {
+	mu   sync.RWMutex
 	pool *pgxpool.Pool
 }
 
@@ -29,6 +31,8 @@ func NewPgSink(pool *pgxpool.Pool) *PgSink {
 
 // SetPool replaces the pool. Call this when the store becomes ready.
 func (p *PgSink) SetPool(pool *pgxpool.Pool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.pool = pool
 }
 
@@ -50,13 +54,20 @@ RETURNING id`
 // capture the record instead.
 //
 // If the spool_id already exists in the table, ErrDuplicate is returned.
+// Records with Outcome == Started are skipped: they have no outcome_t enum
+// value in Postgres and will be superseded by a terminal record anyway.
 func (p *PgSink) Write(ctx context.Context, r Record) error {
-	if p.pool == nil {
+	if r.Outcome == Started {
+		return nil
+	}
+	p.mu.RLock()
+	pool := p.pool
+	p.mu.RUnlock()
+	if pool == nil {
 		slog.Debug("audit: pg sink has no pool, skipping direct insert",
 			"action", r.Action, "spool_id", r.SpoolID)
 		return nil
 	}
-
 	paramsJSON, err := json.Marshal(r.Params)
 	if err != nil {
 		paramsJSON = []byte("{}")
@@ -95,7 +106,7 @@ func (p *PgSink) Write(ctx context.Context, r Record) error {
 	}
 
 	var id int64
-	rowErr := p.pool.QueryRow(ctx, pgInsertAuditSQL,
+	rowErr := pool.QueryRow(ctx, pgInsertAuditSQL,
 		r.At,                 // $1
 		reqID,                // $2
 		pgActorKind(r.Kind),  // $3
@@ -144,14 +155,15 @@ func pgActorKind(k ActorKind) string {
 }
 
 // pgOutcome maps Go Outcome to the Postgres outcome_t enum.
+// Started has no outcome_t counterpart; Write skips those rows before calling this.
 func pgOutcome(o Outcome) string {
 	switch o {
 	case OK:
 		return "ok"
 	case Failed:
 		return "failed"
-	default: // "started" and any future values
-		return "ok"
+	default:
+		return "failed"
 	}
 }
 

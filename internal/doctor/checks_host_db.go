@@ -77,9 +77,10 @@ func DBHostChecks() []lifecycle.DoctorCheck {
 
 // lazyPool opens a gvm_ops connection on first call and caches it.
 type lazyPool struct {
-	once sync.Once
-	pool *pgxpool.Pool
-	err  error
+	once  sync.Once
+	store *store.Store
+	pool  *pgxpool.Pool
+	err   error
 }
 
 func (p *lazyPool) get(ctx context.Context) (*pgxpool.Pool, error) {
@@ -97,6 +98,7 @@ func (p *lazyPool) get(ctx context.Context) (*pgxpool.Pool, error) {
 		defer cancel()
 		select {
 		case <-s.Ready():
+			p.store = s
 			p.pool = s.Pool()
 		case <-waitCtx.Done():
 			s.Close()
@@ -104,6 +106,12 @@ func (p *lazyPool) get(ctx context.Context) (*pgxpool.Pool, error) {
 		}
 	})
 	return p.pool, p.err
+}
+
+func (p *lazyPool) close() {
+	if p.store != nil {
+		p.store.Close()
+	}
 }
 
 func checkPostgresSocket() lifecycle.CheckFinding {
@@ -259,7 +267,7 @@ func checkZombieRuns(ctx context.Context, p *lazyPool) lifecycle.CheckFinding {
 		ID:       "HOST-011",
 		Severity: lifecycle.CheckNote,
 		Message:  fmt.Sprintf("%d job_run(s) still in 'running' state (may be from prior boot)", n),
-		Fix:      "run `gvm db migrate` after a fresh start to reap stale runs",
+		Fix:      "restart gvmd — it calls ReapStaleRuns when the pool becomes ready",
 	}
 }
 
