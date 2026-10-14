@@ -1,0 +1,25 @@
+gvm adopt discover — Project Zomboid · servertest
+─────────────────────────────────────────────────
+
+  service   zomboid.service
+  install   /opt/pzserver
+  data      /home/pzserver/Zomboid
+  user      pzserver
+  pid       not running
+
+  ports
+    game   16261
+    udp    16262
+    rcon   27015
+
+  content
+    WorkshopItems   33
+    Mods            32
+
+  findings
+    ✗  ADOPT-001   Mods= has 32 entries but WorkshopItems= has 33
+    !  ADOPT-002   workshop item 2866258937 has 2 mod folder candidates: MultiHitWeapons, MultiHitWeapons_B42
+    ✗  ADOPT-003   SERVER_PASSWORD is set in cleartext in config.env
+    ·  ADOPT-004   ExecStart uses screen(1); gvm will run the JVM directly — verify shutdown ladder still fires
+
+  2 errors · 1 warning · 1 note

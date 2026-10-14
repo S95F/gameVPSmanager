@@ -142,7 +142,7 @@ var commands = []Command{
 	// run at 05:00", which is a question asked far more often than it is run.
 	{Name: "job", Group: "operations", Summary: "run and inspect the scheduled work", Run: runJob},
 
-	{Name: "adopt", Group: "migration", Summary: "import an existing server install", Run: notImplemented},
+	{Name: "adopt", Group: "migration", Summary: "import an existing server install", Run: runAdopt},
 	{Name: "firewall", Group: "host", Summary: "manage host firewall rules", Run: notImplemented},
 	{Name: "doctor", Group: "host", Summary: "check the host for problems", Run: runDoctor},
 }

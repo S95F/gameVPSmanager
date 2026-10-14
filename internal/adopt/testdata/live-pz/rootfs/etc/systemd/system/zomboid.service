@@ -1,0 +1,34 @@
+[Unit]
+Description=Project Zomboid Dedicated Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pzserver
+Group=pzserver
+WorkingDirectory=/opt/pzserver
+Environment=HOME=/home/pzserver
+Environment=LANG=en_US.UTF-8
+
+ExecStart=/usr/bin/screen -DmS pzserver /opt/pzserver/start-server.sh \
+    -cachedir=/home/pzserver/Zomboid \
+    -servername servertest \
+    -Xmx5g -Xms2g
+
+ExecStop=/usr/bin/screen -p 0 -S pzserver -X eval "stuff 'save\015'"
+ExecStop=/bin/sleep 10
+ExecStop=/usr/bin/screen -p 0 -S pzserver -X eval "stuff 'quit\015'"
+
+KillSignal=SIGCONT
+SendSIGKILL=yes
+TimeoutStopSec=180
+
+Restart=on-failure
+RestartSec=20
+LimitNOFILE=100000
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

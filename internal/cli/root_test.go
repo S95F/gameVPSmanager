@@ -36,7 +36,7 @@ func TestVersionSucceeds(t *testing.T) {
 // would keep passing for a command that had grown a usage error instead of a
 // working body.
 func TestUnimplementedCommandExitsNonZero(t *testing.T) {
-	for _, name := range []string{"gvmd", "web", "adopt", "firewall"} {
+	for _, name := range []string{"gvmd", "web", "firewall"} {
 		code, _, errb := run(t, name)
 		if code == 0 {
 			t.Errorf("%s: exit 0, want non-zero while unimplemented", name)
@@ -64,6 +64,8 @@ func TestImplementedCommandsAreNotStubs(t *testing.T) {
 		{"backup"}, {"restore"}, {"update"}, {"rebuild"},
 		// Phase 12.
 		{"doctor"},
+		// Phase 13.
+		{"adopt"},
 	} {
 		_, _, errb := run(t, args...)
 		if strings.Contains(errb, "not implemented") {
