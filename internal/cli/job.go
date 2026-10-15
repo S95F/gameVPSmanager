@@ -126,18 +126,35 @@ type jobOptions struct {
 }
 
 // bind puts the shared flags on one subcommand's flag set.
+//
+// The scheduling flags — --trigger, --lease-for, --on-failure — are NOT here.
+// They are the unit's knobs, not an operator's: a nightly's trigger is "timer"
+// because the timer ran it, and an operator typing `gvm backup pz-main` is a
+// CLI trigger whatever they pass. So those three live on `gvm job run` alone
+// (bindSchedule), hidden even there, and the operator verbs default them
+// through trigger()/leaseFor()/policy() without ever showing a flag that only
+// invites a wrong value in the audit ledger.
 func (o *jobOptions) bind(fs *flag.FlagSet, defTrigger jobs.Trigger) {
+	o.Trigger = string(defTrigger)
+	fs.StringVar(&o.Reason, "reason", "", "why, recorded in the audit row and the lease")
+	fs.DurationVar(&o.Budget, "budget", 0,
+		"bound a shutdown ladder this job runs (default: the instance's shutdown.budget)")
+	fs.BoolVar(&o.JSON, "json", false, "print the run record as JSON")
+	fs.StringVar(&o.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
+}
+
+// bindSchedule adds the unit-facing scheduling flags. Only `gvm job run` calls
+// it — every job unit runs `gvm job run %i` and needs to say which trigger and
+// lease the schedule implies — and even there they are hidden from --help
+// (flagUsage lists them in the hidden set) so a human is not nudged to record
+// a run as something it was not.
+func (o *jobOptions) bindSchedule(fs *flag.FlagSet, defTrigger jobs.Trigger) {
 	fs.StringVar(&o.Trigger, "trigger", string(defTrigger),
 		"what caused this run, as the ledger records it: "+strings.Join(triggerNames(), " | "))
 	fs.StringVar(&o.Policy, "on-failure", "",
 		"override the kind's failure policy: fail | start_anyway | warn")
-	fs.StringVar(&o.Reason, "reason", "", "why, recorded in the audit row and the lease")
-	fs.DurationVar(&o.Budget, "budget", 0,
-		"bound a shutdown ladder this job runs (default: the instance's shutdown.budget)")
 	fs.DurationVar(&o.Lease, "lease-for", jobs.DefaultLeaseFor,
 		"the lease's self-expiry backstop")
-	fs.BoolVar(&o.JSON, "json", false, "print the run record as JSON")
-	fs.StringVar(&o.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 }
 
 // bindConfirm adds section 16.4's flags. Only the destructive verbs call it:
@@ -219,10 +236,13 @@ func runJobRun(ctx context.Context, env *Env, args []string) error {
 	fs.Usage = func() {
 		fmt.Fprint(env.Stderr, "Usage: gvm job run <instance>_<job>\n\n"+
 			"Resolves the slug through /etc/gvm/jobs/<slug>.json and runs it.\n\n")
-		fs.PrintDefaults()
+		// The scheduling flags are the unit's, not the operator's: hide them.
+		flagUsage(env.Stderr, fs, "trigger", "lease-for", "on-failure")
 	}
-	// A unit-invoked run is a timer run until something says otherwise.
+	// A unit-invoked run is a timer run until something says otherwise, so this
+	// is the one verb that binds the scheduling flags.
 	opt.bind(fs, jobs.TriggerTimer)
+	opt.bindSchedule(fs, jobs.TriggerTimer)
 	opt.bindConfirm(fs)
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {

@@ -103,13 +103,20 @@ func (p portPins) Set(s string) error {
 func parseCreateArgs(env *Env, args []string) (createOptions, error) {
 	opt := createOptions{Vars: map[string]string{}, Enabled: true}
 
+	var dryAlias, noEnabled bool
 	fs := flag.NewFlagSet("gvm create", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	fs.Usage = func() {
 		fmt.Fprint(env.Stderr, "Usage: gvm create <instance> --game <game-id> [--var KEY=VALUE]...\n\n"+
 			"Writes /etc/gvm/instances/<instance>.yaml and nothing else.\n"+
 			"Run `gvm apply <instance>` next to put it on the host.\n\n")
-		fs.PrintDefaults()
+		// --user and --dry are hidden: --user only ever names the managed
+		// account (any other value is redirected to `gvm adopt`), and --dry is
+		// the alias of --dry-run kept for muscle memory.
+		flagUsage(env.Stderr, fs, "user", "dry")
+		printExamples(env.Stderr,
+			`sudo gvm create valheim-1 --game valheim --var public_name="Friends"`,
+			`sudo gvm create pz-main --game projectzomboid --pin-port game=16261`)
 	}
 	fs.StringVar(&opt.Game, "game", "", "game id from `gvm game list` (required)")
 	fs.Var(keyValues{vals: opt.Vars, order: &opt.VarOrder}, "var", "set a manifest variable, KEY=VALUE (repeatable)")
@@ -119,14 +126,22 @@ func parseCreateArgs(env *Env, args []string) (createOptions, error) {
 	fs.StringVar(&opt.Paths.Data, "data", "", "world/save directory (default: /srv/gvm/<instance>/data)")
 	fs.StringVar(&opt.Paths.Home, "home", "", "the GAME's HOME (default: /srv/gvm/<instance>)")
 	fs.BoolVar(&opt.Enabled, "enabled", true, "start at boot")
+	fs.BoolVar(&noEnabled, "no-enabled", false, "do not start at boot (the off switch for --enabled)")
 	fs.BoolVar(&opt.Unapproved, "unapproved-override", false,
 		"use an /etc/gvm/games override that has no recorded sha256 approval")
 	fs.BoolVar(&opt.DryRun, "dry-run", false, "print the YAML that would be written and write nothing")
+	fs.BoolVar(&dryAlias, "dry", false, "alias for --dry-run")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return createOptions{}, flagErr(err)
+	}
+	// --dry is --dry-run; --no-enabled is the off switch for --enabled. Fold
+	// the aliases into the one option each downstream code reads.
+	opt.DryRun = opt.DryRun || dryAlias
+	if noEnabled {
+		opt.Enabled = false
 	}
 	name, err := oneInstance(pos)
 	if err != nil {
