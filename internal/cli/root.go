@@ -135,7 +135,7 @@ var commands = []Command{
 	{Name: "run-shutdown", Group: "roles", Summary: "run a stopped instance's shutdown ladder from shutdown.json", Hidden: true, Run: runRunShutdown},
 	// probe-write runs INSIDE the transient unit `gvm apply` builds, as the
 	// instance's own account and under the sandbox the drop-in will carry
-	// (D-15). It is the only command whose caller is another copy of gvm.
+	//. It is the only command whose caller is another copy of gvm.
 	{Name: "probe-write", Group: "roles", Summary: "test whether the sandbox permits a write to each path (root, apply)", Hidden: true, Run: runProbeWrite},
 
 	{Name: "game", Group: "manifests", Summary: "validate and inspect game manifests", Run: runGame},
@@ -156,7 +156,7 @@ var commands = []Command{
 	{Name: "control", Group: "instances", Summary: "inspect and drive an instance's control channel", Run: runControl},
 
 	{Name: "content", Group: "content", Summary: "manage mods and workshop items", Run: runContent},
-	// `gvm mods` is an alias, because operators say "mods" (section 12.9). It
+	// `gvm mods` is an alias, because operators say "mods". It
 	// is hidden so the usage listing names one spelling: two visible entries
 	// for one verb invites the question of how they differ.
 	{Name: "mods", Group: "content", Summary: "alias for `gvm content`", Hidden: true, Run: runContent},
@@ -167,7 +167,7 @@ var commands = []Command{
 		Avail: avail.Unbuilt("updating game files is not in this build; the decision-only report works"), Run: runUpdate},
 	{Name: "rebuild", Group: "operations", Summary: "rebuild a world, archiving it first",
 		Avail: avail.Unbuilt("rebuilding a world is not in this build"), Run: runRebuild},
-	// `gvm job run %i` is gvm-job@.service's ExecStart (section 7.5) and is
+	// `gvm job run %i` is gvm-job@.service's ExecStart and is
 	// also how an operator fires a scheduled job by hand, so it is listed
 	// rather than hidden: `gvm job list` is the answer to "what does this box
 	// run at 05:00", which is a question asked far more often than it is run.

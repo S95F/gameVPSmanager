@@ -1,8 +1,8 @@
 // `gvm job` — the verb systemd invokes, and the one place a job is assembled.
 //
-// `gvm-job@.service` runs `gvm job run %i` and nothing else (section 7.5), so
+// `gvm-job@.service` runs `gvm job run %i` and nothing else, so
 // this file is the whole of what a nightly is: resolve the slug into an
-// instance, a job name and a kind (D-13), assemble the environment, hand it to
+// instance, a job name and a kind, assemble the environment, hand it to
 // internal/jobs and print what came back. Every operator verb that drives a
 // job -- `gvm backup`, `gvm update`, `gvm rebuild`, `gvm restore` -- arrives at
 // the same assembly through buildJobEnv, because a second assembly would be a
@@ -86,7 +86,7 @@ func jobUsage(w io.Writer) {
 	_ = tw.Flush()
 	fmt.Fprintf(w, "\n  A slug is \"<instance>_<job>\" and an EMPTY instance part is how a\n"+
 		"  host-level job is spelt: %s. Neither half may contain '_',\n"+
-		"  so there is exactly one reading of exactly one separator (D-45).\n",
+		"  so there is exactly one reading of exactly one separator.\n",
 		strings.Join(hostSlugs(), ", "))
 }
 
@@ -144,7 +144,7 @@ func (o *jobOptions) bind(fs *flag.FlagSet, defTrigger jobs.Trigger) {
 // a `--confirm` on `gvm backup` would suggest there was something to confirm.
 func (o *jobOptions) bindConfirm(fs *flag.FlagSet) {
 	fs.StringVar(&o.Confirm, "confirm", "",
-		"the instance name, typed, as the destructive-action contract requires (section 16.4)")
+		"the instance name, typed, as the destructive-action contract requires")
 	fs.BoolVar(&o.Yes, "yes", false,
 		"automation: assert that a human already decided. Refused over the API, which must "+
 			"carry the typed name instead")
@@ -354,7 +354,7 @@ func buildJobEnv(ctx context.Context, env *Env, h *HostEnv, res jobs.Resolved,
 	}
 	if err := instance.ValidateJobName(res.Slug.Job); err != nil {
 		return nil, fmt.Errorf("%w (the job action is %q; a job NAME may not contain '_' "+
-			"because the slug separator is one -- D-45)", err, res.Action)
+			"because the slug separator is one)", err, res.Action)
 	}
 
 	jenv := &jobs.Env{

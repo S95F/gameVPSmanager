@@ -57,7 +57,7 @@ var contentSubs = []struct {
 	run     func(context.Context, *Env, []string) error
 }{
 	{"list", "<instance>", "the declared list, what the lock records, and what is on disk", runContentList},
-	{"diff", "<instance>", "declared vs locked vs observed — the three-way view (section 12.9)", runContentDiff},
+	{"diff", "<instance>", "declared vs locked vs observed — the three-way view", runContentDiff},
 	{"why", "<instance> <activation-id>", "explain how one mod id came to be enabled, or why it is not", runContentWhy},
 	{"add", "<instance> <id>...", "declare items, at a chosen position", runContentAdd},
 	{"remove", "<instance> <id>...", "undeclare items", runContentRemove},
@@ -66,7 +66,7 @@ var contentSubs = []struct {
 	{"update", "<instance> [<id>...]", "report items whose internal ids have moved since the lock", runContentUpdate},
 	{"lock", "<instance>", "show, check or re-stamp the recorded intent", runContentLock},
 	{"collection", "sync <instance>", "reconcile the declared list against a Steam collection", runContentCollection},
-	{"blocked", "<instance>", "items awaiting a manual download (section 12.8)", runContentBlocked},
+	{"blocked", "<instance>", "items awaiting a manual download", runContentBlocked},
 }
 
 func runContent(ctx context.Context, env *Env, args []string) error {
@@ -433,7 +433,7 @@ func (v *contentView) sourceLock() (*content.SourceLock, string) {
 // configDoc parses one of the manifest's declared config files.
 //
 // By NAME, never by path: a content verb cannot address a file the manifest
-// does not declare, and the manifest is what is pinned per instance (D-17).
+// does not declare, and the manifest is what is pinned per instance.
 // The RCON password lives in the same ini as Mods=, which is why this is the
 // only reader and why it hands back a parsed document rather than bytes.
 func (v *contentView) configDoc(name string) (gamecfg.Doc, error) {
@@ -1289,7 +1289,7 @@ func printOrderFindings(w io.Writer, name string, vs []content.OrderViolation) {
 func errContentSyncIsAJob(name string) error {
 	return fmt.Errorf("applying a content change stops the server, writes the acquisition key, "+
 		"boots once for the download, stops again, writes the activation key and starts -- one "+
-		"job holding this instance's lock the whole time (section 12.6). That job is not in "+
+		"job holding this instance's lock the whole time. That job is not in "+
 		"this build, and running the steps from the CLI would be a second thing that can leave "+
 		"a server stopped.\n"+
 		"  gvm content sync %s --dry-run   decides, read-only, safe with players online\n"+
@@ -1396,7 +1396,7 @@ func printContentPlan(w io.Writer, v *contentView, p *content.Plan) {
 	}
 	if len(p.Changes) == 0 {
 		// The normal nightly answer, stated as a first-class success: nothing
-		// to do must not read as something gone wrong (D-43).
+		// to do must not read as something gone wrong.
 		fmt.Fprint(w, "  = the declared list, the lock and the live config agree\n")
 	}
 	printOrderFindings(w, v.Name, content.CheckOrderPlan(p))

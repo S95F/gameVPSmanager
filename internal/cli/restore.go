@@ -15,7 +15,7 @@
 //
 //   - `--list` reads the archive's own manifest. Every archive carries
 //     .gvm/manifest.json as its FIRST member precisely so this is one ~8 KB
-//     read rather than decompressing 2.4 GB (section 13.1).
+//     read rather than decompressing 2.4 GB.
 //   - the preflight prints what would be restored WHERE, from the manifest's
 //     own roots, and which game manifest the archive was taken against --
 //     because a 2026 world restored onto a 2027 manifest whose shutdown ladder

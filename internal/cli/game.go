@@ -7,7 +7,7 @@
 // can run at all, and hooks says what a manifest is allowed to name.
 //
 // Everything here reads. Publishing an override is owner-only and gated on a
-// recorded sha256 approval (D-19), and lives with the privileged verbs.
+// recorded sha256 approval, and lives with the privileged verbs.
 
 package cli
 
@@ -77,7 +77,7 @@ func gameCatalog() *spec.Catalog { return spec.SystemCatalog(games.FS) }
 // overrideAuth turns the flag into an authorizer. Denying is the default
 // because a manifest is argv plus env plus destruction globs: an unapproved
 // override in /etc/gvm/games is skipped with a warning, never silently used
-// (D-19).
+// .
 func overrideAuth(unapproved bool) spec.OverrideAuthorizer {
 	if unapproved {
 		return spec.RootCLIAuthorizer{}
@@ -595,7 +595,7 @@ func runGameHooks(env *Env, args []string) error {
 	_ = tw.Flush()
 
 	fmt.Fprint(w, "\n  A name outside these lists is a load-time error, which is what keeps\n"+
-		"  `hooks: [something.clever]` from being a plugin system (D-21).\n")
+		"  `hooks: [something.clever]` from being a plugin system.\n")
 	return nil
 }
 

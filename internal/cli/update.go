@@ -1,4 +1,4 @@
-// `gvm update` — decide before you stop (D-43), from the terminal.
+// `gvm update` — decide before you stop, from the terminal.
 //
 // The command is `update.sh` with its one structural flaw removed. That script
 // stops the server, runs `app_update … validate`, starts it again and sleeps
@@ -13,7 +13,7 @@
 // operator is shown is the list the job will run rather than a paragraph that
 // has to be kept in step with it.
 //
-// `--repair` is the only path in gvm that emits `validate` (D-32), and it is a
+// `--repair` is the only path in gvm that emits `validate`, and it is a
 // flag and never an escalation: a failed post-update verification sets
 // NEEDS_REPAIR, starts the server anyway and tells the operator to run this.
 // `--repair --dry-run` prints the files `validate` may overwrite without
@@ -44,7 +44,7 @@ func runUpdate(ctx context.Context, env *Env, args []string) error {
 		fmt.Fprint(env.Stderr, "Usage: gvm update <instance> [--diff] [--repair [--dry-run]]\n\n"+
 			"Checks for a Steam build change and a content change with the server UP,\n"+
 			"and stops it only if one of them needs it. On a quiet night nothing is\n"+
-			"touched and the run records `skipped`, which is a success (D-43).\n\n")
+			"touched and the run records `skipped`, which is a success.\n\n")
 		fs.PrintDefaults()
 	}
 	opt.bind(fs, jobs.TriggerCLI)
@@ -53,7 +53,7 @@ func runUpdate(ctx context.Context, env *Env, args []string) error {
 			"touches nothing")
 	fs.BoolVar(&repair, "repair", false,
 		"emit `validate`: re-download every file that differs from what the provider wrote. "+
-			"It OVERWRITES customised files and takes a preserve archive first (D-32)")
+			"It OVERWRITES customised files and takes a preserve archive first")
 	fs.BoolVar(&dry, "dry-run", false,
 		"with --repair, print the at-risk files and stop")
 	pos, err := parseInterspersed(fs, args)

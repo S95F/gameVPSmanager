@@ -68,7 +68,7 @@ type HostEnv struct {
 	// Ops because a planner asking "does pzserver exist" must not write an
 	// audit row (hostops audits its mutating verbs).
 	Accounts func(name string) bool
-	// Ledger is the port reservation store (section 6.7). Nil disables the
+	// Ledger is the port reservation store. Nil disables the
 	// reservation window, which is only correct in a test.
 	Ledger *ports.Store
 	// Listeners reads the host's bound sockets, the third occupancy source.
@@ -81,7 +81,7 @@ type HostEnv struct {
 	Ephemeral func() (platform.PortRange, error)
 	// Catalog resolves game ids across the three shadowing layers.
 	Catalog *spec.Catalog
-	// LoadPinned reads an instance's pinned manifest bytes (D-04).
+	// LoadPinned reads an instance's pinned manifest bytes.
 	LoadPinned func(instanceDir string) (*spec.Manifest, error)
 	// HasSecret reports whether a credential file exists, for the drop-in's
 	// LoadCredential= lines. It answers presence and never reads a value.

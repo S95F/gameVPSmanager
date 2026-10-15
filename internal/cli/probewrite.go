@@ -1,4 +1,4 @@
-// `gvm probe-write` — the inside half of the write-probe (D-15).
+// `gvm probe-write` — the inside half of the write-probe.
 //
 // It runs INSIDE the transient unit `gvm apply` starts, as the account the
 // game runs as, under the same ProtectHome=, ProtectSystem= and

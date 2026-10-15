@@ -145,7 +145,7 @@ func loadRunSpec(name string, p instance.Paths, getenv func(string) string) (*ru
 
 	// LoadPinned, not LoadPinnedFor: the pin comparison belongs to preflight,
 	// which turns a mismatch into exit 64 and a STATUS= line naming both
-	// revisions (D-17). Verifying it here would produce the same refusal with
+	// revisions. Verifying it here would produce the same refusal with
 	// the wrong exit code, and systemd would retry it forever.
 	m, err := spec.LoadPinned(p.SpecDir)
 	if err != nil {
@@ -313,7 +313,7 @@ func supervise(ctx context.Context, env *Env, opt runOptions) error {
 	// The runner's own diagnostics go to stderr, which under the unit is the
 	// journal. The GAME's console deliberately does not: journald drops more
 	// than 10 000 messages per 30 s per service and would put holes in exactly
-	// the post-mortem an operator is reading (section 11.3).
+	// the post-mortem an operator is reading.
 	log := slog.New(slog.NewTextHandler(env.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
 		With("instance", opt.Name)
 	notify := platform.NewNotifier()
@@ -650,7 +650,7 @@ func portAddr(ld *runSpec) func(string) (string, error) {
 	}
 }
 
-// buildCommander wires the two channels and the verb router (section 11.9).
+// buildCommander wires the two channels and the verb router.
 func buildCommander(r *runner.Runner, ld *runSpec, paths instance.Paths, log *slog.Logger) (*control.Commander, control.Channel, error) {
 	m := ld.Manifest
 
@@ -797,7 +797,7 @@ func liveState(r *runner.Runner, ld *runSpec, paths instance.Paths) spec.Live {
 // The audit ROW is deliberately not written here. An audit record needs
 // actor_kind and actor_via, and only the component that authenticated the
 // request knows those; what reaches this recorder is the resolved actor string.
-// gvmd writes that row at the boundary where the identity is real (D-09).
+// gvmd writes that row at the boundary where the identity is real.
 type verbRecorder struct {
 	r   *runner.Runner
 	log *slog.Logger

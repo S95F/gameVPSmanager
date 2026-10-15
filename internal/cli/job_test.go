@@ -185,7 +185,7 @@ func jobHost(t *testing.T) (*testHost, *fakeJobSuper, *fakeJobLocker) {
 // end to end, with only the host faked.
 //
 // jobs.Sweep, lifecycle.Reconciler and the whole engine are real here. On a box
-// with no instances the correct answer is `skipped` and NOT `ok` (D-43): a
+// with no instances the correct answer is `skipped` and NOT `ok`: a
 // `guard` run that actually recovered something has to be findable in a month
 // of five-minute rows.
 func TestTheGuardJobRunsThroughTheRealSweep(t *testing.T) {
@@ -673,7 +673,7 @@ func TestAJobRunRecordsAnAuditSpan(t *testing.T) {
 		}
 		found = true
 		if e.Params["kind"] != "guard" {
-			t.Errorf("job.run params = %v; kind is required (section 14.8)", e.Params)
+			t.Errorf("job.run params = %v; kind is required", e.Params)
 		}
 	}
 	if !found {
@@ -934,7 +934,7 @@ func TestTheShippedHostTimersRunWhatTheyInvoke(t *testing.T) {
 				t.Fatalf("took %d lock(s): %v", n, lock.paths)
 			}
 			if strings.Contains(clean(lock.paths[0]), "/run/gvm/") {
-				t.Errorf("lock %q is in an instance's runtime directory (D-13)", lock.paths[0])
+				t.Errorf("lock %q is in an instance's runtime directory", lock.paths[0])
 			}
 			if super.stops != 0 {
 				t.Errorf("%s stopped something %d time(s)", slug, super.stops)

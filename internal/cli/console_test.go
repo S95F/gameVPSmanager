@@ -356,7 +356,7 @@ func TestTypedLineIsSentAndEchoedWithItsActor(t *testing.T) {
 	}
 }
 
-// The owner tier may write but may not run verbs (section 11.4). The client
+// The owner tier may write but may not run verbs. The client
 // must render that from the hello frame rather than discovering it by being
 // refused, because a refusal after the fact reads as a broken server.
 func TestVerbIsRefusedLocallyForATierThatCannotUseIt(t *testing.T) {

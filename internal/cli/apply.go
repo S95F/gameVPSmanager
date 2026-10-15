@@ -141,7 +141,7 @@ func buildApply(ctx context.Context, h *HostEnv, t Transport, name string, diffO
 		// A --diff must never need systemd-run: it is not an apply, and a
 		// development box has no transient units. An APPLY never sets this,
 		// so a sandbox that would hide the game's own save directory is still
-		// caught before the drop-in is written (D-15).
+		// caught before the drop-in is written.
 		AllowUnprobed: diffOnly,
 		Probe:         h.Probe,
 		HasSecret:     func(id string) bool { return h.hasSecret(name, id) },
@@ -257,7 +257,7 @@ func confirmDestructivePlan(env *Env, name string, yes bool) func(context.Contex
 	}
 }
 
-// TypedConfirm is rebuild.sh's prompt, generalised (section 16.4).
+// TypedConfirm is rebuild.sh's prompt, generalised.
 //
 // The contract is that the operator TYPES THE SUBJECT -- the instance name --
 // and that the check happens where the action does, not in the interface that

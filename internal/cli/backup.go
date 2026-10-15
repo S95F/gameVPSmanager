@@ -9,7 +9,7 @@
 // what that costs.
 //
 // `verify` and `prune` take an OPTIONAL instance, because their kinds are
-// scoped `either` (section 13.3) and the same table is `gvm backup verify
+// scoped `either` and the same table is `gvm backup verify
 // pz-main` and the host-level nightly. A second implementation for the
 // host-wide sweep is how the two would come to disagree about what "verified"
 // means.
@@ -365,7 +365,7 @@ func archiveRows(h *HostEnv, dir string) ([]archiveRow, error) {
 //
 // Every archive carries .gvm/manifest.json as its FIRST member precisely so
 // this costs one ~8 KB read rather than decompressing the whole thing
-// (section 13.1).
+// .
 func peekRows(h *HostEnv, dir string) ([]archiveRow, error) {
 	ents, err := h.files().ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {

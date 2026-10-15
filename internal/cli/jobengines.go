@@ -111,7 +111,7 @@ type JobSeams struct {
 	// /run/gvm/<n>/job.lock, which is why a test must supply one: creating
 	// /run on the development machine is not a thing a test may do.
 	Locker jobs.Locker
-	// Repair is the `validate` path (D-32). *update.Pipeline is the
+	// Repair is the `validate` path. *update.Pipeline is the
 	// production implementation and needs the provider context.
 	Repair Repairer
 	// Desc reads /etc/gvm/jobs/<slug>.json.
@@ -215,7 +215,7 @@ func (h *HostEnv) attachEngines(ctx context.Context, jenv *jobs.Env, eo engineOp
 			return nil
 		}
 		return fmt.Errorf("%w: a rebuild resolves and downloads the whole content list before "+
-			"it deletes anything (section 13.6), so it needs the same adapter. Nothing was "+
+			"it deletes anything, so it needs the same adapter. Nothing was "+
 			"stopped and %s is untouched", ErrContentApplyUnbuilt, jenv.Instance)
 	}
 	// Unreachable through Lookup, which refuses an unknown kind before this

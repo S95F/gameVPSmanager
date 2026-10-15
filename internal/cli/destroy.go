@@ -3,7 +3,7 @@
 // rebuild.sh made you type the server name before it deleted a world, and that
 // discipline is the one thing from the bash suite that must survive contact
 // with a web UI where a click is one pixel from a mistake. So the contract is
-// server-side and identical for every caller (section 16.4): the typed name is
+// server-side and identical for every caller: the typed name is
 // checked HERE, by the same TypedConfirm the API edge will use, not by the
 // interface that asked the question.
 //

@@ -1,7 +1,7 @@
 // `gvm logs` — the console log and the shutdown record, which are the two
 // files an operator actually wants at 2am.
 //
-// The console does NOT go to journald (section 11.3): journald's default rate
+// The console does NOT go to journald: journald's default rate
 // limit would put holes in exactly the post-mortem you need, so the runner
 // writes /var/log/gvm/<name>/console.log itself and rotates it. This command is
 // therefore a file reader, not a journal client, and `journalctl -u gvm@<name>`

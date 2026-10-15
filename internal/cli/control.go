@@ -280,7 +280,7 @@ func runControlVerb(ctx context.Context, env *Env, args []string) error {
 	res, err := c.Verb("", verb, vargs, nil)
 	if err != nil {
 		if socket.Denied(err) {
-			return fmt.Errorf("%w — verbs are uid 0 only on this socket (D-09)", err)
+			return fmt.Errorf("%w — verbs are uid 0 only on this socket", err)
 		}
 		return err
 	}

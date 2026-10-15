@@ -7,10 +7,10 @@
 // is what makes the file reviewable before anything on the box changes.
 //
 // The two decisions it does make are the ones that cannot be made later.
-// metadata.uid is a UUIDv7 generated once and never again (D-25) — grants hang
+// metadata.uid is a UUIDv7 generated once and never again — grants hang
 // off it, so a second identity for the same server is a silent loss of every
 // permission row. And the port set is MATERIALISED rather than recomputed
-// (section 6.7): a number written into a file is stable, greppable and immune
+//: a number written into a file is stable, greppable and immune
 // to an allocator change moving a live server on the next apply.
 
 package cli

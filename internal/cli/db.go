@@ -31,7 +31,7 @@ const dbConnTimeout = 2 * time.Second
 //	status        — print current schema version vs binary expectation
 //	version       — print the SchemaVersion constant
 //	replay-spool  — insert queued spool records into audit_log
-//	check-grants  — verify gvm_web cannot read restricted columns (D-27)
+//	check-grants  — verify gvm_web cannot read restricted columns
 func runDB(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(env.Stderr, "usage: gvm db <subcommand>")
@@ -184,16 +184,16 @@ func runDBCheckGrants(ctx context.Context, env *Env, args []string) error {
 	queryErr := pool.QueryRow(ctx, `SELECT totp_secret_ct FROM users LIMIT 1`).Scan(&dummy)
 	if queryErr == nil {
 		// A row was returned: SELECT was permitted and a value was readable.
-		fmt.Fprintln(env.Stderr, "FAIL: gvm_web can read totp_secret_ct (D-27 violation)")
+		fmt.Fprintln(env.Stderr, "FAIL: gvm_web can read totp_secret_ct (a restricted column was readable)")
 		return errors.New("db check-grants: totp_secret_ct is readable by gvm_web")
 	}
 	if isPermissionDenied(queryErr) {
-		fmt.Fprintln(env.Stdout, "OK: gvm_web cannot read totp_secret_ct (D-27 satisfied)")
+		fmt.Fprintln(env.Stdout, "OK: gvm_web cannot read totp_secret_ct (the restricted column is not readable)")
 		return nil
 	}
 	if errors.Is(queryErr, pgx.ErrNoRows) {
 		// No rows, but the query was permitted — the column IS readable.
-		fmt.Fprintln(env.Stderr, "FAIL: gvm_web can read totp_secret_ct (table empty but SELECT was not denied; D-27 violation)")
+		fmt.Fprintln(env.Stderr, "FAIL: gvm_web can read totp_secret_ct (table empty but SELECT was not denied — the column is readable)")
 		return errors.New("db check-grants: totp_secret_ct is readable by gvm_web")
 	}
 	// Any other error (e.g. table doesn't exist yet) counts as inconclusive.

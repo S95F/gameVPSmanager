@@ -9,7 +9,7 @@
 // in and the notice says it again on the way out, both times naming the server
 // and the command that would actually stop it.
 //
-// The client is line-oriented on purpose (section 11.4). The PTY belongs to the
+// The client is line-oriented on purpose. The PTY belongs to the
 // GAME and is shared by every viewer, so there is no resize op and no raw mode:
 // a per-client TIOCSWINSZ on a shared terminal would reflow another operator's
 // screen. Whole lines in, whole lines out, and `:` for the handful of commands
@@ -66,7 +66,7 @@ type consoleOptions struct {
 	// Actor is an attribution CLAIM. Empty is the normal case and the better
 	// one: the socket resolves `root_cli` or `unix:<account>` from credentials
 	// the kernel stamped, and a claim is honoured only for the tiers that
-	// legitimately speak for someone else (section 11.4).
+	// legitimately speak for someone else.
 	Actor string
 }
 
@@ -461,7 +461,7 @@ func (u *consoleUI) local(line string) bool {
 
 func (u *consoleUI) verb(rest string) {
 	if !u.peer.Verb {
-		u.note("this connection may not run verbs; they are routed through gvmd (D-09).")
+		u.note("this connection may not run verbs; they are routed through gvmd.")
 		return
 	}
 	name, argstr, _ := strings.Cut(rest, " ")

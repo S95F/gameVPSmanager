@@ -160,7 +160,7 @@ func TestASecondApplyReportsZeroActions(t *testing.T) {
 }
 
 // The write-probe runs BEFORE the drop-in, and a plan that got that wrong is
-// refused rather than executed (D-15).
+// refused rather than executed.
 func TestTheApplyPlanProbesBeforeItWritesTheDropIn(t *testing.T) {
 	h := newTestHost(t)
 	seedInstance(t, h, "valheim-1", "valheim", "--var", "public_name=Test")
