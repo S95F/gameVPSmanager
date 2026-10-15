@@ -599,11 +599,12 @@ func runGameHooks(env *Env, args []string) error {
 	return nil
 }
 
-// flagErr swallows the error -h produces, since the usage it printed IS the
-// answer to what was asked.
+// flagErr turns the error -h produces into errHelpShown, so the command stops
+// (the FlagSet already printed usage) and Main exits 0 rather than continuing
+// into the command body with a zero-valued options struct (U7).
 func flagErr(err error) error {
 	if errors.Is(err, flag.ErrHelp) {
-		return nil
+		return errHelpShown
 	}
 	return err
 }

@@ -21,9 +21,22 @@ func runAdopt(ctx context.Context, env *Env, args []string) error {
 	sub := args[0]
 	rest := args[1:]
 	switch sub {
+	case "-h", "--help", "help":
+		fmt.Fprintln(env.Stdout, "usage: gvm adopt <subcommand>")
+		fmt.Fprintln(env.Stdout, "subcommands: discover, cutover, rollback, finalize")
+		return errHelpShown
+	}
+	switch sub {
 	case "discover":
 		return runAdoptDiscover(ctx, env, rest)
 	case "cutover", "rollback":
+		if helpRequested(rest) {
+			// --help on an unbuilt subcommand is still help: exit 0, say what it
+			// would be and that it is not here (U7), rather than the refusal.
+			fmt.Fprintf(env.Stdout, "Usage: gvm adopt %s <instance>\n\n"+
+				"Not available in this build; nothing on this host would be changed.\n", sub)
+			return errHelpShown
+		}
 		// Honest, and safe: cutover and rollback are not in this build, so there
 		// is no reference to a rollback script no cutover has written, and no
 		// "(requires Linux)" — nothing on this host was touched either way. The

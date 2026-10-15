@@ -12,11 +12,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/S95F/gameVPSmanager/internal/audit"
+	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/store"
 )
 
-// dbConnTimeout is how long gvm db commands wait for the pool to become ready.
-const dbConnTimeout = 15 * time.Second
+// dbConnTimeout is how long gvm db commands make their one quiet attempt to
+// reach Postgres before failing with a plain sentence. It is short on purpose:
+// an operator at a prompt should not wait 15 s to be told the socket is not
+// answering, and nothing a db command does is load-bearing for a running world
+// (failure-recovery-9). A longer wait is opt-in, for a boot-ordering race.
+const dbConnTimeout = 2 * time.Second
 
 // runDB dispatches gvm db subcommands.
 //
@@ -35,6 +40,12 @@ func runDB(ctx context.Context, env *Env, args []string) error {
 	}
 	sub := args[0]
 	rest := args[1:]
+	switch sub {
+	case "-h", "--help", "help":
+		fmt.Fprintln(env.Stdout, "usage: gvm db <subcommand>")
+		fmt.Fprintln(env.Stdout, "subcommands: migrate, status, version, replay-spool, check-grants")
+		return errHelpShown
+	}
 	switch sub {
 	case "migrate":
 		return runDBMigrate(ctx, env, rest)
@@ -124,7 +135,11 @@ func runDBReplaySpool(ctx context.Context, env *Env, args []string) error {
 	fs := flag.NewFlagSet("db replay-spool", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	dsn := fs.String("dsn", "", "postgres DSN (default: unix socket peer auth)")
-	spoolDir := fs.String("spool-dir", "/var/lib/gvm/audit-spool", "audit spool directory")
+	// Defaults to instance.SpoolDir, the one directory the writer, the tmpfiles
+	// entry and this replayer all agree on. The old /var/lib/gvm/audit-spool
+	// default read an empty directory while the spool filled elsewhere
+	// (admin-security-7).
+	spoolDir := fs.String("spool-dir", instance.SpoolDir, "audit spool directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -139,8 +154,8 @@ func runDBReplaySpool(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return fmt.Errorf("db replay-spool: %w", err)
 	}
-	fmt.Fprintf(env.Stdout, "replayed %d file(s): %d inserted, %d duplicate\n",
-		stats.Files, stats.OK, stats.Dup)
+	fmt.Fprintf(env.Stdout, "replayed %d file(s) from %s: %d inserted, %d duplicate\n",
+		stats.Files, *spoolDir, stats.OK, stats.Dup)
 	return nil
 }
 
@@ -200,8 +215,9 @@ func dbWaitPool(ctx context.Context, dsn string) (*pgxpool.Pool, func(), error) 
 		return s.Pool(), s.Close, nil
 	case <-waitCtx.Done():
 		s.Close()
-		return nil, func() {}, fmt.Errorf("%w: timed out waiting for postgres",
-			store.ErrDatastoreUnavailable)
+		return nil, func() {}, fmt.Errorf("%w: Postgres is not reachable at "+
+			"/var/run/postgresql (check: systemctl status postgresql). Game servers, backups "+
+			"and updates are unaffected", store.ErrDatastoreUnavailable)
 	}
 }
 

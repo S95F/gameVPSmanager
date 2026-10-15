@@ -16,6 +16,12 @@ func runSecret(ctx context.Context, env *Env, args []string) error {
 	sub := args[0]
 	rest := args[1:]
 	switch sub {
+	case "-h", "--help", "help":
+		fmt.Fprintln(env.Stdout, "usage: gvm secret <subcommand>")
+		fmt.Fprintln(env.Stdout, "subcommands: list, set, rotate, show-path")
+		return errHelpShown
+	}
+	switch sub {
 	case "list":
 		return runSecretList(ctx, env, rest)
 	case "set":

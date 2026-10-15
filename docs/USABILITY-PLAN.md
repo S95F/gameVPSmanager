@@ -220,7 +220,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | **J1** | **First joinable server** | | | | |
 | 20 ✅ | Tell the truth about this build | help, README and refusals say what works; every hint runs; exit 3 | S | L | 19 |
 | 21 ◆ ✅ | Close the hazards already in this build | finalize can't delete early; backups go where configured; no comment wipe | H | L | 19 |
-| 22 | Help, errors and exit codes that work everywhere | `--help` never panics; plain errors; documented exit codes | S | L | 20 |
+| 22 🟡 | Help, errors and exit codes that work everywhere | `--help` never panics; plain errors; documented exit codes | S | L | 20 |
 | 23 | Install gvm on a fresh VPS | `sudo ./gvm host init`, verified tarball, real version | I | L | 22 |
 | 24 ◆ | `gvm doctor` tells the truth | 0 problems on a healthy host; checks every instance | I | L | 23 |
 | 25 | Adoption discovery you can trust | discover finds the live PZ server, says what blocks cutover, changed nothing | A | M | 22 |
@@ -751,6 +751,27 @@ Phase 21 is implemented and `make check` is green on Windows 11 (fmt-check + vet
 - **Rule 4:** role verbs keep their exit codes, so `RestartPreventExitStatus` still stops non-retryable failures.
 - **Rule 6:** job units keep their own exit contract, so a routine skip or a guard report never leaves a unit failed or fires `OnFailure=`. Nothing new actuates.
 - **Rule 3:** the `transport` topic explains the admin.sock decision, and the code still refuses.
+
+### 🟡 Partial — help-safety core landed 2026-10-15; exit-code table and refactor items remain
+
+Phase 22 is a large refactor phase (10 items touching nearly every CLI file). This session landed its highest-value, user-visible, test-green **core**, and `make check` is green on Windows (fmt + vet + `go test ./... -race`) with a clean `linux/amd64` cross-build. The exit-code table and the structural refactors are deliberately left for a dedicated session (see below).
+
+**Landed, with tests:**
+- **Item 1 — help never acts, exits 0 (the "Why now").** New `errHelpShown` sentinel; `flagErr` returns it for `flag.ErrHelp` so a `-h`/`--help` parse stops instead of falling through into the command body with a zero-valued options struct; `Main` maps both it and a raw `flag.ErrHelp` to exit 0. The six switch-based groups (`user`/`token`/`secret`/`audit`/`db`/`adopt`) intercept `-h`/`--help`/`help`, and `gvm help <cmd> [sub]` delegates to the command's own `--help`. `firewall` and the unbuilt `adopt cutover`/`rollback` answer `--help` with exit 0 too. `TestEveryHelpPathExitsZero` walks every command and subcommand × {`--help`, `-h`, `gvm help …`} and asserts exit 0, a usage line and zero host writes.
+- **Item 2 (partial) — did-you-mean.** `gvm creat` → `unknown command "creat" — did you mean "create"?` and exit 2 (Levenshtein, `TestDidYouMean`). The full subcommand-table-type unification, `Examples` blocks and `make docs-cli` generator are NOT done.
+- **Item 7 — recover() around non-role verbs.** `Main` wraps operator verbs in a recover that prints one line plus "this is a gvm bug; GVM_DEBUG=1 shows the stack" and exits 1; role verbs (`run`, `run-prepare`, `run-shutdown`, `probe-write`) are not wrapped and still crash into the journal with their exit codes (`TestPanicInAnOperatorVerbIsCaught`).
+- **Item 9 (core) — db commands fail fast.** `dbConnTimeout` is 2 s (one quiet attempt), and the failure is the one sentence "Postgres is not reachable at /var/run/postgresql (check: systemctl status postgresql). Game servers, backups and updates are unaffected." `db replay-spool` defaults to `instance.SpoolDir` (`/var/lib/gvm/spool`), matching the writer and tmpfiles, and prints the directory it read.
+
+**Not done this session (a dedicated session should take these — the phase's exit-code core and its refactors):**
+- **Item 6 — the exit-code table** (0/1/2/3/4/5). This is the phase's namesake and its largest change: doctor problems, `list --problems`, discover blockers, refusing content and an available update must map to exit 4; a refusal to exit 5; `gvm job run` under `INVOCATION_ID` to its own pinned mapping. It needs a typed-outcome mechanism and has wide test fallout (doctor today exits 1 on problems), so it was not attempted under this session's context budget rather than risk a half-done refactor across an auto-compact. `TestOperatorExitCodes`, `TestJobUnitExitCodes` and `TestRoleExitCodesUnchanged` come with it.
+- **Item 2 (full), item 3** — one `subcmd` table type for every group, a custom flag printer (`--flag VALUE`, hidden internal flags, `--trigger`/`--lease-for`/`--on-failure` moved to `gvm job run`), `Examples` blocks, and `make docs-cli` → `docs/cli-reference.md` with a CI diff.
+- **Item 4 — conventions** (`docs/cli-conventions.md`): `--dry-run` everywhere with `--dry` alias, instance-first positional with `--instance`/`--name` aliases, every read verb takes `--json`; `TestReadVerbsAcceptJSON`, `TestDryRunAliases`.
+- **Item 5 — `userError{Msg,Hint,Ref}`** and the lint test that rejects `D-\d\d` / `section \d+\.\d+` in error/Hint/Fix literals (an audit comparable in size to Phase 20's `TestHintsResolve`).
+- **Item 8 — embedded `docs/help/*.md` topics** (`gvm help concepts|exit-codes|transport|faq|…`) with generated exit-code/doctor-ID sections.
+- **Item 9 (rest)** — `--wait` opt-in, the peer-auth pg_hba hint, `check-grants` exit 4 (needs item 6), and the writer/tmpfiles/replayer agreement test.
+- **Item 10 — terminal hygiene**: `NO_COLOR`, no ANSI off a TTY, and `gvm completion bash|zsh|fish`.
+
+**Effort for this task:** the help-safety core implemented by Claude (Opus 4.8) on 2026-10-15, right after Phases 20 and 21 in the same session. The remaining items are their own body of work and are better done in a fresh session with full context budget.
 
 ---
 

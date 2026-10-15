@@ -21,6 +21,12 @@ func runAudit(ctx context.Context, env *Env, args []string) error {
 	sub := args[0]
 	rest := args[1:]
 	switch sub {
+	case "-h", "--help", "help":
+		fmt.Fprintln(env.Stdout, "usage: gvm audit <subcommand>")
+		fmt.Fprintln(env.Stdout, "subcommands: tail, search")
+		return errHelpShown
+	}
+	switch sub {
 	case "tail":
 		return runAuditTail(ctx, env, rest)
 	case "search":

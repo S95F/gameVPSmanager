@@ -8,14 +8,24 @@ package cli
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/S95F/gameVPSmanager/internal/avail"
 	"github.com/S95F/gameVPSmanager/internal/version"
 )
+
+// errHelpShown is returned by a parse*Args (through flagErr) when the operator
+// asked for help: the FlagSet has already printed usage, so there is nothing
+// left to do and nothing went wrong. Main maps it — and a raw flag.ErrHelp from
+// the few commands that return one directly — to exit 0, so `gvm <cmd> --help`
+// never continues into the command with zero options (U7, the panic the plan's
+// "Why now" describes). Requested help is success, not a usage error.
+var errHelpShown = errors.New("help shown")
 
 // ErrNotImplemented marks a command that is routed but not yet built.
 //
@@ -176,7 +186,7 @@ var commands = []Command{
 		Avail: avail.Unbuilt("reading the audit log is not in this build"), Run: runAudit},
 
 	{Name: "firewall", Group: "host", Summary: "manage host firewall rules",
-		Avail: avail.Unbuilt("gvm does not manage the firewall in this build"), Run: notImplemented},
+		Avail: avail.Unbuilt("gvm does not manage the firewall in this build"), Run: runFirewall},
 	{Name: "doctor", Group: "host", Summary: "check the host for problems", Run: runDoctor},
 	{Name: "db", Group: "host", Summary: "manage the datastore schema", Run: runDB},
 }
@@ -210,7 +220,7 @@ func lookup(name string) (Command, bool) {
 }
 
 // Main runs the CLI and returns a process exit code.
-func Main(ctx context.Context, env *Env) int {
+func Main(ctx context.Context, env *Env) (code int) {
 	if env.Getenv == nil {
 		env.Getenv = os.Getenv
 	}
@@ -234,8 +244,12 @@ func Main(ctx context.Context, env *Env) int {
 
 	cmd, ok := lookup(name)
 	if !ok {
-		fmt.Fprintf(env.Stderr, "gvm: unknown command %q\n\n", name)
-		usage(env.Stderr)
+		if s := didYouMean(name, commandNames()); s != "" {
+			fmt.Fprintf(env.Stderr, "gvm: unknown command %q — did you mean %q?\n", name, s)
+		} else {
+			fmt.Fprintf(env.Stderr, "gvm: unknown command %q\n\n", name)
+			usage(env.Stderr)
+		}
 		return 2
 	}
 
@@ -250,7 +264,30 @@ func Main(ctx context.Context, env *Env) int {
 		}
 	}()
 
+	// A panic in an operator verb is a gvm bug, not an operator error: catch it,
+	// say so in one line, and exit 1 rather than dumping a stack at someone who
+	// cannot act on it. The role verbs (run, run-shutdown, …) are NOT wrapped —
+	// they crash into the journal with their own exit codes, which is what
+	// systemd's Restart and RestartPreventExitStatus read (U8, rule 4).
+	if routeOf(name) != RouteRole {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(env.Stderr, "gvm %s: %v\n", name, r)
+				fmt.Fprintln(env.Stderr, "this is a gvm bug; GVM_DEBUG=1 shows the stack")
+				if env.Getenv("GVM_DEBUG") != "" {
+					fmt.Fprintf(env.Stderr, "%s\n", debug.Stack())
+				}
+				code = 1
+			}
+		}()
+	}
+
 	if err := cmd.Run(ctx, env, env.Args[1:]); err != nil {
+		// Requested help is success: the FlagSet already printed usage, so a
+		// parse that stopped for -h/--help exits 0 and continues into nothing.
+		if errors.Is(err, errHelpShown) || errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		// A role's exit code is a contract with systemd (see ExitError), so it
 		// is read before anything else and passed through untouched.
 		var xe *ExitError
@@ -287,20 +324,117 @@ func Main(ctx context.Context, env *Env) int {
 	return 0
 }
 
+// commandNames is the visible, dispatchable command names, for did-you-mean.
+func commandNames() []string {
+	out := make([]string, 0, len(commands))
+	for _, c := range commands {
+		if !c.Hidden {
+			out = append(out, c.Name)
+		}
+	}
+	return out
+}
+
+// didYouMean returns the closest candidate within a small edit distance, or ""
+// when nothing is close enough. A typo like "creat" for "create" is one edit; a
+// word that resembles nothing offers no misleading suggestion.
+func didYouMean(input string, candidates []string) string {
+	best, bestDist := "", 1<<30
+	for _, c := range candidates {
+		d := editDistance(input, c)
+		if d < bestDist {
+			best, bestDist = c, d
+		}
+	}
+	// Allow at most a third of the longer word to differ, capped at 3 — enough
+	// for a transposition or a dropped letter, not a different word.
+	limit := len(input)/3 + 1
+	if limit > 3 {
+		limit = 3
+	}
+	if bestDist <= limit {
+		return best
+	}
+	return ""
+}
+
+// editDistance is the Levenshtein distance, two rolling rows.
+func editDistance(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	cur := make([]int, len(rb)+1)
+	for i := 1; i <= len(ra); i++ {
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(rb)]
+}
+
+func min3(a, b, c int) int {
+	m := a
+	if b < m {
+		m = b
+	}
+	if c < m {
+		m = c
+	}
+	return m
+}
+
+// isHelpFlag reports whether a token is a request for help.
+func isHelpFlag(s string) bool { return s == "-h" || s == "--help" || s == "help" }
+
+// helpRequested reports whether any argument asks for help. It lets a
+// subcommand that has no FlagSet of its own (an unbuilt one) still answer
+// `--help` with exit 0 rather than its refusal.
+func helpRequested(args []string) bool {
+	for _, a := range args {
+		if isHelpFlag(a) {
+			return true
+		}
+	}
+	return false
+}
+
 func notImplemented(context.Context, *Env, []string) error { return ErrNotImplemented }
+
+// runFirewall is a routed-but-unbuilt verb that still answers --help with exit 0
+// (U7) before refusing. gvmd and web stay on notImplemented because they are
+// hidden roles a human never types for help.
+func runFirewall(_ context.Context, env *Env, args []string) error {
+	if helpRequested(args) {
+		fmt.Fprintln(env.Stdout, "Usage: gvm firewall <subcommand>")
+		fmt.Fprintln(env.Stdout, "\ngvm does not manage the firewall in this build.")
+		return errHelpShown
+	}
+	return ErrNotImplemented
+}
 
 func runVersion(_ context.Context, env *Env, _ []string) error {
 	fmt.Fprintln(env.Stdout, version.String())
 	return nil
 }
 
-func runHelp(_ context.Context, env *Env, args []string) error {
-	if len(args) == 0 {
+func runHelp(ctx context.Context, env *Env, args []string) error {
+	if len(args) == 0 || isHelpFlag(args[0]) {
 		usage(env.Stdout)
 		return nil
 	}
 	cmd, ok := lookup(args[0])
 	if !ok {
+		if s := didYouMean(args[0], commandNames()); s != "" {
+			return fmt.Errorf("unknown command %q — did you mean %q?", args[0], s)
+		}
 		return fmt.Errorf("unknown command %q", args[0])
 	}
 	fmt.Fprintf(env.Stdout, "gvm %s — %s\n", cmd.Name, cmd.Summary)
@@ -309,6 +443,14 @@ func runHelp(_ context.Context, env *Env, args []string) error {
 		fmt.Fprintf(env.Stdout, "\n  Not available in this build: %s\n", cmd.Avail.Why)
 	case avail.Partial:
 		fmt.Fprintf(env.Stdout, "\n  Partly available in this build: %s\n", cmd.Avail.Why)
+	}
+	// Delegate to the command's own `--help` so `gvm help <cmd> [sub]` prints
+	// the same full usage `<cmd> [sub] --help` does, from one source. The
+	// delegated call prints usage and returns errHelpShown, which is success.
+	fmt.Fprintln(env.Stdout)
+	rest := append(append([]string(nil), args[1:]...), "--help")
+	if err := cmd.Run(ctx, env, rest); err != nil && !errors.Is(err, errHelpShown) && !errors.Is(err, flag.ErrHelp) {
+		return err
 	}
 	return nil
 }

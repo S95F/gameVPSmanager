@@ -110,6 +110,39 @@ func TestForgottenSudoIsOneLine(t *testing.T) {
 	}
 }
 
+// TestPanicInAnOperatorVerbIsCaught: a panic in a non-role verb is a gvm bug,
+// caught and reported in one line with exit 1, not a stack dumped at an
+// operator who cannot act on it (cli-ergonomics-3).
+func TestPanicInAnOperatorVerbIsCaught(t *testing.T) {
+	orig := commands
+	defer func() { commands = orig }()
+	commands = append(append([]Command(nil), commands...),
+		Command{Name: "__panic", Group: "general", Hidden: true,
+			Run: func(context.Context, *Env, []string) error { panic("boom") }})
+
+	code, _, errb := run(t, "__panic")
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	if !strings.Contains(errb, "this is a gvm bug") {
+		t.Errorf("the panic was not reported as a bug:\n%s", errb)
+	}
+	if !strings.Contains(errb, "boom") {
+		t.Errorf("the panic value is missing:\n%s", errb)
+	}
+}
+
+// TestDidYouMean: a near-miss command name suggests the closest real one.
+func TestDidYouMean(t *testing.T) {
+	code, _, errb := run(t, "creat")
+	if code != 2 {
+		t.Errorf("exit %d, want 2", code)
+	}
+	if !strings.Contains(errb, `did you mean "create"`) {
+		t.Errorf("no suggestion:\n%s", errb)
+	}
+}
+
 func TestUnknownCommand(t *testing.T) {
 	code, _, errb := run(t, "frobnicate")
 	if code != 2 {

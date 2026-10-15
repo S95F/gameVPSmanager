@@ -16,6 +16,12 @@ func runToken(ctx context.Context, env *Env, args []string) error {
 	sub := args[0]
 	rest := args[1:]
 	switch sub {
+	case "-h", "--help", "help":
+		fmt.Fprintln(env.Stdout, "usage: gvm token <subcommand>")
+		fmt.Fprintln(env.Stdout, "subcommands: create, list, revoke")
+		return errHelpShown
+	}
+	switch sub {
 	case "create":
 		return runTokenCreate(ctx, env, rest)
 	case "list":
