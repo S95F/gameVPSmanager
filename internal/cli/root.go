@@ -15,6 +15,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	helptopics "github.com/S95F/gameVPSmanager/docs/help"
 	"github.com/S95F/gameVPSmanager/internal/avail"
 )
 
@@ -470,15 +471,42 @@ func runFirewall(_ context.Context, env *Env, args []string) error {
 func runHelp(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 || isHelpFlag(args[0]) {
 		usage(env.Stdout)
+		printHelpTopics(env.Stdout)
 		return nil
 	}
-	cmd, ok := lookup(args[0])
-	if !ok {
-		if s := didYouMean(args[0], commandNames()); s != "" {
-			return fmt.Errorf("unknown command %q — did you mean %q?", args[0], s)
-		}
-		return fmt.Errorf("unknown command %q", args[0])
+	// A command wins over a topic of the same name: `gvm help firewall` shows
+	// the firewall command, which already says the true thing. Topics are the
+	// prose that has no command — concepts, exit-codes, the faq.
+	if cmd, ok := lookup(args[0]); ok {
+		return helpForCommand(ctx, env, cmd, args)
 	}
+	if text, ok := helptopics.Topic(args[0]); ok {
+		fmt.Fprint(env.Stdout, text)
+		if !strings.HasSuffix(text, "\n") {
+			fmt.Fprintln(env.Stdout)
+		}
+		return nil
+	}
+	// did-you-mean spans both, so `gvm help exitcodes` finds `exit-codes` and
+	// `gvm help destory` finds the command.
+	candidates := append(commandNames(), helptopics.Names()...)
+	if s := didYouMean(args[0], candidates); s != "" {
+		return fmt.Errorf("unknown help topic or command %q — did you mean %q?", args[0], s)
+	}
+	return fmt.Errorf("unknown help topic or command %q", args[0])
+}
+
+// printHelpTopics lists the prose topics under the command usage, so an
+// operator discovers `gvm help faq` without being told it exists.
+func printHelpTopics(w io.Writer) {
+	names := helptopics.Names()
+	if len(names) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\nHelp topics (gvm help <topic>): %s\n", strings.Join(names, ", "))
+}
+
+func helpForCommand(ctx context.Context, env *Env, cmd Command, args []string) error {
 	fmt.Fprintf(env.Stdout, "gvm %s — %s\n", cmd.Name, cmd.Summary)
 	switch cmd.Avail.State {
 	case avail.NotInBuild:
