@@ -100,7 +100,7 @@ func runBackupNow(ctx context.Context, env *Env, args []string) error {
 		fs.PrintDefaults()
 	}
 	opt.bind(fs, jobs.TriggerCLI)
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return flagErr(err)
 	}

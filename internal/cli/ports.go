@@ -180,7 +180,7 @@ func runPorts(ctx context.Context, env *Env, args []string) error {
 	}
 	remote := fs.String("remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return flagErr(err)
 	}

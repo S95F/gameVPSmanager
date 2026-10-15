@@ -91,7 +91,7 @@ func parseConsoleArgs(env *Env, args []string) (consoleOptions, error) {
 	fs.BoolVar(&noColor, "no-color", false, "emit no escape sequences at all")
 	fs.BoolVar(&noFollow, "no-follow", false, "print the backlog and exit instead of attaching")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return consoleOptions{}, flagErr(err)
 	}

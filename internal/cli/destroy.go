@@ -64,7 +64,7 @@ func parseDestroyArgs(env *Env, args []string) (destroyOptions, error) {
 	fs.BoolVar(&opt.Dry, "dry", false, "measure and report what would be removed, and remove nothing")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return destroyOptions{}, flagErr(err)
 	}

@@ -44,7 +44,7 @@ func parseLifecycleArgs(env *Env, verb string, args []string) (lifecycleOptions,
 	fs.BoolVar(&opt.JSON, "json", false, "print the result as JSON")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return lifecycleOptions{}, flagErr(err)
 	}

@@ -57,7 +57,7 @@ func runUpdate(ctx context.Context, env *Env, args []string) error {
 	fs.BoolVar(&dry, "dry-run", false,
 		"with --repair, print the at-risk files and stop")
 	fs.BoolVar(&dryAlias, "dry", false, "alias for --dry-run")
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return flagErr(err)
 	}

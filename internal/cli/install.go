@@ -51,7 +51,7 @@ func parseInstallArgs(env *Env, args []string) (installOptions, error) {
 	fs.BoolVar(&opt.Repair, "repair", false, "re-validate an existing install rather than assuming it is intact")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return installOptions{}, flagErr(err)
 	}

@@ -57,7 +57,7 @@ func parseLogsArgs(env *Env, args []string) (logsOptions, error) {
 	fs.BoolVar(&opt.Shutdown, "shutdown", false, "print shutdown.jsonl instead of the console log")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return logsOptions{}, flagErr(err)
 	}

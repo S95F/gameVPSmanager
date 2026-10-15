@@ -133,7 +133,7 @@ func parseCreateArgs(env *Env, args []string) (createOptions, error) {
 	fs.BoolVar(&dryAlias, "dry", false, "alias for --dry-run")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return createOptions{}, flagErr(err)
 	}

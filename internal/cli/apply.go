@@ -56,7 +56,7 @@ func parseApplyArgs(env *Env, verb string, args []string) (applyOptions, error) 
 	fs.BoolVar(&opt.Yes, "yes", false, "answer the confirmation for a plan that removes data")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return applyOptions{}, flagErr(err)
 	}
