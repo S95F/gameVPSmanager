@@ -191,12 +191,14 @@ var commands = []Command{
 	{Name: "db", Group: "host", Summary: "manage the datastore schema", Run: runDB},
 }
 
-// help is registered here rather than in the literal above because it calls
-// lookup, which reads commands: as a literal that is an initialization cycle.
+// help and completion are registered here rather than in the literal above
+// because they read `commands` (help via lookup, completion via
+// completionCommands): as a literal that is an initialization cycle.
 func init() {
-	commands = append(commands, Command{
-		Name: "help", Group: "general", Summary: "show usage for a command", Run: runHelp,
-	})
+	commands = append(commands,
+		Command{Name: "help", Group: "general", Summary: "show usage for a command", Run: runHelp},
+		Command{Name: "completion", Group: "general", Summary: "print a shell completion script (bash|zsh|fish)", Run: runCompletion},
+	)
 }
 
 var groupOrder = []struct{ key, title string }{

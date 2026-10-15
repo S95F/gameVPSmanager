@@ -198,9 +198,10 @@ func (t Transport) RequireLocal() error {
 // by omission would silently stop requiring root, which is why the test exists
 // rather than a comment saying to remember.
 var routes = map[string]Route{
-	"version": RouteLocal,
-	"help":    RouteLocal,
-	"game":    RouteLocal,
+	"version":    RouteLocal,
+	"completion": RouteLocal,
+	"help":       RouteLocal,
+	"game":       RouteLocal,
 
 	"gvmd":         RouteRole,
 	"web":          RouteRole,

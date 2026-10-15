@@ -96,8 +96,15 @@ func parseConsoleArgs(env *Env, args []string) (consoleOptions, error) {
 		return consoleOptions{}, flagErr(err)
 	}
 	// The two negatives are turned into positives here, so nothing downstream
-	// has to reason about `!noColor`.
-	opt.ANSI, opt.Follow = !noColor, !noFollow
+	// has to reason about `!noColor`. This layer decides whether colour was
+	// REQUESTED: off when --no-color was given or NO_COLOR is set (the
+	// no-color.org convention). Whether the request is honoured also depends on
+	// stdout being a terminal, but that is a runtime property of the real
+	// connection, not of the arguments, so runConsole applies the TTY gate; a
+	// pipe into a file or `grep` ends up with escape sequences off there.
+	noColorEnv := env.Getenv != nil && env.Getenv("NO_COLOR") != ""
+	opt.ANSI = !noColor && !noColorEnv
+	opt.Follow = !noFollow
 
 	switch {
 	case len(pos) > 1:
@@ -135,6 +142,11 @@ func runConsole(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
+	// The TTY gate: parseConsoleArgs honoured --no-color and NO_COLOR, but a
+	// console whose stdout is a pipe or a file must emit no escape sequences
+	// even when colour was requested. The real stdout only exists here, so the
+	// gate is applied here rather than in the testable parse layer (U6).
+	opt.ANSI = opt.ANSI && stdoutIsTerminal(env)
 	if err := requireLinuxHost("gvm console"); err != nil {
 		return err
 	}
@@ -579,6 +591,18 @@ func (u *consoleUI) write(s string) {
 	// A console that cannot write to its own terminal has nothing left to do,
 	// and reporting the failure would need the same broken writer.
 	_, _ = io.WriteString(u.out, s)
+}
+
+// stdoutIsTerminal reports whether env.Stdout is a character device (a
+// terminal), without taking a dependency on x/term: a pipe, a file or a test's
+// bytes.Buffer is not, so colour is off there.
+func stdoutIsTerminal(env *Env) bool {
+	f, ok := env.Stdout.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 func (u *consoleUI) paint(c string, s string) string { return paint(u.opt.ANSI, c, s) }
