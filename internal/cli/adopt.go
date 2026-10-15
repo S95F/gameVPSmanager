@@ -16,7 +16,7 @@ func runAdopt(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(env.Stderr, "usage: gvm adopt <subcommand>")
 		fmt.Fprintln(env.Stderr, "subcommands: discover, cutover, rollback, finalize")
-		return fmt.Errorf("adopt: subcommand required")
+		return usageErr(fmt.Errorf("adopt: subcommand required"))
 	}
 	sub := args[0]
 	rest := args[1:]
@@ -46,7 +46,7 @@ func runAdopt(ctx context.Context, env *Env, args []string) error {
 	case "finalize":
 		return runAdoptFinalize(ctx, env, rest)
 	default:
-		return fmt.Errorf("adopt: unknown subcommand %q", sub)
+		return usageErr(fmt.Errorf("adopt: unknown subcommand %q", sub))
 	}
 }
 

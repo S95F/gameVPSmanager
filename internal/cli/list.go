@@ -82,9 +82,18 @@ func runList(ctx context.Context, env *Env, args []string) error {
 		sts = onlyProblems(sts)
 	}
 	if opt.JSON {
-		return writeJSON(env.Stdout, sts)
+		if err := writeJSON(env.Stdout, sts); err != nil {
+			return err
+		}
+	} else {
+		printList(env.Stdout, sts, rep)
 	}
-	printList(env.Stdout, sts, rep)
+	// `list --problems` that found any exits 4 (checked and found something), so
+	// a monitoring script can act on "something is unhealthy" by exit code (U8).
+	// A plain `list` always exits 0.
+	if opt.Problems && len(sts) > 0 {
+		return checked(fmt.Errorf("%d instance(s) need attention", len(sts)))
+	}
 	return nil
 }
 

@@ -41,8 +41,8 @@ func runContentCollection(ctx context.Context, env *Env, args []string) error {
 			"[--dry-run] [--no-fetch] [--allow-html-fallback]\n")
 		return nil
 	default:
-		return fmt.Errorf("unknown subcommand %q; `gvm content collection sync` is the only one",
-			args[0])
+		return usageErr(fmt.Errorf("unknown subcommand %q; `gvm content collection sync` is the only one",
+			args[0]))
 	}
 }
 

@@ -44,7 +44,7 @@ var gameSubs = []struct {
 func runGame(_ context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		gameUsage(env.Stderr)
-		return errors.New("name a subcommand")
+		return usageErr(errors.New("name a subcommand"))
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -57,7 +57,7 @@ func runGame(_ context.Context, env *Env, args []string) error {
 		}
 	}
 	gameUsage(env.Stderr)
-	return fmt.Errorf("unknown subcommand %q", args[0])
+	return usageErr(fmt.Errorf("unknown subcommand %q", args[0]))
 }
 
 func gameUsage(w io.Writer) {

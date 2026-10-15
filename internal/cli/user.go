@@ -16,7 +16,7 @@ func runUser(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(env.Stderr, "usage: gvm user <subcommand>")
 		fmt.Fprintln(env.Stderr, "subcommands: list, create, show, set-role, set-password, disable, enable, reset-totp")
-		return errors.New("user: subcommand required")
+		return usageErr(errors.New("user: subcommand required"))
 	}
 	sub := args[0]
 	rest := args[1:]
@@ -44,7 +44,7 @@ func runUser(ctx context.Context, env *Env, args []string) error {
 	case "reset-totp":
 		return runUserResetTOTP(ctx, env, rest)
 	default:
-		return fmt.Errorf("user: unknown subcommand %q", sub)
+		return usageErr(fmt.Errorf("user: unknown subcommand %q", sub))
 	}
 }
 

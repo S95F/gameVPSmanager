@@ -61,7 +61,7 @@ var jobSubs = []struct {
 func runJob(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		jobUsage(env.Stderr)
-		return errors.New("name a subcommand")
+		return usageErr(errors.New("name a subcommand"))
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -74,7 +74,7 @@ func runJob(ctx context.Context, env *Env, args []string) error {
 		}
 	}
 	jobUsage(env.Stderr)
-	return fmt.Errorf("unknown subcommand %q", args[0])
+	return usageErr(fmt.Errorf("unknown subcommand %q", args[0]))
 }
 
 func jobUsage(w io.Writer) {
@@ -281,6 +281,23 @@ func runOneJob(ctx context.Context, env *Env, verb string, opt jobOptions,
 	} else {
 		fmt.Fprint(env.Stdout, "\n"+jr.Report())
 		printJobTail(env.Stdout, jr)
+	}
+
+	// `gvm job run` inside a systemd unit keeps a UNIT contract, not the
+	// operator exit-code table (rule 6). The guard and every gvm-job@ unit run
+	// `gvm job run %i` as a oneshot: under the table a routine skip (which would
+	// be "nothing to report") or a degraded pass would leave the oneshot FAILED
+	// and could fire OnFailure=. So when INVOCATION_ID is set, ok/skipped/
+	// degraded/cancelled exit 0 and only a genuine failure exits 1. An unwired
+	// kind never produced a jr and its avail error still exits 3 through Main.
+	if verb == "job" && env.Getenv("INVOCATION_ID") != "" {
+		if jr.State == jobs.StateFailed {
+			if runErr == nil {
+				runErr = fmt.Errorf("the job failed")
+			}
+			return runErr
+		}
+		return nil
 	}
 	return runErr
 }

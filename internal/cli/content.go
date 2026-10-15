@@ -72,7 +72,7 @@ var contentSubs = []struct {
 func runContent(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		contentUsage(env.Stderr)
-		return errors.New("name a subcommand")
+		return usageErr(errors.New("name a subcommand"))
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -85,7 +85,7 @@ func runContent(ctx context.Context, env *Env, args []string) error {
 		}
 	}
 	contentUsage(env.Stderr)
-	return fmt.Errorf("unknown subcommand %q", args[0])
+	return usageErr(fmt.Errorf("unknown subcommand %q", args[0]))
 }
 
 func contentUsage(w io.Writer) {

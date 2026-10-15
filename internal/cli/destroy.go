@@ -264,15 +264,22 @@ func runDestroy(ctx context.Context, env *Env, args []string) error {
 // scriptable route would be weaker than the interactive one, and the scriptable
 // route is the one an attacker gets to use.
 func (c TypedConfirm) confirmFrom(env *Env, typed string) error {
+	// A typed-name mismatch or a declined prompt is a REFUSAL (exit 5), not a
+	// failure: the operator was asked and did not confirm, which a script should
+	// tell apart from the action failing (U8). A terminal read error stays a
+	// failure (1) — that is the tool breaking, not the operator declining.
 	if typed != "" {
-		return c.Check(typed, true)
+		if err := c.Check(typed, true); err != nil {
+			return refused(err)
+		}
+		return nil
 	}
 	ok, err := c.Prompt(env.Stdin, env.Stdout)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return ErrNotConfirmed
+		return refused(ErrNotConfirmed)
 	}
 	return nil
 }

@@ -11,7 +11,7 @@ func runToken(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(env.Stderr, "usage: gvm token <subcommand>")
 		fmt.Fprintln(env.Stderr, "subcommands: create, list, revoke")
-		return errors.New("token: subcommand required")
+		return usageErr(errors.New("token: subcommand required"))
 	}
 	sub := args[0]
 	rest := args[1:]
@@ -29,7 +29,7 @@ func runToken(ctx context.Context, env *Env, args []string) error {
 	case "revoke":
 		return runTokenRevoke(ctx, env, rest)
 	default:
-		return fmt.Errorf("token: unknown subcommand %q", sub)
+		return usageErr(fmt.Errorf("token: unknown subcommand %q", sub))
 	}
 }
 

@@ -36,7 +36,7 @@ func runDB(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(env.Stderr, "usage: gvm db <subcommand>")
 		fmt.Fprintln(env.Stderr, "subcommands: migrate, status, version, replay-spool, check-grants")
-		return errors.New("db: subcommand required")
+		return usageErr(errors.New("db: subcommand required"))
 	}
 	sub := args[0]
 	rest := args[1:]
@@ -58,7 +58,7 @@ func runDB(ctx context.Context, env *Env, args []string) error {
 	case "check-grants":
 		return runDBCheckGrants(ctx, env, rest)
 	default:
-		return fmt.Errorf("db: unknown subcommand %q", sub)
+		return usageErr(fmt.Errorf("db: unknown subcommand %q", sub))
 	}
 }
 
@@ -197,8 +197,10 @@ func runDBCheckGrants(ctx context.Context, env *Env, args []string) error {
 		return errors.New("db check-grants: totp_secret_ct is readable by gvm_web")
 	}
 	// Any other error (e.g. table doesn't exist yet) counts as inconclusive.
-	fmt.Fprintf(env.Stdout, "SKIP: unexpected error checking totp_secret_ct: %v\n", queryErr)
-	return nil
+	// Inconclusive (e.g. the table does not exist yet): exit 4, so a CI gate
+	// does not read "could not check" as "checked and safe" (admin-security-7).
+	fmt.Fprintf(env.Stdout, "INCONCLUSIVE: could not check totp_secret_ct: %v\n", queryErr)
+	return checked(fmt.Errorf("db check-grants: inconclusive: %v", queryErr))
 }
 
 // dbWaitPool opens a store, waits for the pool to be ready within

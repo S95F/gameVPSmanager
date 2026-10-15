@@ -11,7 +11,7 @@ func runSecret(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(env.Stderr, "usage: gvm secret <subcommand>")
 		fmt.Fprintln(env.Stderr, "subcommands: list, set, rotate, show-path")
-		return errors.New("secret: subcommand required")
+		return usageErr(errors.New("secret: subcommand required"))
 	}
 	sub := args[0]
 	rest := args[1:]
@@ -31,7 +31,7 @@ func runSecret(ctx context.Context, env *Env, args []string) error {
 	case "show-path":
 		return runSecretShowPath(ctx, env, rest)
 	default:
-		return fmt.Errorf("secret: unknown subcommand %q", sub)
+		return usageErr(fmt.Errorf("secret: unknown subcommand %q", sub))
 	}
 }
 

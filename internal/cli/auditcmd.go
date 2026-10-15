@@ -16,7 +16,7 @@ func runAudit(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(env.Stderr, "usage: gvm audit <subcommand>")
 		fmt.Fprintln(env.Stderr, "subcommands: tail, search")
-		return errors.New("audit: subcommand required")
+		return usageErr(errors.New("audit: subcommand required"))
 	}
 	sub := args[0]
 	rest := args[1:]
@@ -32,7 +32,7 @@ func runAudit(ctx context.Context, env *Env, args []string) error {
 	case "search":
 		return runAuditSearch(ctx, env, rest)
 	default:
-		return fmt.Errorf("audit: unknown subcommand %q", sub)
+		return usageErr(fmt.Errorf("audit: unknown subcommand %q", sub))
 	}
 }
 

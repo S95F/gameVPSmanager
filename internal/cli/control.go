@@ -85,7 +85,7 @@ var controlSubs = []struct {
 func runControl(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		controlUsage(env.Stderr)
-		return errors.New("name a subcommand")
+		return usageErr(errors.New("name a subcommand"))
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -98,7 +98,7 @@ func runControl(ctx context.Context, env *Env, args []string) error {
 		}
 	}
 	controlUsage(env.Stderr)
-	return fmt.Errorf("unknown subcommand %q", args[0])
+	return usageErr(fmt.Errorf("unknown subcommand %q", args[0]))
 }
 
 func controlUsage(w io.Writer) {

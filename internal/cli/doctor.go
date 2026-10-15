@@ -87,7 +87,10 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 	problems := lifecycle.CountCheckProblems(findings)
 	if problems > 0 {
 		fmt.Fprintf(env.Stdout, "\n  %d problem(s) found\n", problems)
-		return fmt.Errorf("doctor: %d problem(s)", problems)
+		// Exit 4, not 1: doctor ran fine and FOUND something. A script can
+		// branch on "problems exist" without parsing text, and a failed doctor
+		// run (which 1 would conflate with) is a different thing (U8).
+		return checked(fmt.Errorf("doctor: %d problem(s)", problems))
 	}
 	fmt.Fprintf(env.Stdout, "\n  0 problems\n")
 	return nil

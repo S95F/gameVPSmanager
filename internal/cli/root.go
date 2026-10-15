@@ -318,11 +318,56 @@ func Main(ctx context.Context, env *Env) (code int) {
 			fmt.Fprintf(env.Stderr, "%s needs root. Run: sudo %s\n", full, full)
 			return 1
 		}
+		// The operator exit-code table (U8): a verb that refused (5), checked
+		// and found something (4) or was mis-typed (2) carries its own code,
+		// which Main reads here for operator verbs. Role verbs never reach this:
+		// their ExitError was already returned above, keeping their systemd
+		// contract intact.
+		var ce *codedError
+		if errors.As(err, &ce) {
+			fmt.Fprintf(env.Stderr, "gvm %s: %v\n", name, ce.err)
+			return ce.code
+		}
 		fmt.Fprintf(env.Stderr, "gvm %s: %v\n", name, err)
 		return 1
 	}
 	return 0
 }
+
+// Operator exit codes (U8). Role verbs keep their own contract (ExitError).
+const (
+	exitOK          = 0
+	exitFailed      = 1
+	exitUsage       = 2
+	exitUnavailable = 3
+	exitChecked     = 4 // checked and found something: a problem, a conflict, an available update
+	exitRefused     = 5 // refused or not confirmed
+)
+
+// codedError carries an operator exit code up to Main. The message is the
+// inner error's; only the code is added, so a command says what happened and
+// Main decides which number a script sees.
+type codedError struct {
+	code int
+	err  error
+}
+
+func (c *codedError) Error() string { return c.err.Error() }
+func (c *codedError) Unwrap() error { return c.err }
+
+// refused marks a verb that declined to act (5): a typed-name mismatch, a
+// lifecycle refusal, an unmet precondition the operator must clear.
+func refused(err error) error { return &codedError{exitRefused, err} }
+
+// checked marks a verb that looked and found something worth a non-zero code
+// without failing (4): doctor problems, `list --problems`, discover blockers,
+// an available update. A pipeline can branch on it without parsing text.
+func checked(err error) error { return &codedError{exitChecked, err} }
+
+// usageErr marks a usage mistake (2): an unknown subcommand, a missing
+// required argument. It is distinct from a failure so `|| exit 2` means "the
+// operator typed it wrong", not "the action failed".
+func usageErr(err error) error { return &codedError{exitUsage, err} }
 
 // commandNames is the visible, dispatchable command names, for did-you-mean.
 func commandNames() []string {
