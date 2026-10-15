@@ -28,6 +28,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path"
 	"strings"
 	"time"
 
@@ -297,6 +298,36 @@ func (h *HostEnv) archiveStore(jenv *jobs.Env, eo engineOptions) (jobs.Archives,
 // A failure to read the spec falls back rather than refusing: the host-level
 // sweep walks directories under /var/backups/gvm, and a decommissioned
 // instance whose YAML is gone still has archives somebody may want verified.
+// validateBackupDir checks a configured spec.backup.dir before apply writes
+// anything: it must be an absolute path, and it must not sit inside the world
+// it backs up (a backup dir under install/data/work would archive itself and
+// grow without bound). Cross-instance sharing IS allowed — Prune skips other
+// instances' archives — so this does not require uniqueness.
+func validateBackupDir(in *spec.Instance) error {
+	d := strings.TrimSpace(in.Spec.Backup.Dir)
+	if d == "" {
+		return nil
+	}
+	// Unix path semantics deliberately (path, not filepath): gvm paths are
+	// always Linux forward-slash, even when the binary is built and tested on
+	// Windows, where filepath would judge "/var/..." as relative.
+	if !path.IsAbs(d) {
+		return fmt.Errorf("spec.backup.dir %q is not an absolute path", d)
+	}
+	clean := path.Clean(d)
+	for _, base := range []string{in.Spec.Paths.Install, in.Spec.Paths.Data, in.Spec.Paths.Work, in.Spec.Paths.Home} {
+		if base == "" {
+			continue
+		}
+		b := path.Clean(base)
+		if clean == b || strings.HasPrefix(clean, b+"/") {
+			return fmt.Errorf("spec.backup.dir %q is inside %q; a backup directory under the "+
+				"world it backs up would archive itself and fill the disk", d, base)
+		}
+	}
+	return nil
+}
+
 func (h *HostEnv) backupDir(name string) string {
 	if in, _, err := loadInstance(h, name); err == nil {
 		if d := strings.TrimSpace(in.Spec.Backup.Dir); d != "" {
@@ -338,20 +369,44 @@ func (h *HostEnv) backupEngine(ctx context.Context, jenv *jobs.Env) (jobs.Backup
 	if closeCh != nil {
 		h.closers = append(h.closers, closeCh)
 	}
+	// The WRITER honours spec.backup.dir, through the one resolver that list,
+	// verify and prune already use. Before this it wrote to the standard
+	// /var/backups/gvm/<n> while everything else looked where backup.dir
+	// pointed, so a configured dir held archives no `gvm backup` command could
+	// see (offsite-backup-dr-2).
+	p := h.paths(jenv.Instance)
+	p.Backups = h.backupDir(jenv.Instance)
+	// The embedded instance YAML never carries an age IDENTITY. apply refuses
+	// one outright, but a YAML hand-edited after apply could still hold it, so
+	// the backup redacts it here rather than copying the key that decrypts the
+	// off-box backups into every archive (offsite-backup-dr-3).
+	specYAML, redacted := spec.RedactAgeSecretKeys(raw)
+	if redacted > 0 {
+		jobNote(jenv, fmt.Sprintf("redacted %d age identity value(s) from the embedded instance "+
+			"YAML before archiving; an age identity in the spec is a misconfiguration", redacted))
+	}
 	return backup.New(backup.Config{
 		Instance: jenv.Instance,
 		Game:     in.Spec.Game,
 		Spec:     in,
 		Manifest: m,
 		Renderer: spec.NewRenderer(renderData(jenv.Instance, in, spec.SecretValues{})),
-		SpecYAML: string(raw),
+		SpecYAML: string(specYAML),
 		Reason:   string(archive.ClassRoutine),
-		Paths:    h.paths(jenv.Instance),
+		Paths:    p,
 		Channels: ch,
-		Audit:    h.audit(),
-		Actor:    jenv.Actor,
-		Now:      h.Now,
-		PID:      jenv.PID,
+		// The configured off-box target is handed to the engine so the push is
+		// actually attempted and its outcome recorded. With no SFTP transport in
+		// this build the push returns an honest refusal, which on_failure=warn
+		// (the default) turns into a DEGRADED step — never the silent `ok
+		// backup.push` the engine used to report for a remote it never tried
+		// (offsite-backup-dr-1). Until Phase 54 wires the transport, this is how
+		// an operator learns the off-box copy was not made.
+		Remote: &backup.Remote{Target: in.Spec.Backup.Remote},
+		Audit:  h.audit(),
+		Actor:  jenv.Actor,
+		Now:    h.Now,
+		PID:    jenv.PID,
 		// The pin that makes the lease watchdog's early thaw legal. Zero is
 		// the fail-safe answer and is what the error path gives: off Linux
 		// there is no /proc, and a lease the watcher cannot pin falls back to

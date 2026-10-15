@@ -5,9 +5,68 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/reconcile"
 )
+
+// TestApplyRefusesAnOOMProneHeap: a hand edit that raises the heap var but
+// leaves spec.resources.memory_max unchanged arms the OOM killer mid-save
+// (game-catalog-config-4, rule 4). apply must refuse, naming both numbers and
+// the field to raise, and change nothing.
+func TestApplyRefusesAnOOMProneHeap(t *testing.T) {
+	h := newTestHost(t)
+	seedInstance(t, h, "pz1", "projectzomboid", "--var", "public_name=Test")
+
+	// Raise the heap to 9g while leaving the memory_max that create computed for
+	// 5g. 9g heap + 3G native_headroom now exceeds the recorded memory_max.
+	in := mustReadInstance(t, h, "pz1")
+	in.Spec.Vars["jvm_xmx"] = "9g"
+	raw, err := yaml.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.FS.put(instance.PathsFor("pz1").Spec, raw, 0o640)
+
+	before := len(h.FS.writes)
+	code, _, errb := runWith(t, h, "", "apply", "pz1", "--diff")
+	if code == 0 {
+		t.Fatal("apply accepted an OOM-prone heap")
+	}
+	for _, want := range []string{"memory_max", "jvm_xmx", "OUTSIDE the Java heap"} {
+		if !strings.Contains(errb, want) {
+			t.Errorf("the refusal does not mention %q:\n%s", want, errb)
+		}
+	}
+	if len(h.FS.writes) != before {
+		t.Errorf("a refused apply wrote %d file(s)", len(h.FS.writes)-before)
+	}
+}
+
+// TestApplyRefusesAnAgeIdentityInTheSpec: an age identity (private key) pasted
+// into the instance YAML is a hard error — it would be copied into every
+// archive (offsite-backup-dr-3). apply refuses and names the fix.
+func TestApplyRefusesAnAgeIdentityInTheSpec(t *testing.T) {
+	h := newTestHost(t)
+	seedInstance(t, h, "pz1", "projectzomboid", "--var", "public_name=Test")
+
+	p := instance.PathsFor("pz1").Spec
+	raw, err := h.FS.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "AGE-SECRET-KEY-1QQPQZRFR7ZZ2WCVQYE2WEXHZW6MM3FK3RT8T8FR0WX8U9YQ0X3ZSABCDEF"
+	h.FS.put(p, append(raw, []byte("\n# leaked: "+id+"\n")...), 0o640)
+
+	code, _, errb := runWith(t, h, "", "apply", "pz1", "--diff")
+	if code == 0 {
+		t.Fatal("apply accepted an age identity in the spec")
+	}
+	if !strings.Contains(errb, "age identity") || !strings.Contains(errb, "age1") {
+		t.Errorf("the refusal does not name the fix (paste the age1 recipient):\n%s", errb)
+	}
+}
 
 // `gvm apply --diff` prints the plan and changes nothing.
 //

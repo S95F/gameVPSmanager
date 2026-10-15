@@ -219,7 +219,7 @@ The review praised these. The plan builds on them rather than around them, and e
 |---|---|---|---|---|---|
 | **J1** | **First joinable server** | | | | |
 | 20 ✅ | Tell the truth about this build | help, README and refusals say what works; every hint runs; exit 3 | S | L | 19 |
-| 21 ◆ | Close the hazards already in this build | finalize can't delete early; backups go where configured; no comment wipe | H | L | 19 |
+| 21 ◆ ✅ | Close the hazards already in this build | finalize can't delete early; backups go where configured; no comment wipe | H | L | 19 |
 | 22 | Help, errors and exit codes that work everywhere | `--help` never panics; plain errors; documented exit codes | S | L | 20 |
 | 23 | Install gvm on a fresh VPS | `sudo ./gvm host init`, verified tarball, real version | I | L | 22 |
 | 24 ◆ | `gvm doctor` tells the truth | 0 problems on a healthy host; checks every instance | I | L | 23 |
@@ -641,6 +641,27 @@ Two repo files needed by the build are untracked in `main` and were copied into 
 - **Rule 1:** push runs only after the local archive is verified, so a failed off-box copy never costs the local one.
 - **Rule 2:** btrfs cleanup is an ioctl, not an exec.
 - **Rule 4:** the heap guard closes the one OOM SIGKILL path that a hand edit could create.
+
+### ✅ Completion — landed 2026-10-15
+
+Phase 21 is implemented and `make check` is green on Windows 11 (fmt-check + vet + `go test ./... -race`), and the whole module cross-compiles for `linux/amd64` with `CGO_ENABLED=0`. All eight work items landed, each with a test:
+
+1. **`adopt finalize` fails closed.** Rewritten around a pure `adopt.CheckFinalize(FinalizeInputs)` (table-tested): the 7-day guard is never skipped — a missing, timestamp-less (`bash-suite:` form) or corrupt `adopted_from` is treated as not-ready, not as a pass — and the legacy unit comes from the instance's own `20-adopt.conf` `Conflicts=` line (`adopt.ParseAdoptGuardUnit`), never from `--unit-path`, which is only validated against it. It refuses even with `--force` for a non-adopted instance, a missing guard, or a `--unit-path` that is not the guard's unit; `--adopted-from` is ignored with a warning. It requires the typed instance name (`TypedConfirm`, no `--yes`) and copies the unit to `/var/backups/gvm/<n>/legacy-units/` before removing it. (migration-adopt-2)
+2. **First `content add` keeps comments.** `editAcquireSequence` now GROWS the missing `spec → content → <block> → acquire` nodes inside the parsed `yaml.Node` (`mapGetOrCreate`); the full re-marshal is reached only for an empty/non-mapping document. A top-of-file comment survives the first add (test). (content-mods-4)
+3. **Backups land where configured.** `backupEngine` writes to `h.backupDir(name)` (the same resolver list/verify/prune already used), so a configured `backup.dir` no longer holds archives no command can see; `archive.Prune` skips entries whose manifest names another instance (shared-dir test); `apply` validates `backup.dir` (absolute, not inside the world, with Unix path semantics). (offsite-backup-dr-2)
+4. **The off-box copy is never claimed falsely.** `backupEngine` passes the configured `Remote`, so `Engine.Push` is actually attempted; with no SFTP transport in this build it returns the honest refusal, which `on_failure=warn` (default) turns into a degraded step. `apply --diff` warns when a remote is configured but cannot be pushed. (offsite-backup-dr-1)
+5. **The age identity never travels.** `spec.ContainsAgeSecretKey` / `RedactAgeSecretKeys` (tested): `apply` refuses an `AGE-SECRET-KEY-1…` in the YAML with "paste the public recipient (age1…)", and the backup engine redacts any that slip in before embedding the spec, recording a job note. (offsite-backup-dr-3)
+6. **btrfs clones are destroyed.** `destroyBtrfsSubvolume` issues `BTRFS_IOC_SNAP_DESTROY_V2` via `x/sys/unix` (no `btrfs` exec, rule 2), with a non-Linux stub; `SweepSnapDir` and `dropClone` fall back to it when `RemoveAll` fails, so a read-only subvolume clone is reclaimed instead of shrinking free space nightly. (offsite-backup-dr-10)
+7. **destroy shows what it is trusting.** The preflight prints `CreatedAt` and `Class` (not `VerifiedAt`) and a WARNING, repeated above the typed-name prompt, when the archive predates the newest world mtime (`archive.Measure` now returns the newest mtime). The authorising archive gets a durable preserve pin — a root-owned `<archive>.preserve` sidecar that `Reindex` reads to force `Class=preserve` (surviving a rescan and a reused instance name) and `Prune` lists under Preserved; `gvm backup list` shows `preserve (pinned: destroy-authorised)`. `TestReindexKeepsPreservePin` and `TestPruneNeverRemovesPinnedArchive` cover it. (cli-ergonomics-7)
+8. **apply refuses an OOM-prone heap.** `apply` runs `instance.CheckResources`: a hand-edited heap var whose heap + `native_headroom` exceeds the recorded `memory_max` is refused, naming the heap, the headroom and the field to raise (test). (game-catalog-config-4)
+
+**Scope notes / deviations (deliberate, documented):**
+- The finalize interim does not yet add the systemd *enabled+active* / *legacy-unit-active* refusals from the DoD: the CLI has no unit-file-state (enabled) seam and cannot query a non-gvm unit's state in this build. The critical live hazards — the skipped guard and the arbitrary-unit delete — are closed; the state refusals are belt-and-suspenders that land with the adoption record (Phase 50), which is where the plan already puts the full version ("fail-closed interim" here, record in 50).
+- Item 5 implements the security core (hard error + runtime redaction) but not the full `internal/spec/remotecheck` leaf-package reorg or the other remote-block validation errors (bad pin, negative keep, unknown kind) — `backup.Remote.Validate` already covers those at push time; the create/apply-time leaf package is deferred to the firewall/remote wiring phases.
+- Items 3's softer warnings (backup dir shares the world's device, or sits under `/mnt` on the root device) and the `spec.paths.backups` "ignored" load-time warning are not implemented; the data-protection core (writer honours the dir, prune skips other instances, apply rejects a dir inside the world) is.
+- Item 6's btrfs destroy is Linux-only and cannot run in `make check` on Windows or in container CI without a root loop device; it compiles for Linux and is exercised by the DoD's loopback test in Linux integration. The Windows stub keeps `make check` green.
+
+**Effort for this task:** implemented by Claude (Opus 4.8) on 2026-10-15, ~2 hours of wall-clock immediately after Phase 20, in the same session. Usage on the Max plan at the end: the weekly (all-models) window at ~13% (Phases 20 and 21 together were a few percent of the week), the 5-hour window at ~9%; the session's context window was ~77% full.
 
 ---
 

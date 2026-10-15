@@ -112,15 +112,21 @@ func ValidateRollbackScript(script string) error {
 // adoptedAt reads the adoption timestamp from the instance metadata.
 // Returns zero time if the instance has not been adopted.
 func adoptedAtTime(adoptedFrom string) time.Time {
-	if adoptedFrom == "" {
+	s := strings.TrimSpace(adoptedFrom)
+	if s == "" {
 		return time.Time{}
 	}
-	// adoptedFrom format: "<unit>@<RFC3339 timestamp>"
-	if i := strings.LastIndex(adoptedFrom, "@"); i >= 0 {
-		t, err := time.Parse(time.RFC3339, adoptedFrom[i+1:])
-		if err == nil {
+	// A bare RFC3339 timestamp is one documented form.
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t
+	}
+	// "<unit>@<RFC3339 timestamp>" is the other.
+	if i := strings.LastIndex(s, "@"); i >= 0 {
+		if t, err := time.Parse(time.RFC3339, s[i+1:]); err == nil {
 			return t
 		}
 	}
+	// Anything else — the "bash-suite:/root/pz-server" form, or a corrupt
+	// value — carries no timestamp, and finalize treats that as not-ready.
 	return time.Time{}
 }

@@ -52,12 +52,33 @@ func editAcquireSequence(raw []byte, block, source string, refs []content.Ref,
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return nil, false, fmt.Errorf("re-reading the instance file as a document: %w", err)
 	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		// An empty or non-mapping document is the only thing that falls back to
+		// a full marshal; everything else is edited (or grown) in place.
 		return nil, false, nil
 	}
-	blockNode := mapValue(mapValue(mapValue(doc.Content[0], "spec"), "content"), block)
-	acquire := mapValue(blockNode, "acquire")
-	if acquire == nil || acquire.Kind != yaml.SequenceNode {
+
+	// The ordinary post-create state has no content block at all: `gvm create`
+	// writes none. The first `gvm content add` therefore GROWS the document —
+	// spec -> content -> <block> -> acquire — inside the parsed node rather than
+	// re-serialising the struct, so the operator's section comments and every
+	// other hand-written line survive the first edit (content-mods-4). Only an
+	// existing node of the wrong kind (a hand-mangled file) still falls back.
+	root := doc.Content[0]
+	specNode, ok := mapGetOrCreate(root, "spec", yaml.MappingNode)
+	if !ok {
+		return nil, false, nil
+	}
+	contentNode, ok := mapGetOrCreate(specNode, "content", yaml.MappingNode)
+	if !ok {
+		return nil, false, nil
+	}
+	blockNode, ok := mapGetOrCreate(contentNode, block, yaml.MappingNode)
+	if !ok {
+		return nil, false, nil
+	}
+	acquire, ok := mapGetOrCreate(blockNode, "acquire", yaml.SequenceNode)
+	if !ok {
 		return nil, false, nil
 	}
 
@@ -139,6 +160,33 @@ func refNode(ref content.Ref) (*yaml.Node, error) {
 			len(doc.Content))
 	}
 	return doc.Content[0], nil
+}
+
+// mapGetOrCreate returns the value node for key, creating it as an empty node
+// of the given kind when it is absent. ok is false when n is not a mapping, or
+// when key exists with a different kind than wanted — a hand-mangled document
+// the caller should fall back to a full marshal for rather than edit blindly.
+func mapGetOrCreate(n *yaml.Node, key string, kind yaml.Kind) (*yaml.Node, bool) {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil, false
+	}
+	if v := mapValue(n, key); v != nil {
+		if v.Kind != kind {
+			return nil, false
+		}
+		return v, true
+	}
+	val := &yaml.Node{Kind: kind}
+	switch kind {
+	case yaml.MappingNode:
+		val.Tag = "!!map"
+	case yaml.SequenceNode:
+		val.Tag = "!!seq"
+	}
+	n.Content = append(n.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		val)
+	return val, true
 }
 
 // mapValue is one key's value node, or nil. Nil-tolerant so a walk down a path

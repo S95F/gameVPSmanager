@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/S95F/gameVPSmanager/internal/archive"
+	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/jobs"
 	"github.com/S95F/gameVPSmanager/internal/reconcile"
 	"github.com/S95F/gameVPSmanager/internal/spec"
@@ -104,6 +105,29 @@ func buildApply(ctx context.Context, h *HostEnv, t Transport, name string, diffO
 	m, err := pinnedManifest(h, in)
 	if err != nil {
 		return nil, err
+	}
+
+	// A hand edit that raised the heap var but left spec.resources.memory_max
+	// unchanged is an OOM-SIGKILL waiting to happen (game-catalog-config-4,
+	// rule 4): the kernel kills the JVM mid-save when native allocation crosses
+	// a ceiling the heap already fills. apply refuses rather than write a
+	// drop-in that arms it; `gvm set` (a later phase) recomputes the block. The
+	// check runs for --diff too, because a plan that cannot be safely applied
+	// should not read as one that can.
+	if err := instance.CheckResources(m, spec.VarValues(in.Spec.Vars), in.Spec.Resources); err != nil {
+		return nil, err
+	}
+	if err := validateBackupDir(in); err != nil {
+		return nil, err
+	}
+	// An age IDENTITY (private key) in the instance YAML is a hard error: it is
+	// the wrong value for spec.backup.remote (which wants the public recipient),
+	// and leaving it would embed the key that decrypts the off-box backups
+	// inside every one of them (offsite-backup-dr-3).
+	if spec.ContainsAgeSecretKey(raw) {
+		return nil, fmt.Errorf("%s contains an age identity (AGE-SECRET-KEY-1…), a PRIVATE key. "+
+			"Paste the public recipient (age1…), not the identity: the identity would be copied "+
+			"into every archive", instance.PathsFor(name).Spec)
 	}
 
 	ins := h.inspector()

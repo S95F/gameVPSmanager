@@ -97,7 +97,7 @@ func Destroy(ctx context.Context, ref *Ref, targets []Target) (*DestroyResult, e
 		}
 		// Measured BEFORE the delete, because afterwards there is nothing to
 		// measure and the operator still has to be told what went.
-		files, dirs, bytes, err := Measure(t.Path())
+		files, dirs, bytes, _, err := Measure(t.Path())
 		if err != nil {
 			return res, fmt.Errorf("archive: measure %s before destroying it: %w", t.Path(), err)
 		}
@@ -122,7 +122,7 @@ func Destroy(ctx context.Context, ref *Ref, targets []Target) (*DestroyResult, e
 // anything is removed -- instance.DestroyPreflight has to answer "will this
 // still be undoable afterwards" -- and two walkers that disagreed about
 // whether a symlink counts would make the plan and the receipt disagree.
-func Measure(root string) (files, dirs int, bytes int64, err error) {
+func Measure(root string) (files, dirs int, bytes int64, newest time.Time, err error) {
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -137,11 +137,16 @@ func Measure(root string) (files, dirs int, bytes int64, err error) {
 		files++
 		if fi, ierr := d.Info(); ierr == nil && fi.Mode().IsRegular() {
 			bytes += fi.Size()
+			// The newest regular-file mtime, so the destroy preflight can warn
+			// when the authorising archive predates recent play.
+			if m := fi.ModTime(); m.After(newest) {
+				newest = m
+			}
 		}
 		return nil
 	})
 	if errors.Is(err, fs.ErrNotExist) {
-		return 0, 0, 0, nil
+		return 0, 0, 0, time.Time{}, nil
 	}
-	return files, dirs, bytes, err
+	return files, dirs, bytes, newest, err
 }

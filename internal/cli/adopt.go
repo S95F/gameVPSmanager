@@ -2,12 +2,13 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
+	"path"
 
 	"github.com/S95F/gameVPSmanager/internal/adopt"
 	"github.com/S95F/gameVPSmanager/internal/avail"
+	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/version"
 )
 
@@ -62,30 +63,73 @@ func runAdoptDiscover(_ context.Context, env *Env, args []string) error {
 	return nil
 }
 
-func runAdoptFinalize(_ context.Context, env *Env, args []string) error {
+func runAdoptFinalize(ctx context.Context, env *Env, args []string) error {
 	fs := flag.NewFlagSet("adopt finalize", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
-	force := fs.Bool("force", false, "bypass the 7-day review window")
+	force := fs.Bool("force", false, "bypass the 7-day review window (not the target checks)")
 	serverName := fs.String("name", "", "server name (required)")
-	unitPath := fs.String("unit-path", "", "path to legacy unit file (required)")
-	adoptedFrom := fs.String("adopted-from", "", "adopted_from metadata value from instance YAML")
+	unitPath := fs.String("unit-path", "", "path to the legacy unit file to remove (required)")
+	confirm := fs.String("confirm", "", "the instance name, typed, as the destructive-action contract requires")
+	adoptedFrom := fs.String("adopted-from", "", "ignored; adopted_from is read from the instance YAML")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagErr(err)
 	}
 	if *serverName == "" || *unitPath == "" {
 		return fmt.Errorf("adopt finalize: --name and --unit-path are required")
 	}
-
-	err := adopt.FinalizePZ(*serverName, *unitPath, *adoptedFrom,
-		adopt.FinalizeOptions{Force: *force})
-	if err != nil {
-		if errors.Is(err, adopt.ErrFinalizeNotReady) {
-			fmt.Fprintln(env.Stderr, err)
-			return err
-		}
-		return fmt.Errorf("adopt finalize: %w", err)
+	if *adoptedFrom != "" {
+		fmt.Fprintln(env.Stderr, "adopt finalize: --adopted-from is ignored; the value is read "+
+			"from the instance YAML, which the host controls")
 	}
-	fmt.Fprintf(env.Stdout, "finalize: %s legacy unit archived and removed\n", *serverName)
+
+	t, err := Resolve(env, "adopt", "")
+	if err != nil {
+		return err
+	}
+	if err := t.RequireLocal(); err != nil {
+		return err
+	}
+	h, err := env.host(ctx)
+	if err != nil {
+		return err
+	}
+
+	in, _, err := loadInstance(h, *serverName)
+	if err != nil {
+		return err
+	}
+
+	// The legacy unit's name comes from the instance's OWN adopt guard, never
+	// from --unit-path. A missing or unit-less guard means finalize cannot tell
+	// what it would be removing, so it refuses.
+	guardPath := path.Join(path.Dir(instance.DropInPath(*serverName)), "20-adopt.conf")
+	guard, _ := h.files().ReadFile(guardPath)
+	legacy, haveDropin := adopt.ParseAdoptGuardUnit(guard)
+
+	if err := adopt.CheckFinalize(adopt.FinalizeInputs{
+		Name:           *serverName,
+		AdoptedFrom:    in.Metadata.AdoptedFrom,
+		ManagedInstall: in.Spec.ManagedInstall,
+		LegacyUnit:     legacy,
+		HaveDropin:     haveDropin,
+		UnitPathFlag:   *unitPath,
+		Force:          *force,
+		Now:            h.now(),
+	}); err != nil {
+		return err
+	}
+
+	// Removing the legacy units is destructive (rule 5), so the instance name
+	// is typed first. --yes does not satisfy this.
+	if err := (TypedConfirm{Subject: *serverName}).confirmFrom(env, *confirm); err != nil {
+		return err
+	}
+
+	if err := adopt.ArchiveAndRemoveLegacyUnit(*serverName, *unitPath); err != nil {
+		return err
+	}
+	fmt.Fprintf(env.Stdout, "finalize: %s — %s copied to %s and removed\n",
+		*serverName, legacy, adopt.LegacyUnitsArchiveDir(*serverName))
 	return nil
 }
 

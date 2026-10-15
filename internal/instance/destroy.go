@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/archive"
 	"github.com/S95F/gameVPSmanager/internal/platform"
@@ -91,6 +92,10 @@ type Preflight struct {
 	Bytes int64    `json:"bytes"`
 	Files int      `json:"files"`
 	Dirs  int      `json:"dirs"`
+
+	// NewestMTime is the most recent mtime of any file in the destroy set, so
+	// the caller can warn when the authorising archive predates recent play.
+	NewestMTime time.Time `json:"newest_mtime,omitempty"`
 
 	Volumes []VolumeCheck `json:"volumes"`
 }
@@ -237,7 +242,7 @@ func destroyPreflight(ref *archive.Ref, paths []Jailed, statfs func(string) (pla
 			return nil, fmt.Errorf("%w: %s is inside %s, so completing this destroy would delete "+
 				"the only copy of what it destroyed", ErrArchiveInTarget, archivePath, p.Path())
 		}
-		files, dirs, bytes, err := archive.Measure(p.Path())
+		files, dirs, bytes, newest, err := archive.Measure(p.Path())
 		if err != nil {
 			return nil, fmt.Errorf("instance: measure %s before destroying it: %w", p.Path(), err)
 		}
@@ -245,6 +250,9 @@ func destroyPreflight(ref *archive.Ref, paths []Jailed, statfs func(string) (pla
 		pf.Files += files
 		pf.Dirs += dirs
 		pf.Bytes += bytes
+		if newest.After(pf.NewestMTime) {
+			pf.NewestMTime = newest
+		}
 		if _, seen := freeing[p.Root()]; !seen {
 			roots = append(roots, p.Root())
 		}

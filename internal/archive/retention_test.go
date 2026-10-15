@@ -41,6 +41,135 @@ func archivesIn(t *testing.T, dir string) []string {
 	return out
 }
 
+// TestPruneSkipsOtherInstancesArchives: a shared backup.dir can hold several
+// instances' archives, and retention for one must never reclaim another's
+// (offsite-backup-dr-2).
+func TestPruneSkipsOtherInstancesArchives(t *testing.T) {
+	src, dir := t.TempDir(), t.TempDir()
+	writeTree(t, src, map[string]file{"world.bin": {body: "w", perm: 0o644, mtime: fixed}})
+
+	// Instance "other" drops one archive into the shared directory.
+	other, err := Create(context.Background(), Options{
+		Dir: dir, Instance: "other", Class: ClassRoutine, Reason: "nightly",
+		Now: func() time.Time { return fixed }, Sources: []Source{{Prefix: "data/", Base: src}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Instance "pz-main" (makeArchive's instance) runs several nightlies.
+	var fresh *Ref
+	for i := 1; i <= 5; i++ {
+		fresh = makeArchive(t, dir, src, ClassRoutine, "nightly", fixed.Add(time.Duration(i)*time.Hour))
+	}
+	mustVerify(t, fresh, ModeShallow)
+
+	res, err := Prune(context.Background(), dir, Policy{
+		Keep: 1, Force: true, Now: func() time.Time { return fixed.Add(100 * time.Hour) },
+	}, fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(other.Path); err != nil {
+		t.Errorf("another instance's archive was pruned: %v", err)
+	}
+	base := filepath.Base(other.Path)
+	for _, r := range res.Removed {
+		if r == base {
+			t.Errorf("another instance's archive %s is in Removed", base)
+		}
+	}
+}
+
+// TestReindexKeepsPreservePin: a routine archive with a <file>.preserve sidecar
+// is re-classified preserve by Reindex, which re-reads Class from the tarball's
+// own manifest — so the pin survives a rescan where flipping the index entry
+// alone would not (cli-ergonomics-7).
+func TestReindexKeepsPreservePin(t *testing.T) {
+	src, dir := t.TempDir(), t.TempDir()
+	writeTree(t, src, map[string]file{"world.bin": {body: "w", perm: 0o644, mtime: fixed}})
+	ref := makeArchive(t, dir, src, ClassRoutine, "nightly", fixed)
+	base := filepath.Base(ref.Path)
+
+	ix, err := Reindex(context.Background(), dir, ReindexOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := ix.Find(base); e.Class != ClassRoutine {
+		t.Fatalf("class before the pin = %q, want routine", e.Class)
+	}
+
+	if err := WritePreservePin(ref.Path, PreservePin{
+		Reason: "destroy-authorised", PinnedAt: fixed, Instance: "pz-main"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ix, err = Reindex(context.Background(), dir, ReindexOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := ix.Find(base)
+	if !ok {
+		t.Fatal("the pinned archive vanished from the index")
+	}
+	if e.Class != ClassPreserve {
+		t.Errorf("class after the pin = %q, want preserve", e.Class)
+	}
+	if e.PinnedBy != "destroy-authorised" {
+		t.Errorf("PinnedBy = %q, want destroy-authorised", e.PinnedBy)
+	}
+	if _, ok := ix.Find(base + PreserveSidecarExt); ok {
+		t.Error("the .preserve sidecar was indexed as an archive")
+	}
+}
+
+// TestPruneNeverRemovesPinnedArchive: a pinned routine archive survives an
+// aggressive prune, the same as a manifest-preserve archive — the pin is what
+// protects the archive that authorised a destroy even after a new instance is
+// created with the same name into the same directory (cli-ergonomics-7).
+func TestPruneNeverRemovesPinnedArchive(t *testing.T) {
+	src, dir := t.TempDir(), t.TempDir()
+	writeTree(t, src, map[string]file{"world.bin": {body: "w", perm: 0o644, mtime: fixed}})
+
+	pinned := makeArchive(t, dir, src, ClassRoutine, "nightly", fixed)
+	if err := WritePreservePin(pinned.Path, PreservePin{
+		Reason: "destroy-authorised", PinnedAt: fixed, Instance: "pz-main"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var fresh *Ref
+	for i := 1; i <= 20; i++ {
+		fresh = makeArchive(t, dir, src, ClassRoutine, "nightly", fixed.Add(time.Duration(i)*time.Hour))
+	}
+	mustVerify(t, fresh, ModeShallow)
+
+	res, err := Prune(context.Background(), dir, Policy{
+		Keep: 3, Force: true, Now: func() time.Time { return fixed.Add(100 * time.Hour) },
+	}, fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(pinned.Path); err != nil {
+		t.Errorf("the pinned archive was pruned: %v", err)
+	}
+	base := filepath.Base(pinned.Path)
+	found := false
+	for _, p := range res.Preserved {
+		if p == base {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the pinned archive is not listed under Preserved: %+v", res.Preserved)
+	}
+	for _, r := range res.Removed {
+		if r == base {
+			t.Error("the pinned archive is in Removed")
+		}
+	}
+}
+
 // TestPruneNeverTouchesPreserve is the one retention rule with no exceptions.
 //
 // rebuild.sh promised "kept until you delete it -- not pruned by backup

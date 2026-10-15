@@ -310,6 +310,7 @@ type archiveRow struct {
 	VerifiedAt time.Time `json:"verified_at,omitzero"`
 	Legacy     bool      `json:"legacy,omitempty"`
 	Unreadable string    `json:"unreadable,omitempty"`
+	PinnedBy   string    `json:"pinned_by,omitempty"`
 }
 
 func archiveDirs(h *HostEnv, name, from string) ([]string, error) {
@@ -354,6 +355,7 @@ func archiveRows(h *HostEnv, dir string) ([]archiveRow, error) {
 			Dir: dir, File: e.File, Instance: e.Instance, Class: string(e.Class),
 			Reason: e.Reason, Bytes: e.Bytes, CreatedAt: e.CreatedAt,
 			VerifiedAt: e.VerifiedAt, Legacy: e.Legacy, Unreadable: e.Unreadable,
+			PinnedBy: e.PinnedBy,
 		})
 	}
 	return out, nil
@@ -407,6 +409,12 @@ func printArchiveRows(w io.Writer, rows []archiveRow) {
 		class := r.Class
 		if r.Legacy {
 			class = "legacy"
+		}
+		if r.PinnedBy != "" {
+			// A durable preserve pin from a sidecar, e.g. the archive that
+			// authorised a destroy. Named so the operator knows why it will
+			// never be pruned (cli-ergonomics-7).
+			class += " (pinned: " + r.PinnedBy + ")"
 		}
 		verified := "never"
 		if !r.VerifiedAt.IsZero() {

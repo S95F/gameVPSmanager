@@ -116,6 +116,44 @@ func newContentFixture(t *testing.T) *contentFixture {
 	return f
 }
 
+// TestFirstContentAddKeepsTopComment: the first `gvm content add` on a freshly
+// created instance has no content block to edit, which used to trigger a full
+// re-marshal that discarded every hand-written comment while reporting success
+// (content-mods-4). The block is now GROWN inside the parsed document, so a
+// top-of-file comment survives the first add.
+func TestFirstContentAddKeepsTopComment(t *testing.T) {
+	h := newTestHost(t)
+	seedInstance(t, h, "pz-main", "projectzomboid", "--var", "public_name=Test")
+	// Roots do not exist yet; a missing one is recorded, not fatal, for an edit.
+	h.HostEnv.ContentRoot = func(abs string) (fs.FS, error) {
+		return nil, &fs.PathError{Op: "open", Path: abs, Err: fs.ErrNotExist}
+	}
+
+	p := h.HostEnv.paths("pz-main").Spec
+	raw, err := h.FS.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const note = "operator notes: load order is hand-tuned; do not reorder"
+	h.FS.put(p, append([]byte("# "+note+"\n"), raw...), 0o640)
+
+	code, _, errb := runWith(t, h, "", "content", "add", "pz-main", "3374983339")
+	if code != 0 {
+		t.Fatalf("content add exit %d: %s", code, errb)
+	}
+
+	got, err := h.FS.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), note) {
+		t.Errorf("the top comment did not survive the first content add:\n%s", got)
+	}
+	if !strings.Contains(string(got), "3374983339") {
+		t.Errorf("the added item is missing after the first add:\n%s", got)
+	}
+}
+
 // writeLock lays down the recorded intent. It is built through the same
 // structs the sync path writes, so a field renamed in internal/content breaks
 // this fixture rather than silently producing a lock the CLI reads as empty.

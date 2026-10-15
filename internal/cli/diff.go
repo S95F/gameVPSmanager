@@ -14,6 +14,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/S95F/gameVPSmanager/internal/reconcile"
 )
@@ -63,6 +64,11 @@ func printPlan(w io.Writer, pl *planned) {
 			"    they are only known to be shaped like an OnCalendar expression.\n")
 	}
 	printUnrunnableJobs(w, pl)
+	if k := strings.TrimSpace(pl.Instance.Spec.Backup.Remote.Kind); k != "" && k != "none" {
+		fmt.Fprint(w, "  ! an off-box backup target is configured, but this build has no SFTP "+
+			"transport; nightly backups are taken and verified locally, and the off-box copy is "+
+			"not made (recorded as a degraded step).\n")
+	}
 	fmt.Fprintln(w, "\n  nothing has been applied.")
 }
 

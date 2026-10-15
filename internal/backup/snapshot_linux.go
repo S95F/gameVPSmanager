@@ -279,6 +279,53 @@ func Clone(ctx context.Context, m Method, src, dst string) ([]string, error) {
 // created in) with the source subvolume's descriptor in the struct, which is
 // the inverse of what the name suggests and is the single most common way to
 // get this call wrong.
+// btrfsIocSnapDestroyV2 is _IOW(BTRFS_IOCTL_MAGIC, 63,
+// struct btrfs_ioctl_vol_args_v2) — the same 4096-byte struct as create.
+//
+//	dir=1 (write) << 30         = 0x40000000
+//	size=4096 (the struct)<< 16 = 0x10000000
+//	type='X'=0x94          << 8 = 0x00009400
+//	nr=63                       = 0x0000003f
+const btrfsIocSnapDestroyV2 = 0x5000943f
+
+// destroyBtrfsSubvolume removes a read-only btrfs subvolume clone.
+//
+// A read-only subvolume cannot be removed with os.RemoveAll — the directory
+// looks ordinary but rmdir refuses it — so a leaked clone shrinks free space
+// every night until saves start failing (offsite-backup-dr-10). This issues
+// BTRFS_IOC_SNAP_DESTROY_V2 against the parent directory with the clone's name,
+// which is a syscall, not a `btrfs` exec (rule 2).
+func destroyBtrfsSubvolume(path string) error {
+	name := filepath.Base(path)
+	if len(name) == 0 || len(name) > btrfsVolArgsNameMax {
+		return fmt.Errorf("%w: %q is not a usable subvolume name", ErrSnapshot, name)
+	}
+	parent := filepath.Dir(path)
+	parentFD, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("%w: open %s: %w", ErrSnapshot, parent, err)
+	}
+	defer unix.Close(parentFD)
+
+	var args [btrfsVolArgsSize]byte
+	// flags left zero: destroy BY NAME (relative to the parent fd), not by
+	// subvolid. The name goes at the same offset the create struct uses.
+	copy(args[btrfsVolArgsName:btrfsVolArgsName+btrfsVolArgsNameMax], name)
+
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(parentFD),
+		uintptr(btrfsIocSnapDestroyV2), uintptr(unsafe.Pointer(&args[0])))
+	if errno != 0 {
+		// ENOTTY/EINVAL/EOPNOTSUPP mean "not a btrfs subvolume": the caller has
+		// already tried RemoveAll, so there is nothing left to try and the
+		// original RemoveAll error is the one worth surfacing.
+		if errno == unix.ENOTTY || errno == unix.EINVAL || errno == unix.EOPNOTSUPP {
+			return fmt.Errorf("%w: BTRFS_IOC_SNAP_DESTROY_V2 on %s: %w", ErrNoClone, path, errno)
+		}
+		return fmt.Errorf("%w: BTRFS_IOC_SNAP_DESTROY_V2 on %s: %w", ErrSnapshot, path, errno)
+	}
+	return nil
+}
+
 func btrfsSnapshot(src, dst string) error {
 	name := filepath.Base(dst)
 	if len(name) == 0 || len(name) > btrfsVolArgsNameMax {
