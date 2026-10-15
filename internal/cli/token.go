@@ -2,35 +2,16 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 )
 
 func runToken(ctx context.Context, env *Env, args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintln(env.Stderr, "usage: gvm token <subcommand>")
-		fmt.Fprintln(env.Stderr, "subcommands: create, list, revoke")
-		return usageErr(errors.New("token: subcommand required"))
-	}
-	sub := args[0]
-	rest := args[1:]
-	switch sub {
-	case "-h", "--help", "help":
-		fmt.Fprintln(env.Stdout, "usage: gvm token <subcommand>")
-		fmt.Fprintln(env.Stdout, "subcommands: create, list, revoke")
-		return errHelpShown
-	}
-	switch sub {
-	case "create":
-		return runTokenCreate(ctx, env, rest)
-	case "list":
-		return runTokenList(ctx, env, rest)
-	case "revoke":
-		return runTokenRevoke(ctx, env, rest)
-	default:
-		return usageErr(fmt.Errorf("token: unknown subcommand %q", sub))
-	}
+	return subGroup{Verb: "token", Subs: []subcmd{
+		{Name: "create", Summary: "mint an API token", Run: runTokenCreate},
+		{Name: "list", Summary: "list API tokens", Run: runTokenList},
+		{Name: "revoke", Summary: "revoke an API token", Run: runTokenRevoke},
+	}}.dispatch(ctx, env, args)
 }
 
 func runTokenCreate(_ context.Context, env *Env, args []string) error {

@@ -33,33 +33,13 @@ const dbConnTimeout = 2 * time.Second
 //	replay-spool  — insert queued spool records into audit_log
 //	check-grants  — verify gvm_web cannot read restricted columns
 func runDB(ctx context.Context, env *Env, args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintln(env.Stderr, "usage: gvm db <subcommand>")
-		fmt.Fprintln(env.Stderr, "subcommands: migrate, status, version, replay-spool, check-grants")
-		return usageErr(errors.New("db: subcommand required"))
-	}
-	sub := args[0]
-	rest := args[1:]
-	switch sub {
-	case "-h", "--help", "help":
-		fmt.Fprintln(env.Stdout, "usage: gvm db <subcommand>")
-		fmt.Fprintln(env.Stdout, "subcommands: migrate, status, version, replay-spool, check-grants")
-		return errHelpShown
-	}
-	switch sub {
-	case "migrate":
-		return runDBMigrate(ctx, env, rest)
-	case "status":
-		return runDBStatus(ctx, env, rest)
-	case "version":
-		return runDBVersion(ctx, env, rest)
-	case "replay-spool":
-		return runDBReplaySpool(ctx, env, rest)
-	case "check-grants":
-		return runDBCheckGrants(ctx, env, rest)
-	default:
-		return usageErr(fmt.Errorf("db: unknown subcommand %q", sub))
-	}
+	return subGroup{Verb: "db", Subs: []subcmd{
+		{Name: "migrate", Summary: "apply pending schema migrations", Run: runDBMigrate},
+		{Name: "status", Summary: "print the live schema version vs this binary", Run: runDBStatus},
+		{Name: "version", Summary: "print the schema version this binary requires", Run: runDBVersion},
+		{Name: "replay-spool", Summary: "insert queued spool records into the audit log", Run: runDBReplaySpool},
+		{Name: "check-grants", Summary: "verify the web role cannot read restricted columns", Run: runDBCheckGrants},
+	}}.dispatch(ctx, env, args)
 }
 
 func runDBVersion(_ context.Context, env *Env, _ []string) error {

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -13,39 +12,16 @@ import (
 // runUser dispatches gvm user subcommands.
 // All mutating operations require gvmd (privileged verb gateway).
 func runUser(ctx context.Context, env *Env, args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintln(env.Stderr, "usage: gvm user <subcommand>")
-		fmt.Fprintln(env.Stderr, "subcommands: list, create, show, set-role, set-password, disable, enable, reset-totp")
-		return usageErr(errors.New("user: subcommand required"))
-	}
-	sub := args[0]
-	rest := args[1:]
-	switch sub {
-	case "-h", "--help", "help":
-		fmt.Fprintln(env.Stdout, "usage: gvm user <subcommand>")
-		fmt.Fprintln(env.Stdout, "subcommands: list, create, show, set-role, set-password, disable, enable, reset-totp")
-		return errHelpShown
-	}
-	switch sub {
-	case "list":
-		return runUserList(ctx, env, rest)
-	case "create":
-		return runUserCreate(ctx, env, rest)
-	case "show":
-		return runUserShow(ctx, env, rest)
-	case "set-role":
-		return runUserSetRole(ctx, env, rest)
-	case "set-password":
-		return runUserSetPassword(ctx, env, rest)
-	case "disable":
-		return runUserDisable(ctx, env, rest)
-	case "enable":
-		return runUserEnable(ctx, env, rest)
-	case "reset-totp":
-		return runUserResetTOTP(ctx, env, rest)
-	default:
-		return usageErr(fmt.Errorf("user: unknown subcommand %q", sub))
-	}
+	return subGroup{Verb: "user", Subs: []subcmd{
+		{Name: "list", Summary: "list dashboard users", Run: runUserList},
+		{Name: "create", Summary: "create a dashboard user", Run: runUserCreate},
+		{Name: "show", Summary: "show one user", Run: runUserShow},
+		{Name: "set-role", Summary: "set a user's global role", Run: runUserSetRole},
+		{Name: "set-password", Summary: "set a user's password", Run: runUserSetPassword},
+		{Name: "disable", Summary: "disable a user", Run: runUserDisable},
+		{Name: "enable", Summary: "enable a user", Run: runUserEnable},
+		{Name: "reset-totp", Summary: "clear a user's TOTP enrolment", Run: runUserResetTOTP},
+	}}.dispatch(ctx, env, args)
 }
 
 func runUserList(_ context.Context, env *Env, args []string) error {

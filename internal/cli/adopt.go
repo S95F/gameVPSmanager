@@ -13,40 +13,29 @@ import (
 )
 
 func runAdopt(ctx context.Context, env *Env, args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintln(env.Stderr, "usage: gvm adopt <subcommand>")
-		fmt.Fprintln(env.Stderr, "subcommands: discover, cutover, rollback, finalize")
-		return usageErr(fmt.Errorf("adopt: subcommand required"))
-	}
-	sub := args[0]
-	rest := args[1:]
-	switch sub {
-	case "-h", "--help", "help":
-		fmt.Fprintln(env.Stdout, "usage: gvm adopt <subcommand>")
-		fmt.Fprintln(env.Stdout, "subcommands: discover, cutover, rollback, finalize")
-		return errHelpShown
-	}
-	switch sub {
-	case "discover":
-		return runAdoptDiscover(ctx, env, rest)
-	case "cutover", "rollback":
-		if helpRequested(rest) {
-			// --help on an unbuilt subcommand is still help: exit 0, say what it
-			// would be and that it is not here (U7), rather than the refusal.
+	return subGroup{Verb: "adopt", Subs: []subcmd{
+		{Name: "discover", Summary: "inspect an existing server install", Run: runAdoptDiscover},
+		{Name: "cutover", Summary: "switch a legacy service over to gvm",
+			Avail: avail.Unbuilt("not in this build"), Run: runAdoptUnbuilt("cutover")},
+		{Name: "rollback", Summary: "revert a cutover to the legacy service",
+			Avail: avail.Unbuilt("not in this build"), Run: runAdoptUnbuilt("rollback")},
+		{Name: "finalize", Summary: "remove the legacy unit after a cutover", Run: runAdoptFinalize},
+	}}.dispatch(ctx, env, args)
+}
+
+// runAdoptUnbuilt is the Run for a cutover/rollback that this build does not
+// ship. --help is still help (exit 0, U7); otherwise it refuses honestly and
+// changes nothing — there is no rollback script a cutover never wrote, and the
+// live server stays exactly as it was.
+func runAdoptUnbuilt(sub string) func(context.Context, *Env, []string) error {
+	return func(_ context.Context, env *Env, args []string) error {
+		if helpRequested(args) {
 			fmt.Fprintf(env.Stdout, "Usage: gvm adopt %s <instance>\n\n"+
 				"Not available in this build; nothing on this host would be changed.\n", sub)
 			return errHelpShown
 		}
-		// Honest, and safe: cutover and rollback are not in this build, so there
-		// is no reference to a rollback script no cutover has written, and no
-		// "(requires Linux)" — nothing on this host was touched either way. The
-		// live server stays exactly as it was.
 		return avail.New(fmt.Sprintf("adopt %s is not in gvm %s; nothing on this host was "+
 			"changed — keep running the existing service as before", sub, version.Version))
-	case "finalize":
-		return runAdoptFinalize(ctx, env, rest)
-	default:
-		return usageErr(fmt.Errorf("adopt: unknown subcommand %q", sub))
 	}
 }
 

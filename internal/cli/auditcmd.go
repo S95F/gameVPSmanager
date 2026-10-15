@@ -2,9 +2,7 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"flag"
-	"fmt"
 )
 
 // runAudit dispatches gvm audit subcommands.
@@ -13,27 +11,10 @@ import (
 // chronological order. Postgres connectivity is NOT required -- the spool is
 // the durable offline copy. `gvm audit search` is a filtered tail.
 func runAudit(ctx context.Context, env *Env, args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintln(env.Stderr, "usage: gvm audit <subcommand>")
-		fmt.Fprintln(env.Stderr, "subcommands: tail, search")
-		return usageErr(errors.New("audit: subcommand required"))
-	}
-	sub := args[0]
-	rest := args[1:]
-	switch sub {
-	case "-h", "--help", "help":
-		fmt.Fprintln(env.Stdout, "usage: gvm audit <subcommand>")
-		fmt.Fprintln(env.Stdout, "subcommands: tail, search")
-		return errHelpShown
-	}
-	switch sub {
-	case "tail":
-		return runAuditTail(ctx, env, rest)
-	case "search":
-		return runAuditSearch(ctx, env, rest)
-	default:
-		return usageErr(fmt.Errorf("audit: unknown subcommand %q", sub))
-	}
+	return subGroup{Verb: "audit", Subs: []subcmd{
+		{Name: "tail", Summary: "replay the audit spool in order", Run: runAuditTail},
+		{Name: "search", Summary: "filter the audit spool", Run: runAuditSearch},
+	}}.dispatch(ctx, env, args)
 }
 
 func runAuditTail(_ context.Context, env *Env, args []string) error {
