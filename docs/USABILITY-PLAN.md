@@ -221,7 +221,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 20 ✅ | Tell the truth about this build | help, README and refusals say what works; every hint runs; exit 3 | S | L | 19 |
 | 21 ◆ ✅ | Close the hazards already in this build | finalize can't delete early; backups go where configured; no comment wipe | H | L | 19 |
 | 22 🟡 | Help, errors and exit codes that work everywhere | `--help` never panics; plain errors; documented exit codes | S | L | 20 |
-| 23 | Install gvm on a fresh VPS | `sudo ./gvm host init`, verified tarball, real version | I | L | 22 |
+| 23 🟡 | Install gvm on a fresh VPS | `sudo ./gvm host init`, verified tarball, real version | I | L | 22 |
 | 24 ◆ | `gvm doctor` tells the truth | 0 problems on a healthy host; checks every instance | I | L | 23 |
 | 25 | Adoption discovery you can trust | discover finds the live PZ server, says what blocks cutover, changed nothing | A | M | 22 |
 | 26 | Choose a game, and always know the next step | `gvm game show`; `next:` after every command; RAM/disk warnings | S | M | 22 |
@@ -845,6 +845,26 @@ Phase 22 is a large refactor phase (10 items touching nearly every CLI file). Ac
 - **Rule 2:** `systemd-sysusers` and `systemd-tmpfiles` run by absolute path with argv. The `noshell` gate is extended to `internal/hostinit`.
 - **Rule 7:** apt lines are printed and never run (D-41). ufw is untouched.
 - **Rule 1:** `host init` writes only files and systemd state. The timers it enables have no control-plane dependency, which `golden-units.sh` asserts.
+
+### 🟡 Partial — the binary path (item 1) and `gvm host init` (item 2) landed 2026-10-15; the release/version/docs items remain
+
+The installer itself — the command that lets a non-Go operator stand gvm up on a fresh VPS — is built and test-green. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the whole module cross-compiles for `linux/amd64` with `CGO_ENABLED=0`.
+
+**Landed, with tests:**
+- **Item 1 — `/usr/bin/gvm` is the one binary path.** Done earlier this session (commit `726f76c`): `gvm@.service`, `gvm-job@.service`, the guard and verify units and `ProbeBinary` all name `/usr/bin/gvm`, and `TestEveryProgramPathIsDeclared` in `internal/reconcile` was updated to match.
+- **Item 2 — `sudo gvm host init [--diff]`.** New `internal/hostinit` package, reached through a new `gvm host init` verb (RouteLocal, because the installer runs before gvmd exists and has no transport to resolve; it checks for root itself and refuses non-root with the copy-paste sudo line, exit 5).
+  - **One Go mapping table.** `hostinit.Manifest()` is derived by walking `packaging.FS` (`systemd/*` → `/usr/lib/systemd/system`, `tmpfiles/gvm.conf` → `/usr/lib/tmpfiles.d`, `sysusers.d/gvm.conf` → `/usr/lib/sysusers.d`), so a unit added to `packaging/` is installed the day it is embedded and there is no second list. `gvm host init --print-manifest` prints the table (source, dest, mode) for `make install`/the `.deb` to consume. `TestManifestCoversEveryPackagedFile` asserts every embedded file is installed exactly once, under `/usr/lib`, 0644.
+  - **Idempotent, correctly ordered.** `hostinit.Run` drives a `System` interface in the one safe order: binary (atomic self-copy to `/usr/bin/gvm.new`, fsync, `rename(2)` so a live runner keeps its inode — no "text file busy"), then the packaged files, then `systemd-sysusers` (accounts) before `systemd-tmpfiles --create` (dirs that name those accounts), then one D-Bus daemon-reload, then — **on first init only**, recorded by a `/var/lib/gvm/host-init.json` marker — it enables `gvm-guard.timer` and `gvm-job@_verify.timer`, and finally writes a default `/etc/gvm/gvm.yaml` from `spec.DefaultHostConfig()` only if absent. `TestRunInstallsInTheRightOrder`, `TestRunIsIdempotent` (a re-init re-enables no timer and keeps the operator's config) and `TestDefaultConfigIsValidYAML` cover it, all against a fake `System` so the orchestration is tested with no host.
+  - **`--diff` changes nothing.** It may read host state (which timers are managed, whether a config exists) but performs no mutating effect; `TestDiffChangesNothing` asserts only `Exists` reads happen and zero files are written. The run ends with `next: sudo gvm doctor`.
+  - **Rule 2 / rule 7, enforced.** `internal/hostinit/noshell_test.go` extends the project's noshell gate: `os`/`os/exec` only from the Linux `System` impl (the cross-platform files go through the interface), no `/bin/sh`, no `systemctl`, no `apt`/`apt-get`, no `ufw`, no PATH lookup, and the only absolute program paths it may name are systemd's two tools plus `/usr/bin/gvm`. The per-family apt lines (SteamCMD `dpkg --add-architecture i386 … lib32gcc-s1`, Minecraft `openjdk-21-jre-headless`, Proton `python3`, `xvfb`) are DATA printed to the operator, never passed to a shell. A new `packaging/sysusers.d/gvm.conf` (embedded) creates `gvm`, `gvm-fetch`, `gvm-content`, `gvm-console` as locked nologin system accounts. The real host effects live in `system_linux.go` (D-Bus reload/enable mirroring `hostops`); `system_stub.go` refuses off Linux with `platform.ErrNotSupported` (`TestNewSystemRefusesOffLinux`).
+
+**Remaining (a dedicated session / the release phase should take these):**
+- **Item 3 — split tmpfiles.** Deliberately deferred to its proper coupling with the dashboard (Phase 48): moving the two `caddy`-group lines (`/run/gvm/web`, `/etc/gvm/caddy`) into a dashboard-only `packaging/tmpfiles/gvm-web.conf` also requires the `HOST-009` doctor check (`internal/doctor/checks_host_linux.go`) to stop treating a missing `/run/gvm/web` as a problem on a games-only host — a doctor change that belongs with the web tier, not the installer. Until then `systemd-tmpfiles --create` on a games-only box warns about the missing `caddy` group for those two lines (the rest converge); the DoD's "exits 0 with no caddy group" needs the split.
+- **Item 4 — the release workflow** (`.github/workflows/release.yml`, static `linux/{amd64,arm64}` on a `v*` tag, `SHA256SUMS`) and `make install` wired to `gvm host init --print-manifest`. `--print-manifest` is already in place for it.
+- **Item 5 — a real version.** `version.String()` vcs-revision fallback with `-dirty`, `gvm version --json` (version + commit + the `TestFrozenFormats` constants + `store.SchemaVersion`), and the CHANGELOG "Operator actions" gate.
+- **Item 6 — `docs/install.md`** and the fresh-Debian-VM CI replay (QEMU). These are docs/infra that `make check` cannot verify.
+
+**Effort for this task:** item 2 implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–22, after a context compaction. Items 3–6 are their own body of work (a release phase and a dashboard-coupled split).
 
 ---
 

@@ -202,6 +202,9 @@ var routes = map[string]Route{
 	"completion": RouteLocal,
 	"help":       RouteLocal,
 	"game":       RouteLocal,
+	// `host init` runs before gvm is installed, so it has no transport to
+	// resolve and cannot be carried by gvmd; it checks for root itself.
+	"host": RouteLocal,
 
 	"gvmd":         RouteRole,
 	"web":          RouteRole,

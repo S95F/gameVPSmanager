@@ -185,6 +185,7 @@ var commands = []Command{
 	{Name: "audit", Group: "admin", Summary: "view audit log records",
 		Avail: avail.Unbuilt("reading the audit log is not in this build"), Run: runAudit},
 
+	{Name: "host", Group: "host", Summary: "install gvm on this host (host init)", Run: runHost},
 	{Name: "firewall", Group: "host", Summary: "manage host firewall rules",
 		Avail: avail.Unbuilt("gvm does not manage the firewall in this build"), Run: runFirewall},
 	{Name: "doctor", Group: "host", Summary: "check the host for problems", Run: runDoctor},
