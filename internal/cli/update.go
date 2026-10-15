@@ -37,7 +37,7 @@ import (
 
 func runUpdate(ctx context.Context, env *Env, args []string) error {
 	var opt jobOptions
-	var diff, repair, dry bool
+	var diff, repair, dry, dryAlias bool
 	fs := flag.NewFlagSet("gvm update", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	fs.Usage = func() {
@@ -45,7 +45,7 @@ func runUpdate(ctx context.Context, env *Env, args []string) error {
 			"Checks for a Steam build change and a content change with the server UP,\n"+
 			"and stops it only if one of them needs it. On a quiet night nothing is\n"+
 			"touched and the run records `skipped`, which is a success.\n\n")
-		fs.PrintDefaults()
+		flagUsage(env.Stderr, fs, "dry")
 	}
 	opt.bind(fs, jobs.TriggerCLI)
 	fs.BoolVar(&diff, "diff", false,
@@ -56,10 +56,12 @@ func runUpdate(ctx context.Context, env *Env, args []string) error {
 			"It OVERWRITES customised files and takes a preserve archive first")
 	fs.BoolVar(&dry, "dry-run", false,
 		"with --repair, print the at-risk files and stop")
+	fs.BoolVar(&dryAlias, "dry", false, "alias for --dry-run")
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return flagErr(err)
 	}
+	dry = dry || dryAlias
 	name, err := oneInstance(pos)
 	if err != nil {
 		fs.Usage()

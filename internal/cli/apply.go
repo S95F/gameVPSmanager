@@ -39,15 +39,20 @@ type applyOptions struct {
 
 func parseApplyArgs(env *Env, verb string, args []string) (applyOptions, error) {
 	var opt applyOptions
+	var dryRun, dry bool
 	fs := flag.NewFlagSet("gvm "+verb, flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	fs.Usage = func() {
 		fmt.Fprintf(env.Stderr, "Usage: gvm %s <instance> [--diff]\n\n"+
 			"Reconciles the host with /etc/gvm/instances/<instance>.yaml.\n"+
 			"--diff builds the same plan and applies none of it.\n\n", verb)
-		fs.PrintDefaults()
+		// --dry-run and --dry are the project-wide spelling of the same thing,
+		// accepted here so muscle memory works; --diff is the documented name.
+		flagUsage(env.Stderr, fs, "dry-run", "dry")
 	}
 	fs.BoolVar(&opt.Diff, "diff", false, "print the plan and change nothing")
+	fs.BoolVar(&dryRun, "dry-run", false, "alias for --diff")
+	fs.BoolVar(&dry, "dry", false, "alias for --diff")
 	fs.BoolVar(&opt.Yes, "yes", false, "answer the confirmation for a plan that removes data")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
@@ -55,6 +60,9 @@ func parseApplyArgs(env *Env, verb string, args []string) (applyOptions, error) 
 	if err != nil {
 		return applyOptions{}, flagErr(err)
 	}
+	// The project convention is --dry-run; apply's own documented spelling is
+	// --diff. They mean the same "build the plan, change nothing", so fold them.
+	opt.Diff = opt.Diff || dryRun || dry
 	name, err := oneInstance(pos)
 	if err != nil {
 		fs.Usage()

@@ -48,6 +48,9 @@ var backupSubs = []struct {
 	run     func(context.Context, *Env, []string) error
 }{
 	{"", "<instance>", "freeze, snapshot, verify, then prune (the nightly)", runBackupNow},
+	// `run` is the explicit spelling of the nightly, reserved so a new verb
+	// never shadows it: `gvm backup run <instance>` == `gvm backup <instance>`.
+	{"run", "<instance>", "the nightly, by hand (same as `gvm backup <instance>`)", runBackupNow},
 	{"verify", "[<instance>] [--deep]", "read archives back: gzip, manifest, digests", runBackupVerify},
 	{"prune", "[<instance>]", "apply retention; preserve archives are never candidates", runBackupPrune},
 	{"list", "[<instance>]", "what this host has archived, from the index", runBackupList},
