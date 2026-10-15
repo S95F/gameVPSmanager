@@ -41,6 +41,8 @@ into Postgres when it comes back, via `gvm db replay-spool`.
 
 ## gvmd daemon
 
+> **Planned — not in this release.** gvmd is not in the current build; `gvm gvmd` refuses with "not available in this build". The behaviour below is the target design for when it lands.
+
 gvmd starts and listens on its unix socket regardless of Postgres state.
 Verbs that need the database return `ErrDatastoreUnavailable` (exit 3).
 Verbs that do not need the database (start, stop, console) work normally.
@@ -51,6 +53,8 @@ When it reconnects, `store.Open`'s `Ready()` channel closes and normal operation
 ---
 
 ## Web dashboard
+
+> **Planned — not in this release.** The dashboard is not in the current build; `gvm web` refuses with "not available in this build". The behaviour below is the target design for when it lands.
 
 | State | Response |
 |---|---|

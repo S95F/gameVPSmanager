@@ -82,8 +82,8 @@ func TestVerbatimActivationReturnsTheRecordedLineUntouched(t *testing.T) {
 	if !errors.Is(derr, ErrVerbatim) {
 		t.Fatalf("Derive re-derived a verbatim list: %v", derr)
 	}
-	if !strings.Contains(derr.Error(), "promote") {
-		t.Errorf("the refusal does not name the way out (`gvm content promote`): %v", derr)
+	if !strings.Contains(derr.Error(), "not available in this build") {
+		t.Errorf("the refusal does not say re-deriving is unavailable: %v", derr)
 	}
 }
 
@@ -351,8 +351,8 @@ func TestValidateAgainstRefusesAPolicyMismatch(t *testing.T) {
 		t.Fatal("a lock marked verbatim validated against an instance that derives; one of " +
 			"the two has to be corrected deliberately")
 	}
-	if !strings.Contains(err.Error(), "promote") {
-		t.Errorf("the refusal does not name `gvm content promote`: %v", err)
+	if !strings.Contains(err.Error(), "not available in this build") {
+		t.Errorf("the refusal does not say changing activation ownership is unavailable: %v", err)
 	}
 }
 

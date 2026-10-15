@@ -343,7 +343,7 @@ func TestAnAdoptedInstanceIsToldToPromote(t *testing.T) {
 	if pl.Writes() || pl.Destructive {
 		t.Fatal("a plan for an adopted instance would write into an install gvm does not own")
 	}
-	for _, want := range []string{"18452901 -> 18461233", "adopted", "gvm instance promote pz-main"} {
+	for _, want := range []string{"18452901 -> 18461233", "adopted", "not available in this build"} {
 		if !strings.Contains(pl.Reason, want) {
 			t.Errorf("reason = %q, missing %q", pl.Reason, want)
 		}
@@ -374,7 +374,7 @@ func TestAdoptedInstallAndRepairAreRefusedAtTheTypeLevel(t *testing.T) {
 			if !provider.Terminal(err) {
 				t.Error("the refusal is not terminal, so a job would retry a flag it cannot change")
 			}
-			if !strings.Contains(err.Error(), "gvm instance promote pz-main") {
+			if !strings.Contains(err.Error(), "not available in this build") {
 				t.Errorf("the refusal does not say what to do: %v", err)
 			}
 			if len(h.fake.Runs()) != 0 {

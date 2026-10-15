@@ -69,8 +69,8 @@ func (Provider) Inspect(ctx context.Context, c *provider.Ctx) (*provider.Inspect
 func (Provider) Plan(ctx context.Context, c *provider.Ctx, in provider.Intent) (*provider.Plan, error) {
 	return provider.EmptyPlan(in, fmt.Sprintf(
 		"%s is an adopted install: gvm never materialises, updates or validates its files. "+
-			"That is what adoption means. `gvm instance promote %s` is the only thing that "+
-			"changes it.", c.Name, c.Name)), nil
+			"That is what adoption means, and taking over its files is not available in this "+
+			"build.", c.Name)), nil
 }
 
 // Apply does nothing, and refuses anything.

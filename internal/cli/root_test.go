@@ -97,6 +97,19 @@ func TestRoleVerbsAreDispatchable(t *testing.T) {
 	}
 }
 
+// TestForgottenSudoIsOneLine: a non-root host op prints exactly one line that
+// echoes the whole command, so the fix is a copy-paste (U10, cli-walkthrough-5).
+func TestForgottenSudoIsOneLine(t *testing.T) {
+	code, _, errb := run(t, "backup", "list", "pz-main")
+	if code == 0 {
+		t.Fatal("a non-root backup resolved")
+	}
+	want := "gvm backup list pz-main needs root. Run: sudo gvm backup list pz-main\n"
+	if errb != want {
+		t.Errorf("stderr = %q, want exactly %q", errb, want)
+	}
+}
+
 func TestUnknownCommand(t *testing.T) {
 	code, _, errb := run(t, "frobnicate")
 	if code != 2 {

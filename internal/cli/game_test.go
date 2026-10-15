@@ -251,8 +251,8 @@ func TestGameHooksListsTheClosedRegistries(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errb)
 	}
-	if !strings.Contains(out, "pz.first_boot") || !strings.Contains(out, "ready") {
-		t.Errorf("implemented hooks are missing:\n%s", out)
+	if !strings.Contains(out, "pz.first_boot") || !strings.Contains(out, "not run by this build") {
+		t.Errorf("implemented hooks are missing, or the listing does not say they are not run:\n%s", out)
 	}
 	if !strings.Contains(out, "mc.accept_eula") {
 		t.Errorf("mc hooks are missing:\n%s", out)

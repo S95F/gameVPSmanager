@@ -53,7 +53,7 @@ func checkFWActive(host *spec.HostConfig, active bool) func(context.Context, lif
 				ID:       "FW-001",
 				Severity: lifecycle.CheckProblem,
 				Message:  fmt.Sprintf("firewall backend %s is not active", backend),
-				Fix:      "gvm firewall enable",
+				Fix:      "gvm does not manage the firewall in this build",
 			}
 		}
 		return lifecycle.CheckFinding{ID: "FW-001", Severity: lifecycle.CheckOK, Message: fmt.Sprintf("backend %s, active", backend)}
@@ -79,7 +79,7 @@ func checkSSHAdmitted(det sshport.Detection, live firewall.RuleSet, active bool)
 				ID:       "FW-002",
 				Severity: lifecycle.CheckProblem,
 				Message:  err.Error(),
-				Fix:      "gvm firewall apply",
+				Fix:      "gvm does not manage the firewall in this build",
 			}
 		}
 		sources := make([]string, 0, len(det.Findings))
@@ -144,7 +144,7 @@ func checkNoRuleForExposeNone(host *spec.HostConfig, instances []spec.Instance, 
 				ID:       "FW-005",
 				Severity: lifecycle.CheckProblem,
 				Message:  strings.Join(violations, "; "),
-				Fix:      "gvm firewall apply",
+				Fix:      "gvm does not manage the firewall in this build",
 			}
 		}
 		return lifecycle.CheckFinding{ID: "FW-005", Severity: lifecycle.CheckOK, Message: "no ufw rule for any expose:none port"}
@@ -173,7 +173,7 @@ func checkGVMPortsTagged(host *spec.HostConfig, instances []spec.Instance, manif
 				ID:       "FW-006",
 				Severity: lifecycle.CheckWarning,
 				Message:  fmt.Sprintf("%d rules on gvm-managed ports carry no gvm: tag: %s", len(untagged), strings.Join(untagged, ", ")),
-				Fix:      "gvm firewall apply",
+				Fix:      "gvm does not manage the firewall in this build",
 			}
 		}
 		return lifecycle.CheckFinding{ID: "FW-006", Severity: lifecycle.CheckOK, Message: "all gvm-managed ports carry a gvm: tag"}

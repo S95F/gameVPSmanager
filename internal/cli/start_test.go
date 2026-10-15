@@ -154,8 +154,13 @@ func TestStartBeforeInstallIsRefusedWithTheInstallHint(t *testing.T) {
 	if code == 0 {
 		t.Fatal("start succeeded with no game files on disk")
 	}
-	if !strings.Contains(errb, "gvm install valheim-1") {
-		t.Errorf("the refusal does not name the fix:\n%s", errb)
+	// It never points back at `gvm install`, which is not in this build; it says
+	// so plainly instead (U10).
+	if !strings.Contains(errb, "not available in this build") {
+		t.Errorf("the refusal does not say installing is unavailable:\n%s", errb)
+	}
+	if strings.Contains(errb, "gvm install") {
+		t.Errorf("the refusal points back at `gvm install`, which is not in this build:\n%s", errb)
 	}
 	// It is overridable, and the CLI says so once rather than leaving the
 	// operator to discover --force by guessing.

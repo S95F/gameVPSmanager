@@ -563,6 +563,41 @@ func TestJobListAnswersWhatThisBoxRunsAndWhatItCannot(t *testing.T) {
 	}
 }
 
+// TestJobListMarksAnUpdateNightlyUnrunnable: Project Zomboid's recommended
+// nightly is an update job, and this build has no engine to run one, so
+// `gvm job list` must say so plainly rather than call it runnable — a timer
+// that fires nightly against a kind nothing runs is the least observable
+// failure in the subsystem (cli-ergonomics-1).
+func TestJobListMarksAnUpdateNightlyUnrunnable(t *testing.T) {
+	h, _, _ := jobHost(t)
+	seedJobbableInstance(t, h, "pz-main")
+
+	code, out, errb := runWith(t, h, "", "job", "list", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errb)
+	}
+	var rows []jobRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	var sawUpdate bool
+	for _, r := range rows {
+		if r.Kind != "update" {
+			continue
+		}
+		sawUpdate = true
+		if r.Runnable {
+			t.Errorf("the update row is reported runnable, but no engine runs it: %+v", r)
+		}
+		if !strings.Contains(r.Why, "cannot run in this build") {
+			t.Errorf("the update row does not say it cannot run in this build: %+v", r)
+		}
+	}
+	if !sawUpdate {
+		t.Fatalf("no update job row for pz-main; rows = %s", out)
+	}
+}
+
 // TestJobClearRefusesALiveLease.
 //
 // A live lease is a running job. Removing it lets `gvm start` race an update

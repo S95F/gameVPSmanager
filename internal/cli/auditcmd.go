@@ -43,7 +43,7 @@ func runAuditTail(_ context.Context, env *Env, args []string) error {
 	// In the production path this reads the spool files and replays them.
 	// Without a running gvmd (or when using the spool directly), this works
 	// offline. The full implementation needs audit.ListSpools + audit.Replay.
-	return errRequiresDaemon("audit tail")
+	return errAdminUnbuilt("audit tail")
 }
 
 func runAuditSearch(_ context.Context, env *Env, args []string) error {
@@ -58,5 +58,5 @@ func runAuditSearch(_ context.Context, env *Env, args []string) error {
 	_ = action
 	_ = instance
 	_ = actor
-	return errRequiresDaemon("audit search")
+	return errAdminUnbuilt("audit search")
 }

@@ -542,6 +542,12 @@ type AcquireVerify struct {
 }
 
 type ContentActivation struct {
+	// Mode is how an item becomes active. The default (empty) is key-based: a
+	// write_key lists the enabled ids in a config file (Project Zomboid's
+	// Mods=). "presence" means the file's existence in a content root IS its
+	// activation — a Minecraft jar dropped in plugins/ loads, with no list to
+	// write — so write_key and separator are neither needed nor allowed.
+	Mode         string            `yaml:"mode,omitempty"`
 	WriteKey     string            `yaml:"write_key"` // "Mods"
 	WriteFile    string            `yaml:"write_file"`
 	Separator    string            `yaml:"separator"`

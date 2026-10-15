@@ -494,9 +494,9 @@ func (s *Source) Materialize(ctx context.Context, in *content.Input, p *content.
 		}
 		if strings.TrimSpace(live) == "" {
 			return nil, fmt.Errorf("%w: block %q is set to preserve the live %s line and there "+
-				"is nothing to preserve; run `gvm content import` to record the live list "+
-				"first, because writing the empty line would disable every mod on an adopted "+
-				"server", content.ErrInvalidLock, sc.Block, sc.Activation.Key)
+				"is nothing to preserve; the live list must be recorded first (writing the "+
+				"empty line would disable every mod on an adopted server), and importing it is "+
+				"not available in this build", content.ErrInvalidLock, sc.Block, sc.Activation.Key)
 		}
 		sl.ActivationLine = live
 	}

@@ -5,6 +5,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"strings"
+
+	"github.com/S95F/gameVPSmanager/internal/avail"
 )
 
 // runUser dispatches gvm user subcommands.
@@ -45,7 +48,7 @@ func runUserList(_ context.Context, env *Env, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return errRequiresDaemon("user list")
+	return errAdminUnbuilt("user list")
 }
 
 func runUserCreate(_ context.Context, env *Env, args []string) error {
@@ -60,7 +63,7 @@ func runUserCreate(_ context.Context, env *Env, args []string) error {
 		return fmt.Errorf("user create: --email is required")
 	}
 	_ = role
-	return errRequiresDaemon("user create")
+	return errAdminUnbuilt("user create")
 }
 
 func runUserShow(_ context.Context, env *Env, args []string) error {
@@ -72,7 +75,7 @@ func runUserShow(_ context.Context, env *Env, args []string) error {
 	if fs.NArg() < 1 {
 		return fmt.Errorf("user show: <email> required")
 	}
-	return errRequiresDaemon("user show")
+	return errAdminUnbuilt("user show")
 }
 
 func runUserSetRole(_ context.Context, env *Env, args []string) error {
@@ -84,7 +87,7 @@ func runUserSetRole(_ context.Context, env *Env, args []string) error {
 	if fs.NArg() < 2 {
 		return fmt.Errorf("user set-role: <email> <role> required")
 	}
-	return errRequiresDaemon("user set-role")
+	return errAdminUnbuilt("user set-role")
 }
 
 func runUserSetPassword(_ context.Context, env *Env, args []string) error {
@@ -96,7 +99,7 @@ func runUserSetPassword(_ context.Context, env *Env, args []string) error {
 	if fs.NArg() < 1 {
 		return fmt.Errorf("user set-password: <email> required")
 	}
-	return errRequiresDaemon("user set-password")
+	return errAdminUnbuilt("user set-password")
 }
 
 func runUserDisable(_ context.Context, env *Env, args []string) error {
@@ -108,7 +111,7 @@ func runUserDisable(_ context.Context, env *Env, args []string) error {
 	if fs.NArg() < 1 {
 		return fmt.Errorf("user disable: <email> required")
 	}
-	return errRequiresDaemon("user disable")
+	return errAdminUnbuilt("user disable")
 }
 
 func runUserEnable(_ context.Context, env *Env, args []string) error {
@@ -120,7 +123,7 @@ func runUserEnable(_ context.Context, env *Env, args []string) error {
 	if fs.NArg() < 1 {
 		return fmt.Errorf("user enable: <email> required")
 	}
-	return errRequiresDaemon("user enable")
+	return errAdminUnbuilt("user enable")
 }
 
 func runUserResetTOTP(_ context.Context, env *Env, args []string) error {
@@ -132,12 +135,28 @@ func runUserResetTOTP(_ context.Context, env *Env, args []string) error {
 	if fs.NArg() < 1 {
 		return fmt.Errorf("user reset-totp: <email> required")
 	}
-	return errRequiresDaemon("user reset-totp")
+	return errAdminUnbuilt("user reset-totp")
 }
 
-// errRequiresDaemon returns a clear error explaining that the operation needs
-// the gvmd privileged verb gateway. It is a distinct error so callers can check
-// for it in tests without matching a string.
-func errRequiresDaemon(op string) error {
-	return fmt.Errorf("%s: requires gvmd — ensure the daemon is running (`systemctl status gvmd`)", op)
+// errAdminUnbuilt is the refusal the admin groups share.
+//
+// The command is routed, so `--help` and argument validation already ran; what
+// is missing is the engine behind it — dashboard users, API tokens, the secret
+// store or the audit reader. It returns an avail error so Main prints the one
+// standard line and exits 3 (U8), and it NEVER names gvmd: an operator who does
+// not have the daemon must not be sent to debug a unit that was never shipped
+// (U10). The op prefix only chooses which sentence, so the reason is specific
+// without the caller repeating itself.
+func errAdminUnbuilt(op string) error {
+	switch {
+	case strings.HasPrefix(op, "user"):
+		return avail.New("dashboard users, roles and passwords arrive with the dashboard")
+	case strings.HasPrefix(op, "token"):
+		return avail.New("API tokens arrive with the dashboard")
+	case strings.HasPrefix(op, "secret"):
+		return avail.New("storing and reading instance secrets arrives in a later release")
+	case strings.HasPrefix(op, "audit"):
+		return avail.New("reading the audit log arrives with the audit spool reader")
+	}
+	return avail.New("that part of gvm is not in this build")
 }

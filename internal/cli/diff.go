@@ -62,7 +62,18 @@ func printPlan(w io.Writer, pl *planned) {
 		fmt.Fprint(w, "  ! the job schedules were NOT checked against systemd on this host;\n"+
 			"    they are only known to be shaped like an OnCalendar expression.\n")
 	}
+	printUnrunnableJobs(w, pl)
 	fmt.Fprintln(w, "\n  nothing has been applied.")
+}
+
+// printUnrunnableJobs warns that a timer apply installs is armed against a kind
+// this build cannot run, so an operator reading the plan knows the nightly is a
+// no-op before it fires rather than after.
+func printUnrunnableJobs(w io.Writer, pl *planned) {
+	for _, j := range pl.UnrunnableJobs {
+		fmt.Fprintf(w, "  ! timer %s_%s (%s) will be installed, but this build cannot run %s jobs: %s\n",
+			pl.Instance.Metadata.Name, j.Job, j.Kind, j.Kind, j.Why)
+	}
 }
 
 func printApplyReport(w io.Writer, pl *planned, rep *reconcile.Report) {
@@ -77,6 +88,7 @@ func printApplyReport(w io.Writer, pl *planned, rep *reconcile.Report) {
 	if pl.UncheckedSchedules {
 		fmt.Fprint(w, "  ! the job schedules were NOT checked against systemd on this host.\n")
 	}
+	printUnrunnableJobs(w, pl)
 	for _, r := range rep.Results {
 		if r.Err != nil {
 			fmt.Fprintf(w, "  ! %s %s: %v\n", r.Step.Kind, r.Step.Object, r.Err)

@@ -26,13 +26,13 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/archive"
+	"github.com/S95F/gameVPSmanager/internal/avail"
 	"github.com/S95F/gameVPSmanager/internal/backup"
 	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/jobs"
@@ -46,12 +46,49 @@ import (
 
 // ErrContentApplyUnbuilt is a job that needs internal/content's applying half.
 //
-// Its own sentinel, and not ErrNotImplemented: the verb is built, its
-// decision-only paths work, and what is missing is one adapter. A script
-// telling the two apart is telling "gvm cannot do this" from "gvm cannot do
-// this yet".
-var ErrContentApplyUnbuilt = errors.New(
-	"gvm: the content apply adapter (materialize, resolve, activate) is not built in this release")
+// Built on avail.New so it matches avail.ErrUnavailable and exits 3: the verb
+// is built, its decision-only paths work, and what is missing is one adapter.
+// errors.Is still tells it apart from the provider sentinel for the callers
+// that care.
+var ErrContentApplyUnbuilt = avail.New(
+	"applying mod changes is not in this build; the decision-only, read-only half works")
+
+// engineWired reports whether THIS BUILD can execute kind, and when it cannot,
+// one plain sentence naming what is missing.
+//
+// It is the single predicate four callers share, so the answer to "does a
+// nightly of this kind actually run" is given in one place (U1):
+//   - attachEngines, which refuses the run rather than panic on a nil seam;
+//   - `gvm job list` (jobRows), which prints "cannot run in this build: <why>"
+//     beside a timer, so a timer that fires against a kind nothing runs is not
+//     the least observable failure in the subsystem;
+//   - `gvm apply`, which marks a timer it will install but cannot fire;
+//   - `gvm start`'s missing-files refusal, which must not point back at an
+//     install that is not here either.
+//
+// in and m are the instance and its pinned manifest. This build's answer turns
+// only on kind, but a later phase keys content_sync on the manifest's content
+// block (an instance that declares no content has nothing to sync), so the
+// signature already carries them and today's callers may pass nil.
+func engineWired(kind lifecycle.JobKind, _ *spec.Instance, _ *spec.Manifest) (bool, string) {
+	if _, err := jobs.Lookup(kind); err != nil {
+		// A kind with no runner at all (restore) — internal/jobs already holds
+		// the one honest sentence naming the package that brings it, and it is
+		// the sentence `gvm job run` would print, so this does not invent a
+		// second one.
+		return false, err.Error()
+	}
+	switch kind {
+	case lifecycle.JobUpdate:
+		return false, "this build has no engine to run SteamCMD, so update jobs cannot run"
+	case lifecycle.JobContentSync:
+		return false, "applying mod changes is not in this build; " +
+			"`gvm content sync <instance> --dry-run` shows what it would do"
+	case lifecycle.JobRebuild:
+		return false, "rebuilding a world is not in this build"
+	}
+	return true, ""
+}
 
 // JobSeams are the engines and host handles one job run needs.
 //

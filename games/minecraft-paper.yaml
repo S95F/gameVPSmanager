@@ -3,7 +3,7 @@ kind: Game
 metadata:
   id: minecraft-paper
   name: Minecraft Paper Server
-  revision: 1
+  revision: 2
   tags: [minecraft, java, paper, rcon]
   doc: |
     Paper is a high-performance Minecraft server with plugin support. gvm
@@ -148,7 +148,7 @@ spec:
       source: modrinth
       acquisition:
         mechanism: http
-      activation: {}
+      activation: {mode: presence}
       roots: ["{{ .Data }}/plugins"]
       impact:
         add:    restart

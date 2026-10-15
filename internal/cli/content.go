@@ -40,6 +40,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/S95F/gameVPSmanager/internal/avail"
 	"github.com/S95F/gameVPSmanager/internal/content"
 	"github.com/S95F/gameVPSmanager/internal/content/steamworkshop"
 	"github.com/S95F/gameVPSmanager/internal/gamecfg"
@@ -248,6 +249,21 @@ func openContent(ctx context.Context, env *Env, opt *contentOptions, pos []strin
 		return nil, err
 	}
 	v.Schema = sc
+
+	// Minecraft mod management (Modrinth, CurseForge) is not in this build. The
+	// block compiles — a jar dropped in a root loads by presence — but gvm will
+	// not resolve, download or diff these sources yet, so every content verb on
+	// such an instance says so in one sentence rather than four schema errors or
+	// a half-working command (content-mods-3). The jars already on disk still
+	// load; gvm simply does not manage them.
+	if src := sc.Source; src == content.KindModrinth || src == content.KindCurseForge {
+		root := "the mods directory"
+		if len(roots) > 0 {
+			root = roots[0]
+		}
+		return nil, avail.New(fmt.Sprintf("Minecraft mod management is not in this build; "+
+			"jars under %s load as-is", root))
+	}
 
 	if err := v.openRoots(roots); err != nil {
 		return nil, err
@@ -714,7 +730,8 @@ func afterListEdit(w io.Writer, v *contentView, refs []content.Ref) {
 	fmt.Fprintf(w, "  Nothing was applied: the server still loads what %s and its config say.\n",
 		v.Paths.ContentLock)
 	fmt.Fprintf(w, "    gvm content diff %s      what would change\n", v.Name)
-	fmt.Fprintf(w, "    gvm content sync %s      apply it\n", v.Name)
+	fmt.Fprintf(w, "  applying mod changes is not available in this build; "+
+		"gvm content sync %s --dry-run shows what it would do.\n", v.Name)
 }
 
 // ---------------------------------------------------------------------------
@@ -1113,7 +1130,6 @@ func runContentAdd(ctx context.Context, env *Env, args []string) error {
 	pin := fset.String("pin", "", "pin the item to this version (Modrinth/CurseForge; a Steam Workshop item has no per-version id)")
 	note := fset.String("note", "", "the documentation line this item carries in the list")
 	requires := fset.String("requires", "", "comma-separated acquisition ids this item must load after")
-	apply := fset.Bool("apply", false, "sync immediately after writing the list")
 	pos, err := parseInterspersed(fset, args)
 	if err != nil {
 		return flagErr(err)
@@ -1122,11 +1138,9 @@ func runContentAdd(ctx context.Context, env *Env, args []string) error {
 		fset.Usage()
 		return errors.New("name an instance and at least one acquisition id")
 	}
-	if *apply {
-		// Refused BEFORE anything is written, so nothing half-happens. See the
-		// file comment: the applying half of a sync is a job.
-		return errContentSyncIsAJob(pos[0])
-	}
+	// No `--apply`: editing the list changes intent only, and applying it is not
+	// available in this build, so a flag that pretended to is gone rather than
+	// accepted-and-refused (U3). afterListEdit says what the next step is.
 
 	v, err := openContent(ctx, env, opt, pos[:1])
 	if err != nil {
@@ -1163,7 +1177,6 @@ func runContentAdd(ctx context.Context, env *Env, args []string) error {
 
 func runContentRemove(ctx context.Context, env *Env, args []string) error {
 	fset, opt := contentFlags(env, "remove", "<instance> <id>...")
-	apply := fset.Bool("apply", false, "sync immediately after writing the list")
 	pos, err := parseInterspersed(fset, args)
 	if err != nil {
 		return flagErr(err)
@@ -1172,9 +1185,7 @@ func runContentRemove(ctx context.Context, env *Env, args []string) error {
 		fset.Usage()
 		return errors.New("name an instance and at least one acquisition id")
 	}
-	if *apply {
-		return errContentSyncIsAJob(pos[0])
-	}
+	// No `--apply`: see runContentAdd.
 	v, err := openContent(ctx, env, opt, pos[:1])
 	if err != nil {
 		return err
@@ -1650,7 +1661,7 @@ func countRequires(sl *content.SourceLock) int {
 func verbatimLine(sl *content.SourceLock, sc *content.Schema) string {
 	if sl.VerbatimActivation {
 		return fmt.Sprintf("verbatim_activation: the recorded %s line is the operator's and is "+
-			"returned untouched (`gvm content promote` hands it back to the resolver)",
+			"returned untouched (handing it back to the resolver is not available in this build)",
 			sc.Activation.Key)
 	}
 	return fmt.Sprintf("verbatim_activation: false, so %s is derived from the entries",

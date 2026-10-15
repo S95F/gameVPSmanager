@@ -47,9 +47,16 @@ func (a AcquisitionSpec) Line(ids []AcquireID) AcquisitionLine {
 	}
 }
 
+// ActivationModePresence is the activation mode in which an item is enabled by
+// its presence in a content root, with no config key to write (Minecraft jars).
+const ActivationModePresence = "presence"
+
 // ActivationSpec is the ACTIVATION half: which config key enables what, and
 // which resolver maps acquisition ids onto activation ids.
 type ActivationSpec struct {
+	// Mode is "" (key-based) or ActivationModePresence (enabled by file
+	// presence in a root). Presence leaves Key, Separator and Resolver empty.
+	Mode      string
 	Key       string // "Mods"
 	File      string
 	Separator string
@@ -168,9 +175,24 @@ func Compile(block spec.ContentSpec, list spec.ContentList, roots []string) (*Sc
 			"instance", ErrInvalidSchema, name, src, ls))
 	}
 
-	acq, aerrs := compileAcquisition(name, block.Acquisition)
+	// Presence mode: the item's existence in a content root is its activation,
+	// so there is no acquisition or activation list to write to a config key.
+	// Minecraft mods and plugins are jars dropped in a folder; a write_key here
+	// would be a key nothing reads. Any mode other than the two known values is
+	// a load-time error rather than a silently key-based block.
+	presence := false
+	switch strings.TrimSpace(block.Activation.Mode) {
+	case "":
+	case ActivationModePresence:
+		presence = true
+	default:
+		errs = append(errs, fmt.Errorf("%w: block %q declares activation mode %q (want %q or omit)",
+			ErrInvalidSchema, name, block.Activation.Mode, ActivationModePresence))
+	}
+
+	acq, aerrs := compileAcquisition(name, block.Acquisition, presence)
 	errs = append(errs, aerrs...)
-	act, verrs := compileActivation(name, block.Activation)
+	act, verrs := compileActivation(name, block.Activation, presence)
 	errs = append(errs, verrs...)
 
 	// THE central check. Two namespaces, two write keys. One key cannot carry
@@ -233,7 +255,7 @@ func Compile(block spec.ContentSpec, list spec.ContentList, roots []string) (*Sc
 	return sc, nil
 }
 
-func compileAcquisition(block string, in spec.ContentAcquisition) (AcquisitionSpec, []error) {
+func compileAcquisition(block string, in spec.ContentAcquisition, presence bool) (AcquisitionSpec, []error) {
 	var errs []error
 	out := AcquisitionSpec{
 		Mechanism:         strings.TrimSpace(in.Mechanism),
@@ -251,6 +273,11 @@ func compileAcquisition(block string, in spec.ContentAcquisition) (AcquisitionSp
 			"%s|%s|%s)", ErrInvalidSchema, block, out.Mechanism,
 			MechanismServerBoot, MechanismSteamCMDItem, MechanismHTTP))
 	}
+	if presence {
+		// No write_key, no separator: the download lands as files in the roots,
+		// and there is no list to write. A key here would be a contradiction.
+		return out, errs
+	}
 	if out.Key == "" {
 		errs = append(errs, fmt.Errorf("%w: block %q declares no acquisition write_key, so "+
 			"there is nothing to tell the server to download", ErrInvalidSchema, block))
@@ -259,9 +286,10 @@ func compileAcquisition(block string, in spec.ContentAcquisition) (AcquisitionSp
 	return out, errs
 }
 
-func compileActivation(block string, in spec.ContentActivation) (ActivationSpec, []error) {
+func compileActivation(block string, in spec.ContentActivation, presence bool) (ActivationSpec, []error) {
 	var errs []error
 	out := ActivationSpec{
+		Mode:      strings.TrimSpace(in.Mode),
 		Key:       strings.TrimSpace(in.WriteKey),
 		File:      strings.TrimSpace(in.WriteFile),
 		Separator: in.Separator,
@@ -272,6 +300,17 @@ func compileActivation(block string, in spec.ContentActivation) (ActivationSpec,
 		for k, v := range in.ResolverVars {
 			out.Vars[k] = v
 		}
+	}
+	if presence {
+		// Activation is the file's presence in a root; there is no key to write
+		// and no resolver to map ids. A resolver declared alongside presence is
+		// a contradiction, so it is refused rather than silently ignored.
+		if out.Resolver != "" {
+			errs = append(errs, fmt.Errorf("%w: block %q is activation mode %q and also names a "+
+				"resolver; presence activation enables by file presence, not by a derived list",
+				ErrInvalidSchema, block, ActivationModePresence))
+		}
+		return out, errs
 	}
 	if out.Key == "" {
 		errs = append(errs, fmt.Errorf("%w: block %q declares no activation write_key, so "+

@@ -3,7 +3,7 @@ kind: Game
 metadata:
   id: minecraft-forge
   name: Minecraft Forge Server
-  revision: 1
+  revision: 2
   tags: [minecraft, java, forge]
   doc: |
     Minecraft Forge is the original community mod loader for Minecraft. gvm
@@ -113,7 +113,7 @@ spec:
       source: modrinth
       acquisition:
         mechanism: http
-      activation: {}
+      activation: {mode: presence}
       roots: ["{{ .Data }}/mods"]
       impact:
         add:    restart

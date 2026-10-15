@@ -22,6 +22,6 @@
   ! content root /srv/gvm/pz-main/install/steamapps/workshop/content/108600 is not there yet
 
   impact: download_cycle   1 item needs an acquisition boot (budget 60m)
-  apply:  gvm content sync pz-main
+  applying mod changes is not available in this build; gvm content sync pz-main --dry-run shows what it would do
 
   note: no Workshop metadata was fetched for 4 item(s): this source is offline, so every item was scored from its downloaded files alone

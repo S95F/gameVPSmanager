@@ -439,8 +439,9 @@ func activate(sc *Schema, l *Lock, allowEmpty bool) (*Activation, error) {
 			// empty line would disable every mod on an ADOPTED server, which
 			// is the single worst thing this package could do.
 			return nil, fmt.Errorf("%w: block %q records verbatim activation but the recorded "+
-				"%s line is empty; run `gvm content import` to record the live list before "+
-				"activating", ErrInvalidLock, sc.Block, sc.Activation.Key)
+				"%s line is empty; the live list must be recorded before activating, and "+
+				"importing it is not available in this build", ErrInvalidLock, sc.Block,
+				sc.Activation.Key)
 		}
 		out.Activate = sc.Activation.Verbatim(recorded)
 		out.Note = fmt.Sprintf("returned the recorded %s line untouched (%d bytes); "+
@@ -498,9 +499,9 @@ func Derive(sc *Schema, l *Lock) (ActivationLine, error) {
 		return ActivationLine{}, err
 	}
 	if sl.VerbatimActivation {
-		return ActivationLine{}, fmt.Errorf("%w: block %q records verbatim activation; use the "+
-			"recorded line, or `gvm content promote %s` to take ownership of it deliberately",
-			ErrVerbatim, sc.Block, l.Instance)
+		return ActivationLine{}, fmt.Errorf("%w: block %q records verbatim activation; the "+
+			"recorded line is used as-is. Taking ownership of it to re-derive is not available "+
+			"in this build", ErrVerbatim, sc.Block)
 	}
 	if err := sl.CheckAccounted(); err != nil {
 		return ActivationLine{}, err

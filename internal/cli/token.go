@@ -39,7 +39,7 @@ func runTokenCreate(_ context.Context, env *Env, args []string) error {
 		return fmt.Errorf("token create: --name is required")
 	}
 	_ = role
-	return errRequiresDaemon("token create")
+	return errAdminUnbuilt("token create")
 }
 
 func runTokenList(_ context.Context, env *Env, args []string) error {
@@ -48,7 +48,7 @@ func runTokenList(_ context.Context, env *Env, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return errRequiresDaemon("token list")
+	return errAdminUnbuilt("token list")
 }
 
 func runTokenRevoke(_ context.Context, env *Env, args []string) error {
@@ -60,5 +60,5 @@ func runTokenRevoke(_ context.Context, env *Env, args []string) error {
 	if fs.NArg() < 1 {
 		return fmt.Errorf("token revoke: <token-prefix> required")
 	}
-	return errRequiresDaemon("token revoke")
+	return errAdminUnbuilt("token revoke")
 }

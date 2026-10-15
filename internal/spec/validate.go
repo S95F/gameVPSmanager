@@ -347,7 +347,7 @@ func (c *checker) checkSchema() {
 	}
 	if c.m.Metadata.Revision < 1 {
 		c.add(c.errf("metadata.revision", "revision %d is not a revision; the first is 1", c.m.Metadata.Revision).
-			WithFix("revision is monotonic per game id and is what `gvm manifest upgrade` diffs by"))
+			WithFix("revision is monotonic per game id, and the first shipped revision is 1"))
 	}
 }
 

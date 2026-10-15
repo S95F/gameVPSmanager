@@ -326,7 +326,7 @@ func TestAuthorizeRefusesADestructivePlanOnAnAdoptedInstance(t *testing.T) {
 	}
 	// The operator's next move has to be in the message, or this refusal is a
 	// dead end at 2am.
-	if !strings.Contains(err.Error(), "gvm instance promote") {
+	if !strings.Contains(err.Error(), "not available in this build") {
 		t.Errorf("the refusal does not say what to do about it: %v", err)
 	}
 

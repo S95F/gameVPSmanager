@@ -123,8 +123,8 @@ func printBlockedReport(w io.Writer, v *contentView, rep blockedReport) {
 			fmt.Fprintf(w, "      %s\n", f.URL)
 		}
 	}
-	fmt.Fprintf(w, "\n  Put them in /var/lib/gvm/downloads/mods, then:\n"+
-		"      gvm content resolve-blocked %s\n", v.Name)
+	fmt.Fprintf(w, "\n  Put them in /var/lib/gvm/downloads/mods, then re-run:\n"+
+		"      gvm content blocked %s\n", v.Name)
 	if rep.State != "" {
 		fmt.Fprintf(w, "  state: %s\n", rep.State)
 	}

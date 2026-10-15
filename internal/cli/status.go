@@ -42,6 +42,10 @@ func parseStatusArgs(env *Env, args []string) (statusOptions, error) {
 	if err != nil {
 		return statusOptions{}, flagErr(err)
 	}
+	if len(pos) == 0 {
+		// Bare `gvm status`: the caller shows the fleet view. Name stays empty.
+		return opt, nil
+	}
 	name, err := oneInstance(pos)
 	if err != nil {
 		fs.Usage()
@@ -55,6 +59,12 @@ func runStatus(ctx context.Context, env *Env, args []string) error {
 	opt, err := parseStatusArgs(env, args)
 	if err != nil {
 		return err
+	}
+	if opt.Name == "" {
+		// `gvm status` with no instance is the fleet view — the same projection
+		// `gvm list` renders, so the shorter word an operator reaches for gives
+		// a useful answer instead of "name an instance".
+		return runList(ctx, env, args)
 	}
 	t, err := Resolve(env, "status", opt.Remote)
 	if err != nil {

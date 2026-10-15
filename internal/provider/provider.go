@@ -277,8 +277,8 @@ func (p *Plan) Authorize(managedInstall bool) error {
 	}
 	if !managedInstall {
 		if p.Destructive {
-			return fmt.Errorf("%w: the %s plan is destructive; run `gvm instance promote` "+
-				"first if gvm really should own these files", ErrAdopted, p.Intent)
+			return fmt.Errorf("%w: the %s plan is destructive against an adopted install; "+
+				"taking over its files is not available in this build", ErrAdopted, p.Intent)
 		}
 		// Writing bytes into an adopted tree is the destructive act whether or
 		// not the provider labelled it one: those files predate gvm, they may
@@ -287,8 +287,8 @@ func (p *Plan) Authorize(managedInstall bool) error {
 		// cannot get past this.
 		if p.Writes() {
 			return fmt.Errorf("%w: the %s plan would write %d artifact(s) into an install "+
-				"gvm does not own; run `gvm instance promote` first", ErrAdopted, p.Intent,
-				len(p.Artifacts))
+				"gvm does not own; taking over an adopted install is not available in this "+
+				"build", ErrAdopted, p.Intent, len(p.Artifacts))
 		}
 	}
 	p.authorized = true

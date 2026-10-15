@@ -162,10 +162,12 @@ func deriveIdentity(o Observation) (Verdict, bool) {
 		return Verdict{
 			Phase: PhaseFailed, Rule: RulePinMismatch,
 			Reason: "the pinned manifest does not match what the instance records: " + o.Pin.Reason,
-			// --dry, because the operator has to see the argv and destroy-glob
-			// diff before a manifest that ships new arguments reaches a live
-			// world (D-17).
-			Hint: "gvm manifest upgrade " + o.Name + " --dry",
+			// Never "re-create the instance", and never a command that moves the
+			// pin: if the YAML pin was hand-edited, restoring it is the fix, and
+			// moving a live world to a newer manifest revision (which can ship
+			// new argv and destroy globs, D-17) is not available in this build.
+			Hint: "if the pin was edited by hand, restore it, then: sudo gvm apply " + o.Name +
+				" --diff. Moving an instance to a newer manifest revision is not available in this build",
 		}, true
 	}
 	return Verdict{}, false
@@ -370,17 +372,19 @@ func deriveInactive(o Observation) Verdict {
 		return Verdict{
 			Phase: PhaseProvisioning, Rule: RuleNotInstalled,
 			Reason: "applied, and the provider's install sentinel is not on disk",
-			Hint:   "gvm install " + o.Name,
+			// Not `gvm install`: installing game files is not available in this
+			// build, so pointing back at it would send the operator to a refusal.
+			Hint: "game files are not installed, and installing them is not available in this build",
 		}
 	}
 	if o.Hold {
 		return Verdict{
 			Phase: PhaseStopped, Rule: RuleHeld,
 			Reason: holdReason(o),
-			// Not `gvm start`: the operator already knows how to start it.
-			// What they may not know is that the hold is why the guard timer
-			// is leaving it alone, which is the useful half.
-			Hint: "gvm start " + o.Name + " (clears the hold)",
+			// The hold is why the guard timer is leaving it alone. A reboot
+			// clears it; the durable stop is enabled: false, not a start.
+			Hint: "a reboot clears it; for a durable stop set enabled: false in " +
+				specPath(o.Name) + " and run sudo gvm apply " + o.Name,
 		}
 	}
 	// systemd keeps Result from the last run. "success" is a clean exit; a
@@ -397,7 +401,7 @@ func deriveInactive(o Observation) Verdict {
 		return Verdict{
 			Phase: PhaseStopped, Rule: RuleDisabled,
 			Reason: "enabled: false in " + specPath(o.Name),
-			Hint:   "gvm enable " + o.Name,
+			Hint:   "set enabled: true in " + specPath(o.Name) + ", then: sudo gvm apply " + o.Name,
 		}
 	}
 	return Verdict{

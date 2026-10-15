@@ -1,5 +1,7 @@
 # gvm — Implementation Plan
 
+> **Target design; see the [README](../README.md) for what works today.** This plan describes how Phases 0–19 build the foundation; not every component it lists is wired into the current build. The README "What works in this build" table is the authority on what runs now, and [`USABILITY-PLAN.md`](./USABILITY-PLAN.md) (Phases 20+) is what turns the foundation into a usable product.
+
 Dependency-ordered build plan for the architecture in [`ARCHITECTURE.md`](./ARCHITECTURE.md). Every `D-nn` reference points at that document's decision register.
 
 **Module:** `github.com/S95F/gameVPSmanager` · **Binary:** `gvm` · **Go 1.26, `CGO_ENABLED=0`.**

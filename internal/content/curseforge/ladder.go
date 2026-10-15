@@ -214,7 +214,7 @@ func (s *Source) rungBlocked(_ *content.Input, ref content.Ref, ordinal int, fil
 			Title: name,
 			// BanReason is the operator-readable explanation.
 			BanReason: "mod author opted out of API distribution; drop the JAR into the " +
-				"blocked-mods drop-box and run `gvm content resolve-blocked`",
+				"blocked-mods drop-box and run `gvm content blocked`",
 		},
 	}
 }

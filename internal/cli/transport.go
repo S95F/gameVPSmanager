@@ -20,15 +20,23 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
+	"github.com/S95F/gameVPSmanager/internal/avail"
 	"github.com/S95F/gameVPSmanager/internal/secrets"
 )
 
-// AdminSocket is gvmd's socket. It is declared here to be NAMED in a refusal
-// and nowhere else; TestTheCLINeverNamesTheAdminSocket is what keeps it that
-// way, by failing on any other string literal in the package that mentions it.
+// AdminSocket is gvmd's socket. It is declared here, and named in no refusal
+// an operator reads, because the rationale now lives in this comment and in the
+// embedded `transport` help topic rather than in a transport error: that socket
+// is 0660 root:gvm, so a CLI that dialled it would hand the whole root verb
+// surface to every member of group gvm — the internet-facing web tier's own
+// account among them — which is exactly the escalation the two-daemon split of
+// section 3.2 exists to prevent. The root CLI therefore calls hostops
+// in-process and never dials this path. TestTheCLINeverNamesTheAdminSocket
+// keeps the literal to this one file: a `socket.Dial(AdminSocket)` cannot be
+// written without first writing the string, and the test fails if it appears
+// anywhere else.
 const AdminSocket = "/run/gvm/admin.sock"
 
 // The two environment variables that select the remote transport.
@@ -95,11 +103,11 @@ var ErrNoTransport = errors.New("gvm: no transport for this command")
 // ErrRemoteUnbuilt is the honest answer for a resolved remote transport in a
 // build whose API client does not exist yet.
 //
-// It is a distinct sentinel from ErrNoTransport because the operator's next
-// move differs completely: one means "become root or set GVM_URL", the other
-// means "this gvm cannot do that yet, and no amount of configuration will
-// change it in this build".
-var ErrRemoteUnbuilt = errors.New("gvm: the remote transport is not built in this release")
+// Built on avail.New so it matches avail.ErrUnavailable and exits 3. It stays a
+// distinct sentinel from ErrNoTransport because the operator's next move
+// differs completely: ErrNoTransport means "become root or set GVM_URL", this
+// one means "no amount of configuration changes it in this build".
+var ErrRemoteUnbuilt = avail.New("this gvm build has no API client; run it as root on the host")
 
 // Resolve applies section 3.3's ladder.
 //
@@ -120,17 +128,20 @@ func Resolve(env *Env, verb string, remote string) (Transport, error) {
 		target = strings.TrimSpace(env.Getenv(EnvURL))
 	}
 	if target != "" {
-		u, err := parseRemote(target)
-		if err != nil {
-			return Transport{}, err
+		// There is no API client in this build, so a remote target cannot be
+		// carried by any verb. Fail at once with the one honest sentence, rather
+		// than resolving to ModeRemote and refusing a step later — and never
+		// advise `gvm token create`, a command for a daemon this build does not
+		// ship (U10). The admin.sock rationale is a code comment now (on the
+		// AdminSocket const) and the embedded `transport` help topic, so no
+		// refusal names a path that is not here.
+		msg := "this gvm build has no API client; unset " + EnvURL +
+			" / drop --remote and run it as root on the host"
+		if (verb == "backup" || verb == "restore") && !strings.Contains(target, "://") {
+			msg += ". If you meant the off-box backup target, that is spec.backup.remote " +
+				"in the instance YAML, not --remote"
 		}
-		tok := strings.TrimSpace(env.Getenv(EnvToken))
-		if tok == "" {
-			return Transport{}, fmt.Errorf("%w: %s names a remote gvm but no %s is set; "+
-				"mint one with `gvm token create` on that host",
-				ErrNoTransport, sourceOf(remote), EnvToken)
-		}
-		return Transport{Mode: ModeRemote, Verb: verb, URL: u, Token: secrets.New(tok)}, nil
+		return Transport{}, fmt.Errorf("%w: %s", ErrRemoteUnbuilt, msg)
 	}
 
 	if env.Geteuid() == 0 {
@@ -142,21 +153,16 @@ func Resolve(env *Env, verb string, remote string) (Transport, error) {
 		}
 	}
 
-	// Rule 4. The message names both fixes because the two audiences for it
-	// are different people: an operator on the box forgot `sudo`, and someone
-	// on a laptop has not been given a token yet.
+	// Rule 4, reworded: the API client is not in this build, so the only fix
+	// offered is becoming root. No --remote / GVM_URL / token advice is printed,
+	// because every one of those names a path this host does not have (U10).
 	switch route {
 	case RouteConsole:
 		return Transport{}, fmt.Errorf("%w: `gvm %s` needs the console socket, which is 0660 "+
-			"inside a 2750 directory. Run it as root, or set %s and %s to reach the dashboard "+
-			"(`gvm token create` mints one)", ErrNoTransport, verb, EnvURL, EnvToken)
+			"inside a 2750 directory. Run it as root: sudo gvm %s", ErrNoTransport, verb, verb)
 	default:
-		return Transport{}, fmt.Errorf("%w: `gvm %s` is a host operation. Run it as root "+
-			"(sudo gvm %s), or point it at a dashboard with --remote / %s plus %s "+
-			"(`gvm token create` mints one).\n"+
-			"gvm deliberately does not dial %s: that socket is 0660 root:gvm, so a CLI that "+
-			"used it would hand the whole root verb surface to every member of group gvm",
-			ErrNoTransport, verb, verb, EnvURL, EnvToken, AdminSocket)
+		return Transport{}, fmt.Errorf("%w: `gvm %s` is a host operation. Run it as root: "+
+			"sudo gvm %s", ErrNoTransport, verb, verb)
 	}
 }
 
@@ -176,47 +182,6 @@ func (t Transport) RequireLocal() error {
 	default:
 		return fmt.Errorf("%w: `gvm %s` resolved to the %s transport", ErrNoTransport, t.Verb, t.Mode)
 	}
-}
-
-// sourceOf names where a remote URL came from, so the fix is unambiguous.
-func sourceOf(flagValue string) string {
-	if flagValue != "" {
-		return "--remote"
-	}
-	return "$" + EnvURL
-}
-
-// parseRemote refuses a URL that would send a bearer token in clear.
-//
-// http:// to a loopback host is allowed because that is a developer with the
-// dashboard on a unix socket and a local proxy, and refusing it would push
-// them towards disabling verification somewhere worse. Everything else must be
-// https: a token is a root-equivalent credential for whatever the actor can
-// reach, and there is no useful "just this once".
-func parseRemote(raw string) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", fmt.Errorf("%w: %q is not a URL: %v", ErrNoTransport, raw, err)
-	}
-	if u.Host == "" {
-		return "", fmt.Errorf("%w: %q names no host; want https://gvm.example.com",
-			ErrNoTransport, raw)
-	}
-	switch u.Scheme {
-	case "https":
-	case "http":
-		if !isLoopback(u.Hostname()) {
-			return "", fmt.Errorf("%w: %q is plain http to %s; the bearer token would cross "+
-				"the network in clear. Use https", ErrNoTransport, raw, u.Hostname())
-		}
-	default:
-		return "", fmt.Errorf("%w: %q has scheme %q; want https", ErrNoTransport, raw, u.Scheme)
-	}
-	return strings.TrimRight(u.String(), "/"), nil
-}
-
-func isLoopback(host string) bool {
-	return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
 }
 
 // routes classifies every dispatchable verb.

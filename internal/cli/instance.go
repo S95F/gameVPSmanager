@@ -529,7 +529,15 @@ func pinnedManifest(h *HostEnv, in *spec.Instance) (*spec.Manifest, error) {
 	// recorded in the instance YAML: revision and sha256 both. A catalog whose
 	// manifest has moved since create is refused by name rather than silently
 	// used, which is the same refusal the runner makes at start.
-	cat, diags, cerr := h.catalog().Load(in.Spec.Game, overrideAuth(false))
+	//
+	// The authorizer is keyed on the recorded pin, not DenyOverrides: an
+	// instance created with `gvm create --unapproved-override` recorded the
+	// override's own bytes, so the first apply accepts exactly that /etc/gvm/
+	// games file and nothing else. apply itself gets NO flag — it re-authorises
+	// no new bytes, so the D-17 pin and the D-19 approval gate both hold (U11).
+	// An override edited since create has a different sha, is skipped with that
+	// reason, and the Verify below fails naming the mismatch.
+	cat, diags, cerr := h.catalog().Load(in.Spec.Game, spec.PinAuthorizer{SHA256: in.Spec.Manifest.SHA256})
 	if cerr != nil {
 		return nil, fmt.Errorf("%s has no pinned manifest and %s could not be loaded from the "+
 			"catalog either: %w", spec.PinPath(dir), in.Spec.Game, cerr)
@@ -538,11 +546,29 @@ func pinnedManifest(h *HostEnv, in *spec.Instance) (*spec.Manifest, error) {
 		return nil, fmt.Errorf("%s does not validate:\n%s", in.Spec.Game, diags.Errors())
 	}
 	if err := in.Spec.Manifest.Verify(cat); err != nil {
+		if skip := overrideSkipNote(diags); skip != "" {
+			return nil, fmt.Errorf("%s records no pinned manifest bytes and the /etc/gvm/games "+
+				"override for %s was %s, so the pin in %s cannot be satisfied: %w",
+				in.Metadata.Name, in.Spec.Game, skip,
+				instance.PathsFor(in.Metadata.Name).Spec, err)
+		}
 		return nil, fmt.Errorf("%s records no pinned manifest bytes and the catalog's %s does "+
 			"not match the pin in %s: %w", in.Metadata.Name, in.Spec.Game,
 			instance.PathsFor(in.Metadata.Name).Spec, err)
 	}
 	return cat, nil
+}
+
+// overrideSkipNote pulls a skipped-override reason out of a catalog load's
+// warnings, so an apply that falls back to a lower layer can say the override
+// was the thing that did not match rather than reporting a bare pin mismatch.
+func overrideSkipNote(diags spec.Diags) string {
+	for _, d := range diags {
+		if strings.Contains(d.Msg, "sha256 differs from the pin") {
+			return "skipped (" + d.Msg + ")"
+		}
+	}
+	return ""
 }
 
 // oneInstance is the shared "exactly one instance name" check.

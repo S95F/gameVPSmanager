@@ -417,7 +417,14 @@ func (d *contentDiff) print(w io.Writer, v *contentView, p *content.Plan, only s
 			needs(n), shortDuration(v.Schema.Acquisition.BootTimeout))
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  apply:  gvm content sync %s\n", v.Name)
+	// A diff that is refusing (unaccounted items) prints no apply line at all:
+	// there is nothing to apply, and this build cannot apply it anyway. When the
+	// plan is clean, the line says plainly that applying is not in this build
+	// and points at the read-only dry run (U3).
+	if len(p.Unaccounted) == 0 {
+		fmt.Fprintf(w, "  applying mod changes is not available in this build; "+
+			"gvm content sync %s --dry-run shows what it would do\n", v.Name)
+	}
 	for _, warn := range d.Warnings {
 		fmt.Fprintf(w, "\n  note: %s\n", warn)
 	}

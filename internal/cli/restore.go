@@ -241,7 +241,7 @@ func restoreDrift(h *HostEnv, name string, m *archive.Manifest, ro restoreOption
 	return fmt.Errorf("%s was taken against game manifest %s and %s is pinned to %s.\n"+
 		"  The shutdown ladder, the config keys and the world paths can all have moved "+
 		"between revisions, so gvm would be applying the new ones to the old world.\n"+
-		"  `gvm game diff %s` shows what changed; --accept-manifest-drift proceeds anyway",
+		"  `gvm game which %s` shows the pinned manifest; --accept-manifest-drift proceeds anyway",
 		m.Instance.Name, shortSHA(got), name, shortSHA(want), in.Spec.Game)
 }
 

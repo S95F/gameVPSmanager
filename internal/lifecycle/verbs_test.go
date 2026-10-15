@@ -156,7 +156,7 @@ func TestAllowedRefusesWhatWouldMakeThingsWorse(t *testing.T) {
 			// Not forceable: the runner compares the pin itself and exits 64,
 			// so --force would swap a clear message for a unit stuck in
 			// "restart prevented".
-			refuse: true, force: false, hint: "gvm manifest upgrade pz-main --dry",
+			refuse: true, force: false, hint: "not available in this build",
 		},
 		{
 			name: "start something never applied", verb: VerbStart,
@@ -179,7 +179,7 @@ func TestAllowedRefusesWhatWouldMakeThingsWorse(t *testing.T) {
 				o.Status = nil
 				o.Installed = No
 			},
-			refuse: true, force: true, hint: "gvm install pz-main",
+			refuse: true, force: true, hint: "not available in this build",
 		},
 		{
 			// The sentinel is missing because the install is missing, but

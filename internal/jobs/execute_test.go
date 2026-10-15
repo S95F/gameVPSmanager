@@ -96,7 +96,7 @@ func TestAnAdoptedInstanceIsNeverStoppedForABinaryUpdateItMayNotPerform(t *testi
 		t.Error("an adopted instance ran app_update")
 	}
 	for _, want := range []string{"18452901 -> 18461233", "managed_install: false",
-		"gvm instance promote pz-main"} {
+		"not available in this build"} {
 		if !strings.Contains(jr.SkipReason, want) {
 			t.Errorf("the reason does not contain %q:\n%s", want, jr.SkipReason)
 		}

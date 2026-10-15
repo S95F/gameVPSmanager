@@ -145,8 +145,8 @@ func printUpdateDiff(w io.Writer, name string, managed bool, names, stops []stri
 		// a summary field: gvm may write nothing into that tree, so a newer
 		// build is REPORTED and never installed.
 		fmt.Fprintf(w, "  %s is adopted (managed_install: false): a newer Steam build is "+
-			"reported as update_available and never installed. `gvm instance promote %s` "+
-			"changes that\n", name, name)
+			"reported as update_available and never installed. Taking over binary updates for "+
+			"an adopted instance is not available in this build\n", name)
 	}
 }
 

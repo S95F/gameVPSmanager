@@ -251,8 +251,8 @@ func TestContentDiffIsThreeWay(t *testing.T) {
 	if !strings.Contains(out, "impact: download_cycle") {
 		t.Errorf("the impact line is wrong; one item is declared and not on disk:\n%s", out)
 	}
-	if !strings.Contains(out, "apply:  gvm content sync pz-main") {
-		t.Errorf("the apply line is missing:\n%s", out)
+	if !strings.Contains(out, "applying mod changes is not available in this build") {
+		t.Errorf("the diff does not say applying is unavailable in this build:\n%s", out)
 	}
 }
 

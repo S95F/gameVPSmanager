@@ -330,9 +330,9 @@ func (p *Provider) Plan(ctx context.Context, c *provider.Ctx, in provider.Intent
 	case provider.IntentInstall, provider.IntentRepair:
 		if !c.ManagedInstall {
 			return nil, fmt.Errorf("%w: %s is adopted, so gvm never runs app_update or validate "+
-				"against %s. `gvm instance promote %s` is what changes that; a %s would overwrite "+
-				"files that predate gvm, including any the operator customised",
-				provider.ErrAdopted, c.Name, c.Paths.Install.Path(), c.Name, in)
+				"against %s. Taking over an adopted install is not available in this build; a %s "+
+				"would overwrite files that predate gvm, including any the operator customised",
+				provider.ErrAdopted, c.Name, c.Paths.Install.Path(), in)
 		}
 	}
 
@@ -385,8 +385,8 @@ func (p *Provider) Plan(ctx context.Context, c *provider.Ctx, in provider.Intent
 	// from section 13.5.
 	if !c.ManagedInstall {
 		pl := provider.EmptyPlan(in, fmt.Sprintf(
-			"%s; %s is adopted (managed_install: false). Allow gvm to update it with: "+
-				"gvm instance promote %s", check.Summary(), c.Name, c.Name))
+			"%s; %s is adopted (managed_install: false). Taking over binary updates for an "+
+				"adopted instance is not available in this build", check.Summary(), c.Name))
 		// The one place UpdateAvailable is true. Without it the pipeline sees
 		// an empty plan and records `skipped` with no `update_available`, and
 		// the operator is never told that the nightly they had before adoption

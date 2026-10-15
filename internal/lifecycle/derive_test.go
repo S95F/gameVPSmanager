@@ -81,7 +81,7 @@ func deriveCases() []deriveCase {
 				o.Pin.Reason = "pinned revision 7 sha256 1b40c9de, got revision 8 sha256 22aa9911"
 			},
 			phase: PhaseFailed, rule: RulePinMismatch,
-			hint:   "gvm manifest upgrade pz-main --dry",
+			hint:   "not available in this build",
 			reason: "revision 8",
 		},
 		{
@@ -278,7 +278,7 @@ func deriveCases() []deriveCase {
 				o.Installed = No
 			},
 			phase: PhaseProvisioning, rule: RuleNotInstalled,
-			hint: "gvm install pz-main",
+			hint: "not available in this build",
 		},
 		{
 			name: "an operator stopped it",
@@ -309,7 +309,7 @@ func deriveCases() []deriveCase {
 				o.Status = nil
 			},
 			phase: PhaseStopped, rule: RuleDisabled,
-			hint: "gvm enable pz-main",
+			hint: "sudo gvm apply pz-main",
 		},
 		{
 			name: "inactive, enabled and nothing holding it",

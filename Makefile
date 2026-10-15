@@ -72,6 +72,10 @@ fmt-check: ## Fail if anything is unformatted (CI gate)
 tidy: ## go mod tidy
 	$(GO) mod tidy
 
+.PHONY: docs
+docs: ## Check user docs stay in sync with the build (hints resolve, README table)
+	$(GO) test ./internal/cli -run 'TestHintsResolve|TestReadmeUnbuiltMatchesRegistry|TestAvailabilityMatchesBehaviour' -count=1
+
 .PHONY: shellcheck
 shellcheck: ## Lint the vendored bash suite, if shellcheck is installed
 	@command -v shellcheck >/dev/null 2>&1 \

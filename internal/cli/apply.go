@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/S95F/gameVPSmanager/internal/archive"
+	"github.com/S95F/gameVPSmanager/internal/jobs"
 	"github.com/S95F/gameVPSmanager/internal/reconcile"
 	"github.com/S95F/gameVPSmanager/internal/spec"
 	"github.com/S95F/gameVPSmanager/internal/version"
@@ -75,6 +76,19 @@ type planned struct {
 	// UncheckedSchedules records that the OnCalendar expressions were not put
 	// past systemd-analyze on this host.
 	UncheckedSchedules bool
+	// UnrunnableJobs are the instance's timers whose KIND this build cannot
+	// run: the drop-in and the timer are installed and armed, and the nightly
+	// would fail every time it fired. apply says so plainly rather than letting
+	// an operator discover it at 05:03, because the timer being present is not
+	// the same as the work happening (U3).
+	UnrunnableJobs []unrunnableJob
+}
+
+// unrunnableJob is one timer apply will install against a kind with no engine.
+type unrunnableJob struct {
+	Job  string
+	Kind string
+	Why  string
 }
 
 // buildApply loads the instance and its PINNED manifest and renders the plan.
@@ -130,6 +144,17 @@ func buildApply(ctx context.Context, h *HostEnv, t Transport, name string, diffO
 			return nil, err
 		}
 		out.UncheckedSchedules = unchecked
+
+		// A timer whose kind this build cannot run is installed all the same —
+		// apply reconciles the host with the spec, and the spec declares it —
+		// but the printer must not let it read as work that will happen.
+		for _, job := range sortedJobNames(in) {
+			kind, _ := jobs.KindForAction(in.Spec.Jobs[job].Action)
+			if ok, why := engineWired(kind, in, m); !ok {
+				out.UnrunnableJobs = append(out.UnrunnableJobs,
+					unrunnableJob{Job: job, Kind: string(kind), Why: why})
+			}
+		}
 	}
 	return out, nil
 }

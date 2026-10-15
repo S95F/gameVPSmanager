@@ -38,6 +38,10 @@ var (
 	// /etc/gvm/games override with no recorded sha256 approval (D-19).
 	ErrOverrideUnapproved = errors.New("manifest override is not approved")
 
+	// ErrOverrideShaMismatch is what PinAuthorizer returns for an override whose
+	// bytes are not the ones a pin recorded: the file changed after create.
+	ErrOverrideShaMismatch = errors.New("manifest override does not match the pin")
+
 	// ErrBadGameID means the id could not name a manifest file.
 	ErrBadGameID = errors.New("invalid game id")
 
@@ -80,6 +84,24 @@ type DenyOverrides struct{}
 // ApproveOverride always refuses.
 func (DenyOverrides) ApproveOverride(id, sha string) error {
 	return fmt.Errorf("%w: %s (sha256 %s)", ErrOverrideUnapproved, id, shortSHA(sha))
+}
+
+// PinAuthorizer approves exactly the override bytes a pin already recorded, and
+// no others. It exists for the first `gvm apply` after `gvm create
+// --unapproved-override`: root authorised those exact bytes at create, the pin
+// in the instance YAML records their sha256, and apply re-authorises nothing
+// new — an override edited after create has a different sha and is refused, so
+// the D-17 pin and the D-19 approval gate are both intact (U11). A zero SHA256
+// approves nothing.
+type PinAuthorizer struct{ SHA256 string }
+
+// ApproveOverride approves iff the override's sha256 equals the pin's.
+func (p PinAuthorizer) ApproveOverride(_, sha string) error {
+	if p.SHA256 != "" && strings.EqualFold(sha, p.SHA256) {
+		return nil
+	}
+	return fmt.Errorf("%w: sha256 %s differs from the pin; the file changed after create",
+		ErrOverrideShaMismatch, shortSHA(sha))
 }
 
 // Source is one place manifests come from. FS is rooted at the directory that
@@ -246,7 +268,9 @@ func (c *Catalog) Resolve(id string, auth OverrideAuthorizer) ([]Candidate, Diag
 					File: cd.Ref, Sev: SevWarning,
 					Msg: fmt.Sprintf("override %s: %s; using the next layer instead",
 						shortSHA(cd.SHA256), cd.Skipped),
-					Fix: "`gvm game approve " + id + "` after reviewing it, or pass --unapproved-override",
+					Fix: "approving a custom manifest is not available in this build; run " +
+						"`sudo gvm create <name> --game " + id + " --unapproved-override` to " +
+						"authorise these exact bytes for one instance",
 				})
 				continue
 			}
@@ -421,6 +445,9 @@ func shortSHA(s string) string {
 func overrideSkipReason(err error) string {
 	if errors.Is(err, ErrOverrideUnapproved) {
 		return "not approved"
+	}
+	if errors.Is(err, ErrOverrideShaMismatch) {
+		return "sha256 differs from the pin: the file changed after create"
 	}
 	// The approval check itself failed — Postgres down, socket gone. D-19 wants
 	// the box to keep booting its games off the packaged manifest, so this is

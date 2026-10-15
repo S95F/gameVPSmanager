@@ -21,16 +21,17 @@ import (
 	"io/fs"
 	"path"
 
+	"github.com/S95F/gameVPSmanager/internal/avail"
 	"github.com/S95F/gameVPSmanager/internal/spec"
 )
 
 // ErrProviderUnbuilt is `gvm install` reaching the seam that is not here yet.
 //
-// It is its own sentinel, and deliberately NOT ErrNotImplemented: the command
-// is built, its preflight ran and reported, and what is missing is one
-// downstream package. A script distinguishing the two is distinguishing
-// "gvm cannot do this at all" from "gvm cannot do this yet".
-var ErrProviderUnbuilt = errors.New("gvm: the provider seam is not built in this release")
+// It is built on avail.New so it matches avail.ErrUnavailable and exits 3 like
+// every other "not in this build" path — the command is built, its preflight
+// ran and reported, and what is missing is one downstream engine. errors.Is
+// still distinguishes it from the other sentinels for the call sites that care.
+var ErrProviderUnbuilt = avail.New("the engine that installs game files is not in this build")
 
 type installOptions struct {
 	Name   string

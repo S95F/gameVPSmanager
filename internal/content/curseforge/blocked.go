@@ -119,13 +119,13 @@ func fileStem(name string) string {
 
 // dropBoxPath returns the standard drop-box path for an instance.
 // The operator drops manually-obtained JARs here; gvm will pick them up on
-// the next `gvm content resolve-blocked` run.
+// the next `gvm content blocked` run.
 func dropBoxPath(instanceName string) string {
 	return filepath.Join("/var/lib/gvm/instances", instanceName, "blocked-mods")
 }
 
 // ErrNoDropBox is returned when the drop-box directory does not exist.
-var ErrNoDropBox = fmt.Errorf("curseforge: drop-box directory not found; create it or run gvm content resolve-blocked")
+var ErrNoDropBox = fmt.Errorf("curseforge: drop-box directory not found; create it or run gvm content blocked")
 
 // _ is a compile-time assertion that fs.DirEntry is used.
 var _ fs.DirEntry

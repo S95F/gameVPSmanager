@@ -539,12 +539,21 @@ func jobRows(h *HostEnv, only string) ([]jobRow, error) {
 	add := func(r jobRow, kind lifecycle.JobKind) {
 		r.Kind = string(kind)
 		if runner, err := jobs.Lookup(kind); err == nil {
-			r.Runnable, r.Stops = true, runner.Stops
+			r.Stops = runner.Stops
 			if r.Policy == "" {
 				r.Policy = string(runner.Policy)
 			}
+		}
+		// Whether a timer would actually DO anything is engineWired's call, not
+		// jobs.Lookup's: the update, content_sync and rebuild kinds all have a
+		// runner registered, but their engine (the provider context, the
+		// content apply adapter) is not in this build, so a nightly that fires
+		// one fails every night. engineWired is the one predicate that knows,
+		// and it is the same answer `gvm apply` and the run itself give.
+		if ok, why := engineWired(kind, nil, nil); ok {
+			r.Runnable = true
 		} else {
-			r.Why = err.Error()
+			r.Why = "cannot run in this build: " + why
 		}
 		out = append(out, r)
 	}

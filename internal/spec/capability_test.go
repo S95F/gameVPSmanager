@@ -272,15 +272,25 @@ func TestAnAdoptedProviderCannotCheckForUpdates(t *testing.T) {
 	}
 }
 
-// TestAServerOwnedConfigIsOnlyEditableWhileStopped falls out of section 8.4:
-// the game rewrites the file when it stops, so an edit made while it runs is
-// silently discarded.
-func TestAServerOwnedConfigIsOnlyEditableWhileStopped(t *testing.T) {
-	if got := capOf(t, pzLike(), managed(), Live{State: StateReady}, CapConfigEdit); got.Available {
-		t.Errorf("editing a server-owned file while it runs loses the edit: %+v", got)
-	}
-	if got := capOf(t, pzLike(), managed(), Live{State: StateInactive}, CapConfigEdit); !got.Available {
-		t.Errorf("a stopped server's config is editable: %+v", got)
+// TestConfigEditIsUnavailableUntilTheSettingsTab: a game with an editable
+// config file supports config.edit, but the dashboard settings editor is not
+// in this build, so the capability is reported unavailable with the manual
+// route (game-catalog-config-8). A dashboard must render the Config button
+// disabled rather than enabled over an editor that is not there. The
+// owner:server stop-first nuance returns when the editor lands (Phase 49).
+func TestConfigEditIsUnavailableUntilTheSettingsTab(t *testing.T) {
+	for _, state := range []string{StateReady, StateInactive} {
+		got := capOf(t, pzLike(), managed(), Live{State: state}, CapConfigEdit)
+		if !got.Supported {
+			t.Errorf("state %q: a game with a config file supports config.edit: %+v", state, got)
+		}
+		if got.Available {
+			t.Errorf("state %q: config.edit is available with no settings editor in this build: %+v",
+				state, got)
+		}
+		if !strings.Contains(got.Reason, "not available in this build") {
+			t.Errorf("state %q: the reason does not say the editor is unavailable: %+v", state, got)
+		}
 	}
 }
 

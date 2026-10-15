@@ -24,6 +24,7 @@ import (
 
 	"github.com/S95F/gameVPSmanager/games"
 	"github.com/S95F/gameVPSmanager/internal/gamecfg"
+	"github.com/S95F/gameVPSmanager/internal/hook"
 	"github.com/S95F/gameVPSmanager/internal/spec"
 )
 
@@ -321,8 +322,16 @@ func checkLines(m *spec.Manifest, ix *spec.NodeIndex, diags spec.Diags) []string
 	out = append(out, mark(!failed("spec.config_files", "spec.content"), files))
 
 	if hooks := allHooks(s.Hooks); len(hooks) > 0 {
-		out = append(out, mark(!failed("spec.hooks"), fmt.Sprintf("%s %s (%s)",
-			plural(len(hooks), "hook"), resolves(len(hooks)), strings.Join(hooks, ", "))))
+		if failed("spec.hooks") {
+			out = append(out, mark(false, fmt.Sprintf("%s %s (%s)",
+				plural(len(hooks), "hook"), resolves(len(hooks)), strings.Join(hooks, ", "))))
+		} else {
+			// Resolve against the closed registry, but this build does not RUN
+			// hooks (that lands with config_files), so the line is a note, not a
+			// tick an operator would read as "these will fire".
+			out = append(out, fmt.Sprintf("! %s %s but this build does not run them (%s)",
+				plural(len(hooks), "hook"), resolves(len(hooks)), strings.Join(hooks, ", ")))
+		}
 	}
 	if n := len(s.Validators); n > 0 {
 		out = append(out, mark(!failed("spec.validators"), fmt.Sprintf("%s %s (%s)",
@@ -569,15 +578,11 @@ func runGameHooks(env *Env, args []string) error {
 
 	w := env.Stdout
 	fmt.Fprint(w, "\n  Hooks — the closed registry spec.hooks may name\n")
-	hooks := spec.HookNames()
-	names := make([]string, 0, len(hooks))
-	for n := range hooks {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	fmt.Fprint(w, "  (registered and documented; this build does not RUN hooks — that lands with\n"+
+		"  config_files)\n")
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	for _, n := range names {
-		fmt.Fprintf(tw, "    %s\t%s\n", n, supportLabel(hooks[n]))
+	for _, h := range hook.All() {
+		fmt.Fprintf(tw, "    %s\t%s\tregistered — not run by this build\n", h.Name(), h.Doc())
 	}
 	_ = tw.Flush()
 
@@ -592,20 +597,6 @@ func runGameHooks(env *Env, args []string) error {
 	fmt.Fprint(w, "\n  A name outside these lists is a load-time error, which is what keeps\n"+
 		"  `hooks: [something.clever]` from being a plugin system (D-21).\n")
 	return nil
-}
-
-// supportLabel deliberately does not name a release. A manifest that says
-// "planned for v1.1" in three places will eventually say three different
-// things; the one promise gvm makes here is that the name is real and the
-// behaviour is not there yet.
-func supportLabel(s spec.Support) string {
-	switch s {
-	case spec.SupportImplemented:
-		return "ready"
-	case spec.SupportPlanned:
-		return "planned — loads and validates, the capability renders unavailable"
-	}
-	return "unknown"
 }
 
 // flagErr swallows the error -h produces, since the usage it printed IS the

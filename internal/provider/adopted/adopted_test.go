@@ -75,7 +75,7 @@ func TestPlanIsAlwaysEmptyAndNeverDestructive(t *testing.T) {
 			}
 			// The operator's next move has to be in the sentence: adoption is
 			// a state they can leave, and nothing else in the output says how.
-			if !strings.Contains(pl.Reason, "gvm instance promote pz-main") {
+			if !strings.Contains(pl.Reason, "not available in this build") {
 				t.Errorf("the reason does not say how to change it: %q", pl.Reason)
 			}
 			if err := pl.Authorize(false); err != nil {

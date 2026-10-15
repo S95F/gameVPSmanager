@@ -7,6 +7,8 @@ import (
 	"fmt"
 
 	"github.com/S95F/gameVPSmanager/internal/adopt"
+	"github.com/S95F/gameVPSmanager/internal/avail"
+	"github.com/S95F/gameVPSmanager/internal/version"
 )
 
 func runAdopt(ctx context.Context, env *Env, args []string) error {
@@ -20,12 +22,13 @@ func runAdopt(ctx context.Context, env *Env, args []string) error {
 	switch sub {
 	case "discover":
 		return runAdoptDiscover(ctx, env, rest)
-	case "cutover":
-		fmt.Fprintln(env.Stderr, "adopt cutover: not yet implemented in this phase (requires Linux)")
-		return fmt.Errorf("adopt cutover: not yet implemented")
-	case "rollback":
-		fmt.Fprintln(env.Stderr, "adopt rollback: run the rollback script printed by cutover")
-		return fmt.Errorf("adopt rollback: not yet implemented")
+	case "cutover", "rollback":
+		// Honest, and safe: cutover and rollback are not in this build, so there
+		// is no reference to a rollback script no cutover has written, and no
+		// "(requires Linux)" — nothing on this host was touched either way. The
+		// live server stays exactly as it was.
+		return avail.New(fmt.Sprintf("adopt %s is not in gvm %s; nothing on this host was "+
+			"changed — keep running the existing service as before", sub, version.Version))
 	case "finalize":
 		return runAdoptFinalize(ctx, env, rest)
 	default:

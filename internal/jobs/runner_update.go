@@ -107,8 +107,8 @@ func Decide(instanceName string, build, content Diff, managedInstall bool) Decis
 			Skip:            true,
 			UpdateAvailable: true,
 			Reason: fmt.Sprintf("binary update %s -> %s available; %s is adopted "+
-				"(managed_install: false). Allow gvm to update it with: "+
-				"gvm instance promote %s", build.From, build.To, instanceName, instanceName),
+				"(managed_install: false). Taking over binary updates for an adopted "+
+				"instance is not available in this build", build.From, build.To, instanceName),
 		}
 	}
 
