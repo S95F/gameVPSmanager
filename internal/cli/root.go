@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	"github.com/S95F/gameVPSmanager/internal/avail"
-	"github.com/S95F/gameVPSmanager/internal/version"
 )
 
 // errHelpShown is returned by a parse*Args (through flagErr) when the operator
@@ -466,11 +465,6 @@ func runFirewall(_ context.Context, env *Env, args []string) error {
 		return errHelpShown
 	}
 	return ErrNotImplemented
-}
-
-func runVersion(_ context.Context, env *Env, _ []string) error {
-	fmt.Fprintln(env.Stdout, version.String())
-	return nil
 }
 
 func runHelp(ctx context.Context, env *Env, args []string) error {
