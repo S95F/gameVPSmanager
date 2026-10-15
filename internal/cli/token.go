@@ -6,12 +6,17 @@ import (
 	"fmt"
 )
 
-func runToken(ctx context.Context, env *Env, args []string) error {
+func tokenGroup() subGroup {
 	return subGroup{Verb: "token", Subs: []subcmd{
-		{Name: "create", Summary: "mint an API token", Run: runTokenCreate},
+		{Name: "create", Summary: "mint an API token", Run: runTokenCreate,
+			Examples: []string{"gvm token create --name ci-bot --role operator"}},
 		{Name: "list", Summary: "list API tokens", Run: runTokenList},
 		{Name: "revoke", Summary: "revoke an API token", Run: runTokenRevoke},
-	}}.dispatch(ctx, env, args)
+	}}
+}
+
+func runToken(ctx context.Context, env *Env, args []string) error {
+	return tokenGroup().dispatch(ctx, env, args)
 }
 
 func runTokenCreate(_ context.Context, env *Env, args []string) error {

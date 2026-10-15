@@ -5,13 +5,17 @@ import (
 	"flag"
 )
 
-func runSecret(ctx context.Context, env *Env, args []string) error {
+func secretGroup() subGroup {
 	return subGroup{Verb: "secret", Subs: []subcmd{
 		{Name: "list", Summary: "list instance secret names", Run: runSecretList},
 		{Name: "set", Summary: "set an instance secret", Run: runSecretSet},
 		{Name: "rotate", Summary: "rotate an instance secret", Run: runSecretRotate},
 		{Name: "show-path", Summary: "print where a secret is stored", Run: runSecretShowPath},
-	}}.dispatch(ctx, env, args)
+	}}
+}
+
+func runSecret(ctx context.Context, env *Env, args []string) error {
+	return secretGroup().dispatch(ctx, env, args)
 }
 
 // The secret store is not in this build (it lands in a later release), so every

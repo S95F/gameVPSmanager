@@ -9,19 +9,24 @@ import (
 	"github.com/S95F/gameVPSmanager/internal/avail"
 )
 
-// runUser dispatches gvm user subcommands.
-// All mutating operations require gvmd (privileged verb gateway).
-func runUser(ctx context.Context, env *Env, args []string) error {
+// userGroup is the `gvm user` subcommand table. All mutating operations
+// require gvmd (the privileged verb gateway).
+func userGroup() subGroup {
 	return subGroup{Verb: "user", Subs: []subcmd{
 		{Name: "list", Summary: "list dashboard users", Run: runUserList},
-		{Name: "create", Summary: "create a dashboard user", Run: runUserCreate},
+		{Name: "create", Summary: "create a dashboard user", Run: runUserCreate,
+			Examples: []string{"gvm user create --email ops@example.com --role operator"}},
 		{Name: "show", Summary: "show one user", Run: runUserShow},
 		{Name: "set-role", Summary: "set a user's global role", Run: runUserSetRole},
 		{Name: "set-password", Summary: "set a user's password", Run: runUserSetPassword},
 		{Name: "disable", Summary: "disable a user", Run: runUserDisable},
 		{Name: "enable", Summary: "enable a user", Run: runUserEnable},
 		{Name: "reset-totp", Summary: "clear a user's TOTP enrolment", Run: runUserResetTOTP},
-	}}.dispatch(ctx, env, args)
+	}}
+}
+
+func runUser(ctx context.Context, env *Env, args []string) error {
+	return userGroup().dispatch(ctx, env, args)
 }
 
 func runUserList(_ context.Context, env *Env, args []string) error {

@@ -12,15 +12,20 @@ import (
 	"github.com/S95F/gameVPSmanager/internal/version"
 )
 
-func runAdopt(ctx context.Context, env *Env, args []string) error {
+func adoptGroup() subGroup {
 	return subGroup{Verb: "adopt", Subs: []subcmd{
-		{Name: "discover", Summary: "inspect an existing server install", Run: runAdoptDiscover},
+		{Name: "discover", Summary: "inspect an existing server install", Run: runAdoptDiscover,
+			Examples: []string{"gvm adopt discover --unit zomboid"}},
 		{Name: "cutover", Summary: "switch a legacy service over to gvm",
 			Avail: avail.Unbuilt("not in this build"), Run: runAdoptUnbuilt("cutover")},
 		{Name: "rollback", Summary: "revert a cutover to the legacy service",
 			Avail: avail.Unbuilt("not in this build"), Run: runAdoptUnbuilt("rollback")},
 		{Name: "finalize", Summary: "remove the legacy unit after a cutover", Run: runAdoptFinalize},
-	}}.dispatch(ctx, env, args)
+	}}
+}
+
+func runAdopt(ctx context.Context, env *Env, args []string) error {
+	return adoptGroup().dispatch(ctx, env, args)
 }
 
 // runAdoptUnbuilt is the Run for a cutover/rollback that this build does not

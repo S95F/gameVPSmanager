@@ -73,8 +73,12 @@ tidy: ## go mod tidy
 	$(GO) mod tidy
 
 .PHONY: docs
-docs: ## Check user docs stay in sync with the build (hints resolve, README table)
-	$(GO) test ./internal/cli -run 'TestHintsResolve|TestReadmeUnbuiltMatchesRegistry|TestAvailabilityMatchesBehaviour' -count=1
+docs: ## Check user docs stay in sync with the build (hints resolve, README table, CLI reference)
+	$(GO) test ./internal/cli -run 'TestHintsResolve|TestReadmeUnbuiltMatchesRegistry|TestAvailabilityMatchesBehaviour|TestCLIReferenceIsUpToDate' -count=1
+
+.PHONY: docs-cli
+docs-cli: ## Regenerate docs/cli-reference.md from the dispatch tables
+	$(GO) run ./tools/docscli
 
 .PHONY: shellcheck
 shellcheck: ## Lint the vendored bash suite, if shellcheck is installed

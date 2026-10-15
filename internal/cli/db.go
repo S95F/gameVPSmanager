@@ -32,14 +32,19 @@ const dbConnTimeout = 2 * time.Second
 //	version       — print the SchemaVersion constant
 //	replay-spool  — insert queued spool records into audit_log
 //	check-grants  — verify gvm_web cannot read restricted columns
-func runDB(ctx context.Context, env *Env, args []string) error {
+func dbGroup() subGroup {
 	return subGroup{Verb: "db", Subs: []subcmd{
 		{Name: "migrate", Summary: "apply pending schema migrations", Run: runDBMigrate},
-		{Name: "status", Summary: "print the live schema version vs this binary", Run: runDBStatus},
+		{Name: "status", Summary: "print the live schema version vs this binary", Run: runDBStatus,
+			Examples: []string{"gvm db status"}},
 		{Name: "version", Summary: "print the schema version this binary requires", Run: runDBVersion},
 		{Name: "replay-spool", Summary: "insert queued spool records into the audit log", Run: runDBReplaySpool},
 		{Name: "check-grants", Summary: "verify the web role cannot read restricted columns", Run: runDBCheckGrants},
-	}}.dispatch(ctx, env, args)
+	}}
+}
+
+func runDB(ctx context.Context, env *Env, args []string) error {
+	return dbGroup().dispatch(ctx, env, args)
 }
 
 func runDBVersion(_ context.Context, env *Env, _ []string) error {
