@@ -36,7 +36,7 @@ const (
 	// may resolve a program through the environment: the bridge runs as the
 	// instance user, and that user's PATH is not gvm's to trust.
 	DefaultScreenPath = "/usr/bin/screen"
-	DefaultGvmPath    = "/usr/local/bin/gvm"
+	DefaultGvmPath    = "/usr/bin/gvm"
 )
 
 // ScreenCompat is one instance's bridge.

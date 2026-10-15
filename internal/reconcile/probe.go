@@ -23,11 +23,11 @@ var ErrProbe = errors.New("reconcile: the sandbox blocks a write the game needs"
 //
 // It is the packaged location rather than os.Executable() on purpose. The
 // probe has to run the binary the SERVICE will run -- the one in
-// ExecStart=/usr/local/bin/gvm -- because that is the file the sandbox's
+// ExecStart=/usr/bin/gvm -- because that is the file the sandbox's
 // ProtectSystem= and NoNewPrivileges= will apply to. Probing with a binary
 // sitting in an operator's home directory would test a path the unit never
 // takes.
-const ProbeBinary = "/usr/local/bin/gvm"
+const ProbeBinary = "/usr/bin/gvm"
 
 // ProbeFilePrefix is the name `gvm probe-write` creates in each directory.
 //

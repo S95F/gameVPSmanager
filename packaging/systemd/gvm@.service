@@ -20,8 +20,8 @@ StartLimitBurst=5
 Type=notify
 NotifyAccess=main
 Slice=gvm.slice
-ExecStartPre=+/usr/local/bin/gvm run-prepare %i
-ExecStart=/usr/local/bin/gvm run %i
+ExecStartPre=+/usr/bin/gvm run-prepare %i
+ExecStart=/usr/bin/gvm run %i
 
 # There is deliberately NO ExecStop=. systemd's own manual: it is "usually not
 # sufficient to specify a command ... that only asks the service to terminate

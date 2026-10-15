@@ -13,7 +13,7 @@ Wants=network-online.target
 Type=oneshot
 User=root
 Slice=gvm-jobs.slice
-ExecStart=/usr/local/bin/gvm job run %i
+ExecStart=/usr/bin/gvm job run %i
 
 # Finite (D-12). 4h is comfortably above the legitimate worst case (a 3600s PZ
 # workshop boot inside a rebuild) and far below "forever".
