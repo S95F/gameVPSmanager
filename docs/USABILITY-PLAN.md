@@ -232,7 +232,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 31 🟡 | Game files: install, update and repair | `gvm install` works; update timers either work or say they can't | G | L | 26, 28, 30 |
 | 32 ◆ 🟡 | Prove a game boots before it is offered | `gvm game try --scratch`; boot ledger; Valheim, Palworld, Paper, PZ verified | G | XL | 31 |
 | 33 ◆ 🟡 | Players know how to connect | join line; SSH-safe `gvm firewall plan`; `gvm ports` names owners | N | L | 24, 29 |
-| 34 | First server, start to finish · **J1** | progress while booting; `gvm up`; first public release | S | L | 21, 32, 33 |
+| 34 🟡 | First server, start to finish · **J1** | progress while booting; `gvm up`; first public release | S | L | 21, 32, 33 |
 | **J2** | **Week to week** | | | | |
 | 35 | Upgrade gvm without stopping the worlds | N-1 skew rule; restart-pending; `restart --pending` | I | L | 34 |
 | 36 | Backup health you can see | snapshot line, GiB remedies, BACKUP doctor checks | B | M | 21, 24 |
@@ -1957,6 +1957,23 @@ The one piece that needs no `/proc`, no `ufw` and no manifest data is in. `make 
 - **Rule 5:** `up` never overwrites, and the journey's destroy archives first.
 - **Rule 1:** the journey runs with no Postgres installed.
 - **Rule 7:** the journey never enables ufw. The operator pastes `ufw allow` lines that admit SSH first.
+
+### 🟡 Partial — `--budget` removal (item 3) landed 2026-10-16; the start progress UI, failure diagnosis, `gvm up`, the quickstart finalisation and the VM golden-journey CI remain
+
+The one item that needs no install engine, no live VM and no `status.json` stream is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 3 — `--budget` is gone (cli-ergonomics-10, day2-ops-8).** The flag is removed from `start`, `stop` and `restart`. Passing it is a usage error (exit 2) whose message points at where the ladder's bound actually lives — `spec.shutdown.budget` in the instance's YAML, applied with `gvm apply` — instead of being silently accepted and ignored (stop/restart) or meaningless (start, which has no ladder). `budget_sec` is no longer written to any stop's audit row: the manager never populates it and the shutdown ladder always takes its bound from `spec.shutdown.budget`. The flag is hidden from the lifecycle usage block, and the allowlist keeps `budget_sec` only as a reserved vocabulary word. `TestBudgetFlagIsGoneAndSaysWhereToSetIt` and `TestLifecycleUsageDoesNotMentionBudget` (cli), and the amended `TestTheStopRowCanSayHowTheWorldWasSaved` (lifecycle), prove it. Green today. The DoD line "`sudo gvm stop x --budget 30` … exits 2, and the audit spool has no `budget_sec` field for any stop" is covered.
+
+**Remaining (a dedicated session should take these — install engine, a live VM, the status stream):**
+- **Item 1 — start/restart progress.** The immediate "waiting for readiness" line and the 2 s redraw from `runner/status.go` (`startingReason`, the manifest's `readiness.progress` markers, elapsed against `hard_deadline`, time since the last console output), plus `--no-wait`. Needs a running job and the status stream.
+- **Item 2 — failure diagnosis.** On a failed start, under Phase 28's reason and hint, print the fired `fail_marker` hint, `StatusText`, the last ~20 console lines and `next: sudo gvm logs <n>`. Needs a real failed boot.
+- **Item 4 — `gvm up`.** The guided orchestrator that runs `create` → `apply` → `install` → `start` as the same separately audited verbs (refusing an existing instance, confirming once on a TTY or requiring `--yes`, never passing `--force`/`--allow-unprobed`, finishing with the join line, the one-time password and the `firewall plan` lines). Blocked on `install` existing (Phase 31).
+- **Item 5 — docs.** `docs/quickstart.md` final and the Getting-started block in `gvm help` showing every step as available. Follows item 4.
+- **Item 6 — `ci/golden-journey.sh`** on a fresh full VM per run (the Phase 23 QEMU-on-CI or cloud-VM runner), nightly and on every release tag, with the hardened unit, transient SteamCMD sandboxes and a cached Valheim depot. The end-to-end gate (U15).
+- **Item 7 — the first public release `v0.20.0`,** cut only when the journey is green and Phase 21 is done, with the README "What works" J1 rows reading "works".
+
+**Effort for this task:** the `--budget` removal implemented by Claude (Opus 4.8) on 2026-10-16. The progress UI, failure diagnosis, `gvm up`, the quickstart and the VM-based golden-journey CI are their own body of runtime and orchestration work, and they gate the first public release.
 
 ---
 
