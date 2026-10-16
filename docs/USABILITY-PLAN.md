@@ -231,7 +231,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 30 ◆ 🟡 | Settings and hooks reach the game | config_files rendered; pre-start hooks; operator accepts the EULA | G | L | 26, 29 |
 | 31 🟡 | Game files: install, update and repair | `gvm install` works; update timers either work or say they can't | G | L | 26, 28, 30 |
 | 32 ◆ 🟡 | Prove a game boots before it is offered | `gvm game try --scratch`; boot ledger; Valheim, Palworld, Paper, PZ verified | G | XL | 31 |
-| 33 ◆ | Players know how to connect | join line; SSH-safe `gvm firewall plan`; `gvm ports` names owners | N | L | 24, 29 |
+| 33 ◆ 🟡 | Players know how to connect | join line; SSH-safe `gvm firewall plan`; `gvm ports` names owners | N | L | 24, 29 |
 | 34 | First server, start to finish · **J1** | progress while booting; `gvm up`; first public release | S | L | 21, 32, 33 |
 | **J2** | **Week to week** | | | | |
 | 35 | Upgrade gvm without stopping the worlds | N-1 skew rule; restart-pending; `restart --pending` | I | L | 34 |
@@ -1869,6 +1869,23 @@ The one piece that needs no VM-boot data is in. `make check` is green on Windows
 - **Rule 9:** connect info is CLI-only until the authenticated dashboard (Phase 49), and there is no public status page.
 - **Rule 10:** `connect:` is data, never rendered with secrets.
 - **Rule 2:** everything is a `/proc` read or an argv exec of `/usr/sbin/ufw status` by absolute path, from a root-owned binary that is not group- or world-writable.
+
+### 🟡 Partial — the `ufw enable` lint landed 2026-10-15; the detection fix, the connect info and `firewall plan` remain
+
+The one piece that needs no `/proc`, no `ufw` and no manifest data is in. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **`TestNoUfwEnableAdvice` (item 5 / U10).** gvm never tells an operator to run `ufw enable` — enabling a firewall before the live SSH port is admitted locks them out. The lint scans the operator-facing advice surfaces (the internal/cli and internal/doctor string literals, the embedded help topics, the shipped manifests) and fails on any `ufw enable`, exempting internal/firewall's backend argv and the plan/review docs. Green today.
+
+**Remaining (a dedicated session should take these — `/proc`, `ufw`, manifest data):**
+- **Item 1 — the SSH-detection safety fix** (`sshport.Detect` always runs rungs 2–5; live-session ports from `/proc`). Linux, and it gates all firewall output.
+- **Item 2 — the `connect:` manifest block** + the shipped-manifest fills (revision bumps). The spec struct/validation/default is cross-platform; the fills are manifest data.
+- **Item 3 — `spec.public_address`** via `LoadHost`, with the globally-routable-address fallback and the private-address labelling.
+- **Item 4 — connect info everywhere** (status block, `--json` endpoints, list JOIN column, `--share`, the create/start join line). Depends on items 2–3.
+- **Item 5 (rest) — `gvm firewall plan`** (read-only, SSH-first ufw lines), and item 6 (the read-only `ufw` doctor measurement) and item 7 (`gvm ports` cgroup attribution). Linux runtime.
+- **Items 8–9 — admin-exposure warnings and the networking docs.**
+
+**Effort for this task:** the `ufw enable` lint implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–32. The detection fix, the connect info and the firewall plan are their own body of runtime work.
 
 ---
 
