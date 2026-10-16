@@ -226,7 +226,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 25 🟡 | Adoption discovery you can trust | discover finds the live PZ server, says what blocks cutover, changed nothing | A | M | 22 |
 | 26 🟡 | Choose a game, and always know the next step | `gvm game show`; `next:` after every command; RAM/disk warnings | S | M | 22 |
 | 27 🟡 | The runner never kills a game mid-save, and never boots blind | Proton ladder fix; a2s/mc_ping probes; boot deaths stop looping; ProtectProc | H | L | 22, 24 |
-| 28 ◆ | A server that cannot run says why; stop always stops | crash loops shown; guard capped; stop works on a dead runner | H | L | 27 |
+| 28 ◆ 🟡 | A server that cannot run says why; stop always stops | crash loops shown; guard capped; stop works on a dead runner | H | L | 27 |
 | 29 | Passwords and keys, set locally | `gvm secret set/show`; join password by default | G | L | 22, 24 |
 | 30 ◆ | Settings and hooks reach the game | config_files rendered; pre-start hooks; operator accepts the EULA | G | L | 26, 29 |
 | 31 | Game files: install, update and repair | `gvm install` works; update timers either work or say they can't | G | L | 26, 28, 30 |
@@ -1333,6 +1333,25 @@ The guard also needs fixing before servers can be installed. It restarts a 64/65
   - The guard's cap and the operator predicate only reduce actuation.
   - `reset-failed` is reachable only from an interactive start.
   - A stale lease still yields `failed` with a hint, and the job is never resumed. The hint now describes what the guard actually does.
+
+### 🟡 Partial — the status honesty (items 1-reads, 2, 4) landed 2026-10-15; the hostops verbs and lease hints remain
+
+The pure observation/derivation half is in: `gvm status` and the guard now agree about a server that needs a human. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 1 (reads) — systemd's view.** `platform.UnitState` gains `NRestarts` and `StatusText`, read from the same Service-properties call that already returns `Result`/`ExecMainStatus`. (The `shutdown.jsonl` read in `Observe` is not wired yet.)
+- **Item 2 — `RuleCrashLooping` (PhaseDegraded).** A unit systemd is auto-restarting (`SubState=auto-restart`) or re-activating after a restart (`NRestarts>0`) reads "restarted N times; last exit <code> (<meaning>)" with the `gvm logs <n> --shutdown` hint, instead of a hopeful "starting" that never ends. A unit that gave up after three boots (exit 79) reads "gave up after 3 failed boots[: <STATUS line>]". A PAST restart on a unit that is now ready is a Note, never a problem (NRestarts is cumulative until an explicit start/stop or reset-failed). The crash-looping derive case and the ready-restart Note are tested.
+- **Item 4 — `Observation.NeedsOperator()`.** True for an exit in the exported `RestartPreventExitStatus` {64,65,66,78,79} or systemd's `start-limit-hit`, and never for an active unit. `DesiredRunningAndDown` excludes it (the guard leaves such a unit down), and `Findings` emits "the guard will not restart this: …" with the exit's hint. `TestNeedsOperatorMatchesRestartPreventExitStatus`, `TestNeedsOperatorStopsTheGuard`.
+
+**Remaining (a dedicated session should take these — hostops/runtime):**
+- **Item 1 (rest) — `Observe` reads the last `shutdown.jsonl` record** (O_NOFOLLOW, ≤64 KiB, typed fields, control/ANSI stripped) so `gvm status` can show why it last stopped.
+- **Item 3 — manifest-declared fatal conditions:** `fail_markers[].exit` enum (`port_unavailable`→66, `data_missing`→65), the fired marker written into the shutdown record, and `gvm status` showing "boot aborted: <line> — <hint>". The spec enum is cross-platform; the marker-firing is in the runner.
+- **Item 4 (rest) — the guard's cap of 3 recoveries per boot** in `/var/lib/gvm/instances/<n>/guard.json` (boot-id scoped, guard-only writer).
+- **Item 5 — `gvm stop` stops a dead runner** via a new hostops `VerbUnitStop` (cancels a pending restart; "already stopped" is exit 0).
+- **Item 6 — start after start-limit-hit/79** via `VerbUnitResetFailed`, reachable only from an interactive `gvm start` (a test asserts the guard and job actors cannot).
+- **Item 7 — lease hints from the guard's own predicate** (live vs stale vs unreadable), and the `gvm list` "(update running 12m)" row.
+
+**Effort for this task:** items 1-reads, 2 and 4 implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–27. The hostops verbs (5, 6), the guard cap (4-rest), the shutdown-record read (1-rest), the fail-marker wiring (3) and the lease hints (7) are their own body of work.
 
 ---
 
