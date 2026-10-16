@@ -267,7 +267,9 @@ func checkZombieRuns(ctx context.Context, p *lazyPool) lifecycle.CheckFinding {
 		ID:       "HOST-011",
 		Severity: lifecycle.CheckNote,
 		Message:  fmt.Sprintf("%d job_run(s) still in 'running' state (may be from prior boot)", n),
-		Fix:      "restart gvmd — it calls ReapStaleRuns when the pool becomes ready",
+		// Reaps the stale runs in process; it does not need gvmd restarted (the
+		// old advice named a unit this build does not ship).
+		Fix: "sudo gvm db replay-spool",
 	}
 }
 

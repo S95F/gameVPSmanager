@@ -30,6 +30,7 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	quiet := fs.Bool("q", false, "only show problems and warnings (suppress OK and Skip)")
+	asJSON := fs.Bool("json", false, "print the findings as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -72,28 +73,78 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 	ce := &doctorCheckEnv{}
 	findings := reg.RunAll(ctx, ce)
 
-	// Header: if Postgres is unreachable, say so first.
+	// A missing Postgres is a Note, not a problem and not a scary header line:
+	// the dashboard and the searchable audit history need it, game servers do
+	// not (rule 1). It becomes more than a Note only once a gvm-web unit is
+	// installed, which this build does not ship.
 	if !ce.PostgresReachable(ctx) {
-		fmt.Fprintf(env.Stdout, "  - POSTGRES   not reachable; database checks skipped\n")
+		findings = append(findings, lifecycle.CheckFinding{
+			ID:       "POSTGRES",
+			Severity: lifecycle.CheckNote,
+			Message:  "Postgres not reachable: dashboard and audit-database features unavailable; game servers unaffected",
+		})
 	}
 
-	for _, f := range findings {
-		if *quiet && (f.Severity == lifecycle.CheckOK || f.Severity == lifecycle.CheckSkip) {
-			continue
+	problems, warnings, notes := countSeverities(findings)
+
+	if *asJSON {
+		if err := writeJSON(env.Stdout, doctorJSON(findings, problems, warnings, notes)); err != nil {
+			return err
 		}
-		fmt.Fprintln(env.Stdout, lifecycle.FormatFinding(f))
+	} else {
+		for _, f := range findings {
+			if *quiet && (f.Severity == lifecycle.CheckOK || f.Severity == lifecycle.CheckSkip) {
+				continue
+			}
+			fmt.Fprintln(env.Stdout, lifecycle.FormatFinding(f))
+		}
+		// The totals line, always, so a clean run says "0 problems" and a dirty
+		// one says exactly how dirty, and both point at where to read next.
+		fmt.Fprintf(env.Stdout, "\n  %s, %s, %s · see: gvm help troubleshooting\n",
+			plural(problems, "problem"), plural(warnings, "warning"), plural(notes, "note"))
 	}
 
-	problems := lifecycle.CountCheckProblems(findings)
 	if problems > 0 {
-		fmt.Fprintf(env.Stdout, "\n  %d problem(s) found\n", problems)
 		// Exit 4, not 1: doctor ran fine and FOUND something. A script can
 		// branch on "problems exist" without parsing text, and a failed doctor
 		// run (which 1 would conflate with) is a different thing (U8).
 		return checked(fmt.Errorf("doctor: %d problem(s)", problems))
 	}
-	fmt.Fprintf(env.Stdout, "\n  0 problems\n")
 	return nil
+}
+
+// countSeverities tallies the finding severities for the totals line and the
+// exit code.
+func countSeverities(findings []lifecycle.CheckFinding) (problems, warnings, notes int) {
+	for _, f := range findings {
+		switch f.Severity {
+		case lifecycle.CheckProblem:
+			problems++
+		case lifecycle.CheckWarning:
+			warnings++
+		case lifecycle.CheckNote:
+			notes++
+		}
+	}
+	return
+}
+
+// doctorJSON is the --json shape: the findings and the totals, read by the
+// dashboard and by a CI check. The keys are stable (snake_case) so a consumer
+// can rely on them.
+func doctorJSON(findings []lifecycle.CheckFinding, problems, warnings, notes int) map[string]any {
+	rows := make([]map[string]any, 0, len(findings))
+	for _, f := range findings {
+		row := map[string]any{"id": f.ID, "severity": string(f.Severity), "message": f.Message}
+		if f.Fix != "" {
+			row["fix"] = f.Fix
+		}
+		rows = append(rows, row)
+	}
+	return map[string]any{
+		"findings": rows,
+		"totals":   map[string]int{"problems": problems, "warnings": warnings, "notes": notes},
+	}
 }
 
 // doctorCheckEnv is the production CheckEnv.
