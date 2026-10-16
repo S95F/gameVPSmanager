@@ -56,6 +56,16 @@ type UnitState struct {
 	// ExecMainStatus is the exit code of the main process, which gvm's
 	// runner uses as a typed failure channel rather than a boolean.
 	ExecMainStatus int
+	// NRestarts is systemd's cumulative restart counter for the unit. It is
+	// cleared only by an explicit start/stop or `reset-failed`, so a positive
+	// value on a unit that is now ready is history, not a live loop — which is
+	// why crash-looping is judged from the unit's current substate, not from
+	// this number alone.
+	NRestarts int
+	// StatusText is the unit's last sd_notify STATUS= line. The runner writes
+	// the reason a boot died there, so it carries the one sentence an operator
+	// needs when ExecMainStatus only gives a number.
+	StatusText string
 }
 
 // Failed reports whether the unit is in a failed state.

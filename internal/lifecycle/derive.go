@@ -35,6 +35,7 @@ const (
 	RuleUnitMasked     Rule = "unit-masked"
 	RuleUnitNotFound   Rule = "unit-not-found"
 	RuleActivating     Rule = "activating"
+	RuleCrashLooping   Rule = "crash-looping"
 	RuleDeactivating   Rule = "deactivating"
 	RuleUnitFailed     Rule = "unit-failed"
 	RuleNoStatus       Rule = "no-status"
@@ -60,7 +61,7 @@ var rules = []Rule{
 	RuleNoSpec, RulePinMismatch, RuleSpecUnreadable, RuleLeaseStale, RuleLeaseUnknown,
 	RuleLeaseInstall, RuleLeaseUpdate, RuleBlockedContent, RuleNeverApplied,
 	RulePinMissing, RuleForeignDropIn, RuleUnitUnknown, RuleUnitMasked, RuleUnitNotFound,
-	RuleActivating, RuleDeactivating, RuleUnitFailed, RuleNoStatus, RuleStatusStale,
+	RuleActivating, RuleCrashLooping, RuleDeactivating, RuleUnitFailed, RuleNoStatus, RuleStatusStale,
 	RuleShuttingDown, RuleBooting, RuleRunnerFailed, RuleRunnerExited, RuleReady,
 	RuleNotInstalled, RuleHeld, RuleUncleanExit, RuleDisabled, RuleInactive,
 	RuleUnmodelled,
@@ -284,6 +285,19 @@ func deriveUnit(o Observation) Verdict {
 
 	switch o.Unit.ActiveState {
 	case "activating":
+		// A unit systemd is auto-restarting, or re-activating after a previous
+		// automatic restart, is not simply "starting": it has crashed at least
+		// once and may be looping. Say so, as a problem, rather than showing a
+		// hopeful "starting" that never ends.
+		if o.Unit.SubState == "auto-restart" || o.Unit.NRestarts > 0 {
+			return Verdict{
+				Phase: PhaseDegraded, Rule: RuleCrashLooping,
+				Reason: fmt.Sprintf("restarted %s; last exit %d (%s)",
+					restartCount(o.Unit.NRestarts), o.Unit.ExecMainStatus,
+					exitMeaning(o.Unit.ExecMainStatus)),
+				Hint: "gvm logs " + o.Name + " --shutdown",
+			}
+		}
 		return Verdict{
 			Phase: PhaseStarting, Rule: RuleActivating,
 			Reason: startingReason(o),
@@ -413,11 +427,34 @@ func deriveInactive(o Observation) Verdict {
 
 // unitFailed turns systemd's failure into the exit-code table's sentence.
 func unitFailed(o Observation) Verdict {
+	// A unit that gave up after three failed boots (exit 79) gets the plain
+	// sentence rather than the generic "systemd reports … failed": this is the
+	// one an operator reads to know gvm stopped on purpose, with the last
+	// STATUS line the runner left if there is one.
+	if o.Unit.ExecMainStatus == runner.ExitBootLoop {
+		reason := "gave up after 3 failed boots"
+		if s := strings.TrimSpace(o.Unit.StatusText); s != "" {
+			reason += ": " + s
+		}
+		return Verdict{
+			Phase: PhaseFailed, Rule: RuleUnitFailed,
+			Reason: reason,
+			Hint:   exitHint(o),
+		}
+	}
 	return Verdict{
 		Phase: PhaseFailed, Rule: RuleUnitFailed,
 		Reason: "systemd reports " + unitName(o.Name) + " failed" + resultSuffix(o) + exitSuffix(o),
 		Hint:   exitHint(o),
 	}
+}
+
+// restartCount renders systemd's NRestarts as "N time(s)".
+func restartCount(n int) string {
+	if n == 1 {
+		return "1 time"
+	}
+	return fmt.Sprintf("%d times", n)
 }
 
 // exitHint maps section 7.8's exit codes to the command that addresses them.
@@ -529,7 +566,7 @@ func exitMeaning(code int) string {
 	case runner.ExitConfig:
 		return "the sandbox blocks a required write"
 	case runner.ExitBootLoop:
-		return "the game failed to reach ready 3 times in a row; gvm stopped retrying"
+		return "gave up after 3 failed boots"
 	}
 	return "unclassified"
 }

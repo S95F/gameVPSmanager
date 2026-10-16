@@ -153,6 +153,8 @@ func (s *dbusSystemd) State(ctx context.Context, unit string) (platform.UnitStat
 		st.Result = propString(svc, "Result")
 		st.MainPID = int(propUint(svc, "MainPID"))
 		st.ExecMainStatus = int(propInt(svc, "ExecMainStatus"))
+		st.NRestarts = int(propUint(svc, "NRestarts"))
+		st.StatusText = propString(svc, "StatusText")
 	} else if !isNoSuchInterface(err) {
 		return st, err
 	}

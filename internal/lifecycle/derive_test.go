@@ -208,6 +208,17 @@ func deriveCases() []deriveCase {
 			reason: "log_marker",
 		},
 		{
+			name: "crash-looping",
+			setup: func(o *Observation) {
+				o.Unit.ActiveState = "activating"
+				o.Unit.SubState = "auto-restart"
+				o.Unit.NRestarts = 2
+				o.Unit.ExecMainStatus = runner.ExitBootDied
+			},
+			phase: PhaseDegraded, rule: RuleCrashLooping,
+			reason: "restarted 2 times",
+		},
+		{
 			name:  "deactivating",
 			setup: func(o *Observation) { o.Unit.ActiveState = "deactivating" },
 			phase: PhaseStopping, rule: RuleDeactivating,
