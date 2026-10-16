@@ -167,6 +167,15 @@ func (o *jobOptions) bindConfirm(fs *flag.FlagSet) {
 			"carry the typed name instead")
 }
 
+// timerTriggerAtTerminal reports whether a `--trigger timer` should be refused.
+// It is a pure function so the decision is tested without faking a terminal: a
+// timer trigger means systemd ran the job, so it is wrong only when a human is
+// at a terminal (a TTY) and not under a unit; a script (no TTY) and a real unit
+// run (INVOCATION_ID set) are both fine.
+func timerTriggerAtTerminal(trigger string, underUnit, isTTY bool) bool {
+	return trigger == string(jobs.TriggerTimer) && !underUnit && isTTY
+}
+
 func triggerNames() []string {
 	out := make([]string, 0, len(jobs.Triggers()))
 	for _, t := range jobs.Triggers() {
@@ -239,14 +248,29 @@ func runJobRun(ctx context.Context, env *Env, args []string) error {
 		// The scheduling flags are the unit's, not the operator's: hide them.
 		flagUsage(env.Stderr, fs, "trigger", "lease-for", "on-failure")
 	}
-	// A unit-invoked run is a timer run until something says otherwise, so this
-	// is the one verb that binds the scheduling flags.
-	opt.bind(fs, jobs.TriggerTimer)
-	opt.bindSchedule(fs, jobs.TriggerTimer)
+	// The default trigger is derived from how the run was invoked: systemd sets
+	// INVOCATION_ID for every unit, so a run under a unit is a timer run and an
+	// interactive run is a CLI run. This is what makes the audit ledger answer
+	// "was anybody watching" correctly without the operator setting a flag.
+	underUnit := env.Getenv("INVOCATION_ID") != ""
+	defTrigger := jobs.TriggerCLI
+	if underUnit {
+		defTrigger = jobs.TriggerTimer
+	}
+	opt.bind(fs, defTrigger)
+	opt.bindSchedule(fs, defTrigger)
 	opt.bindConfirm(fs)
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return flagErr(err)
+	}
+	// A human at a terminal who types --trigger timer would write a row that
+	// claims systemd ran this. Refuse it: the run would succeed but lie to the
+	// one question the ledger exists to answer. A script (no TTY) may still pass
+	// it, and a real unit run is exactly when it is right.
+	if timerTriggerAtTerminal(opt.Trigger, underUnit, stdoutIsTerminal(env)) {
+		return usageErr(errors.New("--trigger timer says systemd ran this job; at a terminal, " +
+			"drop the flag — the run records as cli"))
 	}
 	if len(pos) != 1 {
 		fs.Usage()
