@@ -229,7 +229,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 28 ◆ 🟡 | A server that cannot run says why; stop always stops | crash loops shown; guard capped; stop works on a dead runner | H | L | 27 |
 | 29 🟡 | Passwords and keys, set locally | `gvm secret set/show`; join password by default | G | L | 22, 24 |
 | 30 ◆ 🟡 | Settings and hooks reach the game | config_files rendered; pre-start hooks; operator accepts the EULA | G | L | 26, 29 |
-| 31 | Game files: install, update and repair | `gvm install` works; update timers either work or say they can't | G | L | 26, 28, 30 |
+| 31 🟡 | Game files: install, update and repair | `gvm install` works; update timers either work or say they can't | G | L | 26, 28, 30 |
 | 32 ◆ | Prove a game boots before it is offered | `gvm game try --scratch`; boot ledger; Valheim, Palworld, Paper, PZ verified | G | XL | 31 |
 | 33 ◆ | Players know how to connect | join line; SSH-safe `gvm firewall plan`; `gvm ports` names owners | N | L | 24, 29 |
 | 34 | First server, start to finish · **J1** | progress while booting; `gvm up`; first public release | S | L | 21, 32, 33 |
@@ -1623,6 +1623,23 @@ This phase ships in the same release as Phase 32's ledger gate (U3, U14).
 - **Rule 4:** an update that must stop the server goes through `Super.Stop`, the ladder, and a no-op update never stops it. PZ's first boot is stopped through `Super.Stop` too, and PZ's interim nightly is a ladder restart.
 - **Rules 1 and 2:** a long job runs as its own systemd unit, so it survives the SSH session ending. The transient unit's `ExecStart` is a fixed argv, the hostops verb accepts no other, and no shell is involved.
 - **Rule 11:** gvm never installs onto an adopted instance.
+
+### 🟡 Partial — the modded-update-nightly interim landed 2026-10-15; the install engine remains
+
+The one bounded, cross-platform piece is in. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 3 (the "PZ's nightly still runs" interim).** A game that declares mods (a non-empty `content` block — Project Zomboid and the Minecraft manifests) cannot run an `update` in this build, and its nightly exists for the restart that clears heap pressure, so `create` writes its recommended `update` nightly as a `restart` through the ladder and says why. It keys on the content block (not on engine wiring), so a content-free game's `update` nightly is left intact for the install engine. `TestModdedUpdateNightlyWrittenAsRestart`, `TestContentFreeGameKeepsUpdateDecision`, and `TestJobListPZNightlyIsARunnableRestart` (which replaced the old "update nightly unrunnable" test).
+
+**Remaining (a dedicated session should take these — runtime/network/VM; the DoD runs on a Debian 12 VM):**
+- **Item 1 — build the steamcmd and minecraft providers** in the production `HostEnv` (`providerFor`), with Plan doing network reads only and Apply writing only digest-verified bytes after `Authorize`, plus the D-32 post-verification.
+- **Item 2 — install hooks** (`post_install`, incl. `pz.first_boot`'s start→ready→stop→render cycle).
+- **Item 3 (rest) — the `engineWired` flips** for install (steamcmd/minecraft) and update/repair (content-free), with the operator-language refusals for the kinds still unwired.
+- **Item 5 — `gvm update <n> --check`** (network reads, no lease, exit 4 when an update is available, recorded in `update-check.json`).
+- **Item 8 — `runDetachable`:** long in-process jobs run as a transient systemd unit (a new fixed-ExecStart hostops verb) so an SSH hangup never kills a job halfway; `TestJobVerbsSurviveHangup`.
+- The network-gated Debian-12-VM CI job (item 7).
+
+**Effort for this task:** the modded-nightly interim implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–30. The install engine, its hooks, `update --check` and the detachable-job units are their own body of runtime work.
 
 ---
 
