@@ -230,7 +230,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 29 🟡 | Passwords and keys, set locally | `gvm secret set/show`; join password by default | G | L | 22, 24 |
 | 30 ◆ 🟡 | Settings and hooks reach the game | config_files rendered; pre-start hooks; operator accepts the EULA | G | L | 26, 29 |
 | 31 🟡 | Game files: install, update and repair | `gvm install` works; update timers either work or say they can't | G | L | 26, 28, 30 |
-| 32 ◆ | Prove a game boots before it is offered | `gvm game try --scratch`; boot ledger; Valheim, Palworld, Paper, PZ verified | G | XL | 31 |
+| 32 ◆ 🟡 | Prove a game boots before it is offered | `gvm game try --scratch`; boot ledger; Valheim, Palworld, Paper, PZ verified | G | XL | 31 |
 | 33 ◆ | Players know how to connect | join line; SSH-safe `gvm firewall plan`; `gvm ports` names owners | N | L | 24, 29 |
 | 34 | First server, start to finish · **J1** | progress while booting; `gvm up`; first public release | S | L | 21, 32, 33 |
 | **J2** | **Week to week** | | | | |
@@ -1751,6 +1751,21 @@ Without a gate, the first instances would pin broken revisions. This phase ships
 - **Rule 4:** every scratch stop goes through the ladder, and the report records the rung.
 - **Rule 10:** the ledger is data. The template guard still runs at load, and overrides still need `--unapproved-override` until Phase 46.
 - **Hardening:** W^X is relaxed only for Valheim, on boot evidence. ProtectProc stays.
+
+### 🟡 Partial — the validate buildability check (item 5) landed 2026-10-15; the ledger, the gates and `game try` remain
+
+The one piece that needs no VM-boot data is in. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 5 (wrapper half) — validate checks the runner can build the launch.** `spec.runtime.wrapper.kind` is closed against a `wrapperKinds` registry (proton built; xvfb and wine planned until Phase 42), so a manifest naming a planned wrapper warns and an unknown one is a load error — the same contract the probe kinds use. Core Keeper (xvfb) carries that deliberate warning. `spec.ImplementedWrapperKinds()` exposes the registry and `TestImplementedWrappersMatchTheRunner` holds it to what `BuildLaunch` builds. (The probe half, `TestEveryImplementedProbeKindIsBuilt`, landed in Phase 27; `.Secret`-on-argv is Phase 27's lint.)
+
+**Remaining (a dedicated session should take these — VM-boot data + Linux runtime):**
+- **Items 1–2 — the boot ledger and its gates.** The shipped `games/ledger.yaml` is data generated from real scratch boots on Debian 12 / Ubuntu 24.04, which cannot be produced on this dev host; without honest entries the `verified`/`unsupported` status and the `create`/`install` gates have nothing to read. The status/gate LOGIC is cross-platform but is worthless without the data, so it lands with the verification runs.
+- **Item 3 — `gvm game try <id> --scratch`:** orchestrates create → apply → install → start → stop → cold backup → cleanup under `runDetachable`, and writes the local ledger. Pure runtime, and it depends on the Phase 31 install engine.
+- **Item 4 — `gvm run <inst> --check`:** the non-spawning launch/sandbox dump, with the D-15 transient stat probe (Linux).
+- **Item 6 — the Proton/Java/Xvfb/steamcmd prerequisite checks** at create/apply/doctor (stat as `gvm-<inst>`, Linux).
+
+**Effort for this task:** item 5's wrapper check implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–31. The ledger, the gates, `game try` and `run --check` are their own body of verification and runtime work.
 
 ---
 
