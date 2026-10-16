@@ -225,7 +225,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 24 ◆ 🟡 | `gvm doctor` tells the truth | 0 problems on a healthy host; checks every instance | I | L | 23 |
 | 25 🟡 | Adoption discovery you can trust | discover finds the live PZ server, says what blocks cutover, changed nothing | A | M | 22 |
 | 26 🟡 | Choose a game, and always know the next step | `gvm game show`; `next:` after every command; RAM/disk warnings | S | M | 22 |
-| 27 | The runner never kills a game mid-save, and never boots blind | Proton ladder fix; a2s/mc_ping probes; boot deaths stop looping; ProtectProc | H | L | 22, 24 |
+| 27 🟡 | The runner never kills a game mid-save, and never boots blind | Proton ladder fix; a2s/mc_ping probes; boot deaths stop looping; ProtectProc | H | L | 22, 24 |
 | 28 ◆ | A server that cannot run says why; stop always stops | crash loops shown; guard capped; stop works on a dead runner | H | L | 27 |
 | 29 | Passwords and keys, set locally | `gvm secret set/show`; join password by default | G | L | 22, 24 |
 | 30 ◆ | Settings and hooks reach the game | config_files rendered; pre-start hooks; operator accepts the EULA | G | L | 26, 29 |
@@ -1226,6 +1226,24 @@ The offline, choose-a-game half is in. `make check` is green on Windows (fmt + v
 - **Rule 6:** derive stays read-only. These changes alter only what systemd does with an exit code.
 - **Freeze safety (D-31):** an owner gvm cannot see is Unknown, never dead.
 - **Hardening:** ProtectProc tightens the sandbox, and nothing is relaxed. The plan claims only what it does, isolation between instances, and doctor names the residual exposure to host accounts.
+
+### 🟡 Partial — the probe builder (item 1) and the exit-code table (item 5) landed 2026-10-15; the ladder/boot-death/ProtectProc safety work remains
+
+The two bounded, cross-platform items are in. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 1 — the runner builds every probe it advertises.** `BuildProbes` now constructs the `a2s` and `mc_ping` probes, not only `log_marker`/`tcp`/`udp`. This was a real break: many shipped games (ark-se, cs2, enshrouded, 7daystodie, generic-steam, …) declare an `a2s` readiness probe, which the runner refused with "not built in this release", so they could never reach ready. `control_auth` is the one kind left unbuilt and is now `SupportPlanned` in spec's probe registry (validate warns). `spec.ImplementedProbeKinds()` exposes the registry and `TestEveryImplementedProbeKindIsBuilt` keeps it in step with `BuildProbes`.
+- **Item 5 — the exit-code table is honest.** New `runner.ExitBootDied = 69` ("the game exited before it was ready", which retries) and `runner.ExitBootLoop = 79` ("failed to reach ready 3 times; gvm stopped retrying", which is restart-prevented). `exitMeaning` gains both and rewords 75 to "readiness failed (timeout, stall or marker), or an orphan from a previous run". `lifecycle.RestartPreventExitStatus` is the exported `{64,65,66,78,79}`, `gvm@.service` adds 79, and a packaging test asserts the directive equals the constant (and that 69/70/75 are absent).
+
+**Remaining (a dedicated session should take these — safety-critical runtime):**
+- **Item 2 — the ladder waits for the cgroup, not the launcher** (`Ladder.finishWait`/`settled()`), so a Proton launcher's exit cannot collapse the SIGTERM grace into a SIGKILL. Needs cgroup/leader fixtures.
+- **Item 3 — a boot-time death is reported as one.** `AwaitReady` selects on `settled()`; the runner returns `ErrExitedDuringBoot` and exits 69 with a STATUS line and the suspected-cause notes.
+- **Item 4 — slow boot deaths stop too.** The `/run/gvm/<n>/bootfail.json` counter that exits 79 on the third consecutive pre-ready failure (RuntimeDirectoryPreserve=restart).
+- **Item 6 — `ProtectProc=invisible`** on `gvm@.service`, shipped together with the freeze watcher treating an ENOENT `/proc/<pid>` as Unknown (not dead) so a hidden backup job does not get save-on mid-snapshot.
+
+These are the "lost worlds" defects and must be verified against real Linux cgroups, pids and sandboxes, not a Windows fake.
+
+**Effort for this task:** items 1 and 5 implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–26. Items 2, 3, 4 and 6 are their own body of safety-critical runtime work.
 
 ---
 
