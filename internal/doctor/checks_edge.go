@@ -18,7 +18,7 @@ import (
 // EdgeChecks returns EDGE-* checks given the host config.
 // Checks that require a running Caddy process return Skip gracefully.
 func EdgeChecks(host *spec.HostConfig) []lifecycle.DoctorCheck {
-	return []lifecycle.DoctorCheck{
+	checks := []lifecycle.DoctorCheck{
 		edgeCheckCaddyVersion(host),
 		{
 			ID:      "EDGE-003",
@@ -46,6 +46,22 @@ func EdgeChecks(host *spec.HostConfig) []lifecycle.DoctorCheck {
 			Run:     checkStreamFlushInterval(host),
 		},
 	}
+
+	// With no edge (a games-only host, the default), there is no Caddy to check:
+	// every EDGE-* check would be measuring a tier that was never installed. So
+	// they Skip, the same honest "nothing to check here" the firewall checks
+	// give, rather than reporting problems about a dashboard the operator does
+	// not run.
+	if mode := host.Spec.Edge.Mode; mode == "" || mode == "none" {
+		for i := range checks {
+			id := checks[i].ID
+			checks[i].Run = func(context.Context, lifecycle.CheckEnv) lifecycle.CheckFinding {
+				return lifecycle.CheckFinding{ID: id, Severity: lifecycle.CheckSkip,
+					Message: "edge.mode is none; there is no dashboard edge to check"}
+			}
+		}
+	}
+	return checks
 }
 
 func edgeCheckCaddyVersion(host *spec.HostConfig) lifecycle.DoctorCheck {
