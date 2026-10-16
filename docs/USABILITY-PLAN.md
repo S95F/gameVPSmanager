@@ -223,7 +223,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 22 🟡 | Help, errors and exit codes that work everywhere | `--help` never panics; plain errors; documented exit codes | S | L | 20 |
 | 23 🟡 | Install gvm on a fresh VPS | `sudo ./gvm host init`, verified tarball, real version | I | L | 22 |
 | 24 ◆ 🟡 | `gvm doctor` tells the truth | 0 problems on a healthy host; checks every instance | I | L | 23 |
-| 25 | Adoption discovery you can trust | discover finds the live PZ server, says what blocks cutover, changed nothing | A | M | 22 |
+| 25 🟡 | Adoption discovery you can trust | discover finds the live PZ server, says what blocks cutover, changed nothing | A | M | 22 |
 | 26 | Choose a game, and always know the next step | `gvm game show`; `next:` after every command; RAM/disk warnings | S | M | 22 |
 | 27 | The runner never kills a game mid-save, and never boots blind | Proton ladder fix; a2s/mc_ping probes; boot deaths stop looping; ProtectProc | H | L | 22, 24 |
 | 28 ◆ | A server that cannot run says why; stop always stops | crash loops shown; guard capped; stop works on a dead runner | H | L | 27 |
@@ -1054,6 +1054,22 @@ Cutover itself waits for Phase 50's safety net.
 - **Rule 11:** discovery stays read-only. `--write-plan` writes only gvm's own plan file, never the legacy install, world or units, and never the adoption record.
 - **Rule 10:** imported passwords are checked, never altered.
 - **Rule 7:** the firewall is only read, and an untrusted parse is labelled as such.
+
+### 🟡 Partial — the config-env parser (item 4) and the help safety lines (item 5-help) landed 2026-10-15; the discover report and its fixtures remain
+
+The pure, cross-platform pieces are in; the rest reads the live host and needs the `live-pz` rootfs fixtures. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 4 — quote-aware `ParseConfigEnv`.** A quoted value runs to its matching closing quote and drops a trailing comment (`SERVER_PASSWORD="" # none` → `""`), keeps an inner `#` (`"a # b"`), and a bare value's comment begins only at a `#` after whitespace (so `http://x/y#z` survives). Shell metacharacters stay literal (D-47, the existing never-executes test). New `UnsafePassword(v)` flags a password containing `' " \ $` or a backtick — the cutover blocker gvm never imports altered — kept next to the parser so discover can check the value it just read. `TestParseConfigEnvQuotesAndComments`, `TestUnsafePassword`.
+- **Item 5 (help) — `gvm help adopt` safety lines.** Each step carries a one-line safety statement ("discover — reads only; safe with players online"; "finalize — refuses within 7 days without --force"), and a new `subGroup.Note` says "Only Project Zomboid bash-suite installs can be adopted in this build." `TestAdoptHelpCarriesSafetyLines`.
+
+**Remaining (a dedicated session should take these):**
+- **Item 1 — the strict-flag discover** (`--from-bash-suite`, `--unit`, `--write-plan`), with the running unit authoritative for world identity (DataDir from `ExecStart -cachedir=`, ServerName from `-servername`), the suite directory found in the fixed order, and `config.env` used only for what the unit does not carry (a mismatch is a blocker). Needs the `live-pz` rootfs fixtures and systemd `ExecStart` parsing.
+- **Item 2 — findings with a `Fix` and a tier** (blocker/warning/note) and the §19.1 blockers implemented with reads only (instance YAML exists, `gvm@<name>` enabled, world missing, two `appmanifest` files, no JVM pid while active, free disk below estimate × 1.2 via `statvfs`, PZ_USER can write judged from stat bits). Report ends "Cutover would proceed" / "Cutover would REFUSE: …"; blockers exit 4. The `UnsafePassword` check wires in here.
+- **Item 3 — the complete read-only report** (WORLD, DISK, SCHEDULE, pids+starttimes, ports with exposure, BACKUPS, CREDENTIALS) ending "Nothing has been changed." Linux-runtime reads.
+- **Item 5 (runbook) — `docs/adopt-projectzomboid.md`** against the real commands, with the parse-only runbook test.
+
+**Effort for this task:** items 4 and 5-help implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–24. The discover report and its fixtures (items 1–3) are their own body of work.
 
 ---
 
