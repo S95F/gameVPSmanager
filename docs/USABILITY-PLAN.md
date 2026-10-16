@@ -224,7 +224,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 23 🟡 | Install gvm on a fresh VPS | `sudo ./gvm host init`, verified tarball, real version | I | L | 22 |
 | 24 ◆ 🟡 | `gvm doctor` tells the truth | 0 problems on a healthy host; checks every instance | I | L | 23 |
 | 25 🟡 | Adoption discovery you can trust | discover finds the live PZ server, says what blocks cutover, changed nothing | A | M | 22 |
-| 26 | Choose a game, and always know the next step | `gvm game show`; `next:` after every command; RAM/disk warnings | S | M | 22 |
+| 26 🟡 | Choose a game, and always know the next step | `gvm game show`; `next:` after every command; RAM/disk warnings | S | M | 22 |
 | 27 | The runner never kills a game mid-save, and never boots blind | Proton ladder fix; a2s/mc_ping probes; boot deaths stop looping; ProtectProc | H | L | 22, 24 |
 | 28 ◆ | A server that cannot run says why; stop always stops | crash loops shown; guard capped; stop works on a dead runner | H | L | 27 |
 | 29 | Passwords and keys, set locally | `gvm secret set/show`; join password by default | G | L | 22, 24 |
@@ -1131,6 +1131,23 @@ The pure, cross-platform pieces are in; the rest reads the live host and needs t
 **Design rules touched:**
 - **Rule 10:** `game show` prints manifest data, renders no template, and never shows a secret value.
 - **Rule 5 and U11:** `--force` is no longer *suggested* for an instance that never installed, so the printed path never leads an operator to start on missing files. The flag itself is unchanged: nothing is added or removed.
+
+### 🟡 Partial — `game show`, the template handling (items 1, 2) and a quickstart topic (item 6-partial) landed 2026-10-15; the `next:` machinery and the sizing warnings remain
+
+The offline, choose-a-game half is in. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 1 — `gvm game show <id> [--yaml]`** (RouteLocal, offline, no root). Prints the doc, an operator-facing provider line ("Steam (SteamCMD)", "Windows server under Proton — install Proton yourself", "Minecraft"), the RAM/disk floors, a ports table, the referenced secrets BY NAME (never a value, rule 10), a vars table (type, default/(required), apply badge, immutable, enum/range, help), the recommended jobs, and a ready-to-paste `create` line with a `--var` for each required var that has no default. `--yaml` emits the verbatim manifest bytes, which round-trip through `gvm game validate`. Flags are interspersed. `TestGameShow`, `TestGameShowYAMLRoundTrips`.
+- **Item 2 (templates) — a template is hidden and not createable.** The `template` tag (generic-steam) hides a manifest from `gvm game list` unless `--all` (with a "N template hidden; --all shows them" note), and `gvm create --game <template>` is refused (exit 5) with "copy it to /etc/gvm/games/<id>.yaml and change metadata.id first". `TestGameListHidesTemplates`, `TestCreateRefusesTemplate`. The RAM-floor/tags/needs columns on `list` are not added yet.
+- **Item 6 (partial) — a quickstart help topic.** `gvm help quickstart` walks host init → doctor → game show → create → apply → install → secret → start → connect, with install and secret marked "(not in this build)". It uses the Phase 22 help-topics machinery.
+
+**Remaining (a dedicated session should take these):**
+- **Item 3 — generated game pages** (`make docs-games` → `docs/games/<id>.md`, with a CI diff, and a README "Supported games" table). Follows the `make docs-cli` pattern.
+- **Item 4 — the `next:` machinery.** A `nextStep(after lifecycle.Status)` helper that turns the post-action `Derive` hint into one registry-filtered line (an unbuilt step reads "next step (gvm install) is not available in this build"), wired into create/apply/install/start/update/restore/content sync; `apply --diff` ends with "run `gvm apply <name>`"; and the `--force`-only-if-ever-ready logic with its durable `ever-ready` marker in `/var/lib/gvm/instances/<n>/runner/` (Linux-runtime, the runner writes it on first ready).
+- **Item 5 — RAM/disk warnings** at `create` and as an INST check: `ram_floor`/`MemoryMax` vs `/proc/meminfo` MemTotal (and the other enabled instances' claims), and `disk_floor_gb` vs free space at `paths.install` (`statvfs`). Linux-runtime reads; `game show` would show the same numbers.
+- **Item 6 (rest) — `docs/quickstart.md`** and the top-level-usage getting-started block.
+
+**Effort for this task:** items 1, 2 and 6-partial implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–25. The `next:` machinery (item 4) and the sizing warnings (item 5) are their own body of work.
 
 ---
 
