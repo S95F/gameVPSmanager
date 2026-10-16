@@ -37,6 +37,7 @@ var gameSubs = []struct {
 }{
 	{"validate", "<file.yaml|game-id>...", "check a manifest against the schema, the closed template grammar and the registries", runGameValidate},
 	{"list", "", "list every game this box can run, and where each one comes from", runGameList},
+	{"show", "<game-id> [--yaml]", "show a game's settings, ports, vars and a ready-to-paste create line", runGameShow},
 	{"which", "<game-id>", "show which layer a game id resolves to, and the layers it shadows", runGameWhich},
 	{"hooks", "", "list the hook and validator registries a manifest may name", runGameHooks},
 }
@@ -73,6 +74,21 @@ func gameUsage(w io.Writer) {
 // always present, so every subcommand here works on a box whose /usr/share was
 // emptied — which is the box an operator most needs answers about.
 func gameCatalog() *spec.Catalog { return spec.SystemCatalog(games.FS) }
+
+// gameIsTemplate reports whether a manifest is a starting point to copy, not a
+// game to create directly. It is marked by the `template` tag (generic-steam),
+// so `gvm game list` hides it unless --all and `gvm create` refuses it.
+func gameIsTemplate(m *spec.Manifest) bool {
+	if m == nil {
+		return false
+	}
+	for _, t := range m.Metadata.Tags {
+		if t == "template" {
+			return true
+		}
+	}
+	return false
+}
 
 // overrideAuth turns the flag into an authorizer. Denying is the default
 // because a manifest is argv plus env plus destruction globs: an unapproved
@@ -474,6 +490,7 @@ func plural(n int, noun string) string {
 func runGameList(env *Env, args []string) error {
 	fs, unapproved := gameFlags(env, "list", "")
 	asJSON := fs.Bool("json", false, "print the catalog as JSON")
+	all := fs.Bool("all", false, "include template manifests (hidden by default)")
 	if err := fs.Parse(args); err != nil {
 		return flagErr(err)
 	}
@@ -500,6 +517,9 @@ func runGameList(env *Env, args []string) error {
 				if !c.Winner {
 					continue
 				}
+				if gameIsTemplate(c.Manifest) && !*all {
+					continue
+				}
 				games = append(games, map[string]any{
 					"id": id, "name": c.Manifest.Metadata.Name,
 					"revision": c.Revision, "ref": c.Ref,
@@ -520,7 +540,7 @@ func runGameList(env *Env, args []string) error {
 
 	fmt.Fprintln(env.Stdout)
 	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
-	broken := 0
+	broken, shown, hidden := 0, 0, 0
 	for _, id := range ids {
 		cands, _, err := cat.Resolve(id, auth)
 		if err != nil {
@@ -534,12 +554,20 @@ func runGameList(env *Env, args []string) error {
 			if !c.Winner {
 				continue
 			}
+			if gameIsTemplate(c.Manifest) && !*all {
+				hidden++
+				continue
+			}
+			shown++
 			fmt.Fprintf(tw, "  %s\t%s\trevision %d\t%s%s\n",
 				id, c.Manifest.Metadata.Name, c.Revision, c.Ref, shadowNote(cands))
 		}
 	}
 	_ = tw.Flush()
-	fmt.Fprintf(env.Stdout, "\n  %s\n", plural(len(ids), "game"))
+	fmt.Fprintf(env.Stdout, "\n  %s\n", plural(shown, "game"))
+	if hidden > 0 {
+		fmt.Fprintf(env.Stdout, "  %s hidden; --all shows them\n", plural(hidden, "template"))
+	}
 
 	if listErr != nil {
 		return listErr

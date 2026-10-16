@@ -196,7 +196,9 @@ func TestGameValidateOnAnUnknownGameIDFails(t *testing.T) {
 }
 
 func TestGameListNamesEveryShippedGame(t *testing.T) {
-	code, out, errb := run(t, "game", "list")
+	// --all so the template (generic-steam) is included; the plain listing
+	// hides it, which TestGameListHidesTemplates covers.
+	code, out, errb := run(t, "game", "list", "--all")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errb)
 	}

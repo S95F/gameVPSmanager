@@ -13,7 +13,7 @@ import (
 // into the command body with a zero-valued options struct.
 func TestEveryHelpPathExitsZero(t *testing.T) {
 	subs := map[string][]string{
-		"game":    {"validate", "list", "which", "hooks"},
+		"game":    {"validate", "list", "show", "which", "hooks"},
 		"content": {"list", "diff", "why", "add", "remove", "move", "sync", "update", "lock", "blocked"},
 		"job":     {"run", "list", "clear"},
 		"backup":  {"verify", "prune", "list"},

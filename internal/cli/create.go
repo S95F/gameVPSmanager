@@ -422,6 +422,12 @@ func createExec(ctx context.Context, env *Env, h *HostEnv, t Transport, opt crea
 	if diags.HasErrors() {
 		return fmt.Errorf("%s does not validate:\n%s", opt.Game, diags.Errors())
 	}
+	if gameIsTemplate(m) {
+		return refused(&userError{
+			Msg:  opt.Game + " is a template, not a game to create directly",
+			Hint: "copy it to /etc/gvm/games/" + opt.Game + ".yaml and change metadata.id first",
+		})
+	}
 
 	// The allocation below reads reserved_ports from /etc/gvm/gvm.yaml, so a
 	// create cannot proceed on a config it cannot trust: a typo'd key is

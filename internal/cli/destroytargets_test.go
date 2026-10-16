@@ -64,7 +64,9 @@ func TestDestroyTargetsResolvesForEveryShippedGame(t *testing.T) {
 		{"7daystodie", []string{"--var", "server_name=Test"}},
 		{"palworld", []string{"--var", "server_name=Test"}},
 		{"corekeeper", nil},
-		{"generic-steam", []string{"--var", "public_name=Test"}},
+		// generic-steam is a template (`gvm create` refuses it now), so no
+		// instance of it can exist to destroy; its world_paths={{ .Data }}
+		// shape is exercised through the jail's own tests, not a create fixture.
 	} {
 		t.Run(tc.game, func(t *testing.T) {
 			in, m, install, data, secrets := destroyFixture(t, tc.game, tc.vars...)
