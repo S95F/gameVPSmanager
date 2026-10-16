@@ -228,7 +228,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 27 🟡 | The runner never kills a game mid-save, and never boots blind | Proton ladder fix; a2s/mc_ping probes; boot deaths stop looping; ProtectProc | H | L | 22, 24 |
 | 28 ◆ 🟡 | A server that cannot run says why; stop always stops | crash loops shown; guard capped; stop works on a dead runner | H | L | 27 |
 | 29 🟡 | Passwords and keys, set locally | `gvm secret set/show`; join password by default | G | L | 22, 24 |
-| 30 ◆ | Settings and hooks reach the game | config_files rendered; pre-start hooks; operator accepts the EULA | G | L | 26, 29 |
+| 30 ◆ 🟡 | Settings and hooks reach the game | config_files rendered; pre-start hooks; operator accepts the EULA | G | L | 26, 29 |
 | 31 | Game files: install, update and repair | `gvm install` works; update timers either work or say they can't | G | L | 26, 28, 30 |
 | 32 ◆ | Prove a game boots before it is offered | `gvm game try --scratch`; boot ledger; Valheim, Palworld, Paper, PZ verified | G | XL | 31 |
 | 33 ◆ | Players know how to connect | join line; SSH-safe `gvm firewall plan`; `gvm ports` names owners | N | L | 24, 29 |
@@ -1522,6 +1522,22 @@ The pure rule-10 core and the operator-facing explanation are in. `make check` i
   - Secret values are written only through the jail, with `deny_keys`.
   - An undeclared secret reference is a load error.
 - **Rule 11:** adopted instances never have a key blanked.
+
+### 🟡 Partial — the EULA gate landed 2026-10-15; the config-file rendering and hook linkage remain
+
+The one bounded, cross-platform piece is in. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **The EULA gate (part of item 4).** The three Minecraft manifests (paper, forge, neoforge) gained a `legal.eula` block (var `accept_eula`, the minecraft.net/eula URL, a prompt) and an `accept_eula` bool var; revisions bumped to 3. `gvm create --game minecraft-*` refuses (exit 5) until the operator sets `--var accept_eula=true` themselves, showing the URL and the exact var — gvm never accepts it for them and no hook does (D-22). `TestCreateRefusesUnacceptedEULA`, `TestCreateAcceptsEULAWhenVarSet`.
+
+**Remaining (a dedicated session should take these — `gvm run` runtime):**
+- **Item 1 — render `config_files` in `supervise()`** through the jailed `hook.NewConfigAccess` (the first time `internal/hook` is linked), with the `Active()` wiring for `owner: server` files, `hook.ErrNotGenerated` skip on a first boot, port keys taking the allocated value (parse failure → ExitConfig 78), the `config-written.json` record and the "changed outside gvm" console note, PZ's `-port`/`-udpport` on argv, and `create_if_missing` for java_properties.
+- **Item 2 — `missingkey=error` with every declared secret in the map;** an unset `optional` secret renders empty on a managed instance and is skipped (never blanked) on an adopted one.
+- **Item 3 — `gvm apply --diff` shows config-file changes** (read-only parse while inactive, secret-tainted keys masked).
+- **Item 4 (rest) — the `pre_start` hook linkage** (`mc.select_jdk`, `pz.apply_sandbox`).
+- **Item 6 — the scratch-boot developer procedure doc.**
+
+**Effort for this task:** the EULA gate implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–29. The config-file rendering, the hook linkage and the secret-render semantics are their own body of `gvm run` runtime work.
 
 ---
 
