@@ -107,10 +107,10 @@ import an existing server install _(partial: `gvm adopt discover` and `finalize`
 
 Subcommands:
 
-- `discover` — inspect an existing server install
+- `discover` — inspect an existing server install — reads only; safe with players online
 - `cutover` — switch a legacy service over to gvm _(not in this build: not in this build)_
 - `rollback` — revert a cutover to the legacy service _(not in this build: not in this build)_
-- `finalize` — remove the legacy unit after a cutover
+- `finalize` — remove the legacy unit after a cutover — refuses within 7 days without --force
 
 Examples:
 

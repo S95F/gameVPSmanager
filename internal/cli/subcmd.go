@@ -36,6 +36,10 @@ type subGroup struct {
 	// …", so the sentence an operator sees names the thing they typed.
 	Verb string
 	Subs []subcmd
+	// Note is an optional line printed under the subcommand table in the
+	// group's help — a safety statement or a scope limit the operator should
+	// read before picking a subcommand.
+	Note string
 }
 
 func (g subGroup) names() []string {
@@ -90,6 +94,9 @@ func (g subGroup) printTable(w io.Writer) {
 		fmt.Fprintf(tw, "  %s\t%s\n", c.Name, subSummary(c))
 	}
 	_ = tw.Flush()
+	if g.Note != "" {
+		fmt.Fprintf(w, "\n%s\n", g.Note)
+	}
 }
 
 // subSummary appends an availability note to a subcommand's one-liner.

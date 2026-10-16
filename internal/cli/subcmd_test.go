@@ -35,6 +35,26 @@ func TestGroupHelpListsSubcommandsWithAvailability(t *testing.T) {
 	}
 }
 
+// TestAdoptHelpCarriesSafetyLines: `gvm help adopt` gives each step a one-line
+// safety statement and says what can be adopted (migration-adopt-14).
+func TestAdoptHelpCarriesSafetyLines(t *testing.T) {
+	h := newTestHost(t)
+	code, out, errb := runWith(t, h, "", "help", "adopt")
+	combined := out + errb
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, combined)
+	}
+	for _, want := range []string{
+		"reads only; safe with players online",
+		"refuses within 7 days without --force",
+		"Only Project Zomboid bash-suite installs can be adopted",
+	} {
+		if !strings.Contains(combined, want) {
+			t.Errorf("adopt help missing %q:\n%s", want, combined)
+		}
+	}
+}
+
 // TestGroupSubcommandRequiredExitsTwo: a group with no subcommand is a usage
 // error, and prints the table so the operator sees the choices.
 func TestGroupSubcommandRequiredExitsTwo(t *testing.T) {

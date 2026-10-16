@@ -14,14 +14,15 @@ import (
 
 func adoptGroup() subGroup {
 	return subGroup{Verb: "adopt", Subs: []subcmd{
-		{Name: "discover", Summary: "inspect an existing server install", Run: runAdoptDiscover,
-			Examples: []string{"gvm adopt discover --unit zomboid"}},
+		{Name: "discover", Summary: "inspect an existing server install — reads only; safe with players online",
+			Run: runAdoptDiscover, Examples: []string{"gvm adopt discover --unit zomboid"}},
 		{Name: "cutover", Summary: "switch a legacy service over to gvm",
 			Avail: avail.Unbuilt("not in this build"), Run: runAdoptUnbuilt("cutover")},
 		{Name: "rollback", Summary: "revert a cutover to the legacy service",
 			Avail: avail.Unbuilt("not in this build"), Run: runAdoptUnbuilt("rollback")},
-		{Name: "finalize", Summary: "remove the legacy unit after a cutover", Run: runAdoptFinalize},
-	}}
+		{Name: "finalize", Summary: "remove the legacy unit after a cutover — refuses within 7 days without --force",
+			Run: runAdoptFinalize},
+	}, Note: "Only Project Zomboid bash-suite installs can be adopted in this build."}
 }
 
 func runAdopt(ctx context.Context, env *Env, args []string) error {
