@@ -28,7 +28,7 @@ func runTokenCreate(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if *name == "" {
-		return fmt.Errorf("token create: --name is required")
+		return usageErr(&userError{Msg: "create needs --name", Hint: "a name for the token"})
 	}
 	_ = role
 	return errAdminUnbuilt("token create")

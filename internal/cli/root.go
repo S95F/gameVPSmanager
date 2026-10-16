@@ -328,10 +328,10 @@ func Main(ctx context.Context, env *Env) (code int) {
 		// contract intact.
 		var ce *codedError
 		if errors.As(err, &ce) {
-			fmt.Fprintf(env.Stderr, "gvm %s: %v\n", name, ce.err)
+			fmt.Fprintf(env.Stderr, "gvm %s: %s\n", name, renderError(env, ce.err))
 			return ce.code
 		}
-		fmt.Fprintf(env.Stderr, "gvm %s: %v\n", name, err)
+		fmt.Fprintf(env.Stderr, "gvm %s: %s\n", name, renderError(env, err))
 		return 1
 	}
 	return 0

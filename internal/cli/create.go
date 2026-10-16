@@ -17,7 +17,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -151,7 +150,10 @@ func parseCreateArgs(env *Env, args []string) (createOptions, error) {
 	opt.Name = name
 	if opt.Game == "" {
 		fs.Usage()
-		return createOptions{}, errors.New("--game is required; `gvm game list` shows what this box can run")
+		return createOptions{}, usageErr(&userError{
+			Msg:  "--game is required",
+			Hint: "`gvm game list` shows what this box can run",
+		})
 	}
 	if !spec.ValidGameID(opt.Game) {
 		return createOptions{}, fmt.Errorf("%q is not a game id", opt.Game)

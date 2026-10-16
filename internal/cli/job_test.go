@@ -685,24 +685,46 @@ func TestAJobRunRecordsAnAuditSpan(t *testing.T) {
 //
 // Section 14.4 records the trigger because the same failure means different
 // things from different ones: a nightly `update` that fails at 05:03 has
-// nobody watching. `gvm job run` is the unit's ExecStart, so it is a timer run
-// until a flag says otherwise; `gvm backup pz-main` is somebody at a keyboard.
+// nobody watching. `gvm job run` is the unit's ExecStart, so UNDER A UNIT
+// (systemd sets INVOCATION_ID) it is a timer run; typed at a keyboard it is a
+// cli run, and so is every operator verb like `gvm backup`.
 func TestTheTriggerIsTimerForAUnitInvokedRunAndCLIForAnOperatorVerb(t *testing.T) {
 	for _, tc := range []struct {
-		args []string
-		want jobs.Trigger
-		who  audit.ActorKind
+		args      []string
+		underUnit bool
+		want      jobs.Trigger
+		who       audit.ActorKind
 	}{
-		{args: []string{"job", "run", "_guard"}, want: jobs.TriggerTimer, who: audit.ActorTimer},
+		{args: []string{"job", "run", "_guard"}, underUnit: true, want: jobs.TriggerTimer, who: audit.ActorTimer},
+		{args: []string{"job", "run", "_guard"}, underUnit: false, want: jobs.TriggerCLI, who: audit.ActorRootCLI},
 		{args: []string{"backup", "verify"}, want: jobs.TriggerCLI, who: audit.ActorRootCLI},
 		{
-			args: []string{"job", "run", "_guard", "--trigger", "cli"},
+			args: []string{"job", "run", "_guard", "--trigger", "cli"}, underUnit: true,
 			want: jobs.TriggerCLI, who: audit.ActorRootCLI,
 		},
 	} {
-		t.Run(strings.Join(tc.args, "-"), func(t *testing.T) {
+		name := strings.Join(tc.args, "-")
+		if tc.underUnit {
+			name += "-under-unit"
+		}
+		t.Run(name, func(t *testing.T) {
 			h, _, _ := jobHost(t)
-			code, out, errb := runWith(t, h, "", append([]string{}, tc.args...)...)
+			getenv := func(string) string { return "" }
+			if tc.underUnit {
+				getenv = func(k string) string {
+					if k == "INVOCATION_ID" {
+						return "unit-abc"
+					}
+					return ""
+				}
+			}
+			var outb, errbuf strings.Builder
+			env := &Env{
+				Args: tc.args, Stdin: strings.NewReader(""), Stdout: &outb, Stderr: &errbuf,
+				Getenv: getenv, Geteuid: func() int { return 0 }, Host: h.HostEnv,
+			}
+			code := Main(context.Background(), env)
+			out, errb := outb.String(), errbuf.String()
 			if code != 0 {
 				t.Fatalf("exit %d: %s\n%s", code, errb, out)
 			}

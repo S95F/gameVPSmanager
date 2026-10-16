@@ -47,7 +47,7 @@ func runUserCreate(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if *email == "" {
-		return fmt.Errorf("user create: --email is required")
+		return usageErr(&userError{Msg: "create needs --email", Hint: "the new user's email address"})
 	}
 	_ = role
 	return errAdminUnbuilt("user create")
