@@ -423,6 +423,18 @@ func createExec(ctx context.Context, env *Env, h *HostEnv, t Transport, opt crea
 		return fmt.Errorf("%s does not validate:\n%s", opt.Game, diags.Errors())
 	}
 
+	// The allocation below reads reserved_ports from /etc/gvm/gvm.yaml, so a
+	// create cannot proceed on a config it cannot trust: a typo'd key is
+	// silently ignored by YAML and would hand out a port the operator meant to
+	// reserve. Refuse until the file is fixed (read-only commands only warn).
+	if _, cfgDiags := hostConfig(h); cfgDiags.HasErrors() {
+		bad := cfgDiags.Errors()[0]
+		return refused(&userError{
+			Msg:  "/etc/gvm/gvm.yaml does not validate, so port allocation cannot be trusted",
+			Hint: "fix it, then retry: " + strings.TrimSpace(bad.Msg),
+		})
+	}
+
 	occ, notes, err := buildOccupancy(ctx, h, opt.Name)
 	if err != nil {
 		return err

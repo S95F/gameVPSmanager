@@ -7,8 +7,6 @@ import (
 	"os"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/S95F/gameVPSmanager/internal/doctor"
 	"github.com/S95F/gameVPSmanager/internal/firewall"
 	"github.com/S95F/gameVPSmanager/internal/lifecycle"
@@ -35,13 +33,11 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 
-	// Load host config.
-	hostCfg, err := doctorLoadHostConfig()
-	if err != nil {
-		fmt.Fprintf(env.Stderr, "doctor: could not load host config (%v); using defaults\n", err)
-		d := spec.DefaultHostConfig()
-		hostCfg = &d
-	}
+	// Load host config. A bad file is not fatal to doctor — it reports the
+	// problem below and checks the rest of the host against the merged
+	// (defaults-filled) config, because an operator whose gvm.yaml has a typo
+	// still needs to know whether their servers are healthy.
+	hostCfg, cfgDiags := doctorLoadHostConfig()
 
 	// Build the check registry.
 	reg := &lifecycle.CheckRegistry{}
@@ -72,6 +68,21 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 
 	ce := &doctorCheckEnv{}
 	findings := reg.RunAll(ctx, ce)
+
+	// A host config that does not validate is a HOST-CONFIG Problem (one per
+	// bad key), with the did-you-mean the loader produced carried through.
+	for _, d := range cfgDiags {
+		if d.Sev != spec.SevError {
+			continue
+		}
+		msg := d.Msg
+		if d.Path != "" {
+			msg = d.Path + ": " + d.Msg
+		}
+		findings = append(findings, lifecycle.CheckFinding{
+			ID: "HOST-CONFIG", Severity: lifecycle.CheckProblem, Message: msg, Fix: d.Fix,
+		})
+	}
 
 	// A missing Postgres is a Note, not a problem and not a scary header line:
 	// the dashboard and the searchable audit history need it, game servers do
@@ -185,20 +196,17 @@ func (e *doctorCheckEnv) PostgresReachable(ctx context.Context) bool {
 	return e.reached
 }
 
-func doctorLoadHostConfig() (*spec.HostConfig, error) {
+// doctorLoadHostConfig reads /etc/gvm/gvm.yaml through the one loader
+// (spec.LoadHost), so doctor's view of the config matches create's and ports'.
+// An absent file is the normal unconfigured state: the defaults, no diagnostics.
+func doctorLoadHostConfig() (*spec.HostConfig, spec.Diags) {
 	const path = "/etc/gvm/gvm.yaml"
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		d := spec.DefaultHostConfig()
+		return &d, nil
 	}
-	defer f.Close()
-	var h spec.HostConfig
-	dec := yaml.NewDecoder(f)
-	dec.KnownFields(false)
-	if err := dec.Decode(&h); err != nil {
-		return nil, err
-	}
-	return &h, nil
+	return spec.LoadHost(path, data)
 }
 
 func doctorLoadInstances() []spec.Instance              { return nil }

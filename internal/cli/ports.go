@@ -30,8 +30,6 @@ import (
 	"github.com/S95F/gameVPSmanager/internal/platform"
 	"github.com/S95F/gameVPSmanager/internal/ports"
 	"github.com/S95F/gameVPSmanager/internal/spec"
-
-	"gopkg.in/yaml.v3"
 )
 
 // buildOccupancy gathers all five sources of section 6.7.
@@ -107,10 +105,12 @@ func buildOccupancy(ctx context.Context, h *HostEnv, self string) (*ports.Occupa
 		notes = append(notes, fmt.Sprintf("listening sockets could not be read: %v", err))
 	}
 
-	// 4. The operator's own don't-touch list.
-	cfg, cfgNote := hostConfig(h)
-	if cfgNote != "" {
-		notes = append(notes, cfgNote)
+	// 4. The operator's own don't-touch list. A config with a typo or a bad
+	//    value is noted (read-only commands warn, they do not refuse) and its
+	//    merged-onto-defaults value is still used.
+	cfg, cfgDiags := hostConfig(h)
+	for _, d := range cfgDiags {
+		notes = append(notes, "gvm.yaml: "+d.Msg)
 	}
 	occ.AddReserved(cfg.Spec.Firewall.ReservedPorts)
 
@@ -146,27 +146,28 @@ func (h *HostEnv) listeners() ([]ports.Listener, error) {
 	return ports.HostListeners()
 }
 
-// hostConfig reads /etc/gvm/gvm.yaml, falling back to the shipped defaults.
+// hostConfig reads /etc/gvm/gvm.yaml onto the shipped defaults and validates
+// it, returning the merged config and any diagnostics.
 //
-// An absent file is the normal state of a box nobody has configured and must
-// not be an error; an unparseable one is reported and then also falls back,
-// because refusing to allocate a port because the firewall stanza has a typo
-// in it would be a refusal out of all proportion to the fault.
-func hostConfig(h *HostEnv) (spec.HostConfig, string) {
+// An absent file is the normal state of a box nobody has configured and yields
+// the defaults with no diagnostics. A file that is present but wrong yields the
+// merged config (defaults where it said nothing) PLUS the diagnostics, so a
+// read-only caller can note them and a mutating one (create) can refuse: the
+// one loader, so doctor, ports and create cannot disagree about whether the
+// file is valid.
+func hostConfig(h *HostEnv) (spec.HostConfig, spec.Diags) {
 	cfg := spec.DefaultHostConfig()
 	p := spec.EtcDir + "/gvm.yaml"
 	raw, err := h.files().ReadFile(p)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return cfg, ""
+			return cfg, nil
 		}
-		return cfg, fmt.Sprintf("%s could not be read (%v); shipped defaults used", p, err)
+		return cfg, spec.Diags{{File: p, Sev: spec.SevWarning,
+			Msg: fmt.Sprintf("could not be read (%v); shipped defaults used", err)}}
 	}
-	var got spec.HostConfig
-	if err := yaml.Unmarshal(raw, &got); err != nil {
-		return cfg, fmt.Sprintf("%s does not parse (%v); shipped defaults used", p, err)
-	}
-	return got, ""
+	loaded, diags := spec.LoadHost(p, raw)
+	return *loaded, diags
 }
 
 func runPorts(ctx context.Context, env *Env, args []string) error {
