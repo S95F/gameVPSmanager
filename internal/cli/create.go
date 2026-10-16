@@ -330,6 +330,14 @@ func recommendedJobs(m *spec.Manifest) map[string]spec.Job {
 		if action == "" {
 			action = name
 		}
+		// A game with mods cannot run an `update` in this build — the mod
+		// engine is not here — and its nightly exists for the restart that
+		// clears heap pressure (Project Zomboid), so write it as a ladder
+		// restart rather than a nightly that would fail every night. Phase 44/45
+		// restore the update action. A content-free game keeps `update`.
+		if action == "update" && moddedUpdateUnavailable(m) {
+			action = "restart"
+		}
 		out[name] = spec.Job{
 			Schedule:        "*-*-* " + rj.At + ":00",
 			Action:          action,
@@ -338,6 +346,15 @@ func recommendedJobs(m *spec.Manifest) map[string]spec.Job {
 		}
 	}
 	return out
+}
+
+// moddedUpdateUnavailable reports whether a manifest's `update` nightly cannot
+// run in this build because the game declares mods and the mod engine is not
+// here. It keys on a non-empty content block (Project Zomboid, the Minecraft
+// manifests), not on the engine wiring, so a content-free game's update
+// nightly is left intact for the install engine to run.
+func moddedUpdateUnavailable(m *spec.Manifest) bool {
+	return len(m.Spec.Content) > 0
 }
 
 // backupKeep is the retention an instance is created with.
@@ -555,6 +572,21 @@ func printCreated(w io.Writer, inst *spec.Instance, m *spec.Manifest, occ *ports
 	}
 	for _, n := range notes {
 		fmt.Fprintf(w, "           %s\n", n)
+	}
+
+	// Say plainly when a recommended `update` nightly was written as a restart,
+	// so the operator is not surprised that the nightly does not update.
+	if moddedUpdateUnavailable(m) {
+		for name, rj := range m.Spec.Jobs {
+			action := rj.Action
+			if action == "" {
+				action = name
+			}
+			if action == "update" {
+				fmt.Fprintf(w, "  nightly   %s: restart through the ladder (updating a game with "+
+					"mods needs the mod engine, which this build does not have)\n", name)
+			}
+		}
 	}
 
 	if refs, err := spec.ScanManifestRefs(m); err == nil && len(refs.Secrets) > 0 {
