@@ -172,6 +172,48 @@ func TestStartBeforeInstallIsRefusedWithTheInstallHint(t *testing.T) {
 	}
 }
 
+// --budget was removed from every lifecycle verb (Phase 34). Passing it is a
+// usage error (exit 2), not a silently ignored flag, and the message points at
+// where the ladder's budget actually lives -- spec.shutdown.budget in the
+// instance's YAML -- so an operator who reaches for the old flag is told what
+// to edit instead. The rejection happens at parse time, before any host work,
+// so a mistyped budget never touches systemd.
+func TestBudgetFlagIsGoneAndSaysWhereToSetIt(t *testing.T) {
+	h := newTestHost(t)
+	for _, verb := range []string{"start", "stop", "restart"} {
+		code, _, errb := runWith(t, h, "", verb, "valheim-1", "--budget", "30")
+		if code != 2 {
+			t.Errorf("%s --budget 30: exit %d, want 2 (usage)\n%s", verb, code, errb)
+		}
+		if !strings.Contains(errb, "spec.shutdown.budget") {
+			t.Errorf("%s --budget: the error does not point at spec.shutdown.budget:\n%s", verb, errb)
+		}
+		if !strings.Contains(errb, "gvm apply") {
+			t.Errorf("%s --budget: the error does not say to run gvm apply:\n%s", verb, errb)
+		}
+	}
+	if len(h.Systemd.calls) != 0 {
+		t.Errorf("a rejected --budget still talked to systemd: %v", h.Systemd.calls)
+	}
+}
+
+// --budget is not advertised anywhere: it is hidden from the usage block, so an
+// operator reading `gvm start --help` sees only the flags that still work.
+func TestLifecycleUsageDoesNotMentionBudget(t *testing.T) {
+	h := newTestHost(t)
+	code, out, errb := runWith(t, h, "", "start", "--help")
+	if code != 0 {
+		t.Fatalf("start --help: exit %d, want 0\n%s\n%s", code, out, errb)
+	}
+	usage := out + errb
+	if !strings.Contains(usage, "--reason") {
+		t.Errorf("start --help does not show the flags that remain:\n%s", usage)
+	}
+	if strings.Contains(usage, "budget") {
+		t.Errorf("start --help still advertises --budget:\n%s", usage)
+	}
+}
+
 // A verb against an instance with no definition is refused by the precondition
 // table, not by a nil dereference somewhere downstream.
 func TestALifecycleVerbOnAnAbsentInstanceIsRefused(t *testing.T) {
