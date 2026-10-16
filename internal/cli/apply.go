@@ -31,10 +31,11 @@ import (
 )
 
 type applyOptions struct {
-	Name   string
-	Diff   bool
-	Yes    bool
-	Remote string
+	Name    string
+	Diff    bool
+	Yes     bool
+	Verbose bool
+	Remote  string
 }
 
 func parseApplyArgs(env *Env, verb string, args []string) (applyOptions, error) {
@@ -53,6 +54,7 @@ func parseApplyArgs(env *Env, verb string, args []string) (applyOptions, error) 
 	fs.BoolVar(&opt.Diff, "diff", false, "print the plan and change nothing")
 	fs.BoolVar(&dryRun, "dry-run", false, "alias for --diff")
 	fs.BoolVar(&dry, "dry", false, "alias for --diff")
+	fs.BoolVar(&opt.Verbose, "verbose", false, "with --diff, show every row, including the ones already correct")
 	fs.BoolVar(&opt.Yes, "yes", false, "answer the confirmation for a plan that removes data")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
@@ -217,7 +219,7 @@ func applyOrDiff(ctx context.Context, env *Env, verb string, args []string) erro
 		return err
 	}
 	if opt.Diff {
-		printPlan(env.Stdout, pl)
+		printPlan(env.Stdout, pl, opt.Verbose)
 		return nil
 	}
 

@@ -91,21 +91,30 @@ func TestApplyDiffPrintsThePlanAndChangesNothing(t *testing.T) {
 
 	// The section 17.6 shape: a header naming the instance and its pinned
 	// manifest, sigil-led step lines, and a closing count that says plainly
-	// that nothing happened.
+	// that nothing happened. By default only the CHANGED rows are shown; the
+	// already-correct ones are hidden behind --verbose, so the two rows that
+	// matter are not buried under a screenful of "= already correct".
 	for _, want := range []string{
 		"instance valheim-1", "valheim rev", "pinned",
 		"+ dir /etc/gvm/instances/valheim-1.d",
-		// `gvm create` already wrote the definition, so apply reports it as
-		// unchanged rather than re-writing it. "unchanged" being a first-class
-		// outcome is the whole reason the sigil column exists.
-		"= file /etc/gvm/instances/valheim-1.yaml",
 		"+ user gvm-valheim-1",
 		"+ dropin " + instance.DropInPath("valheim-1"),
 		"already correct", "nothing has been applied",
+		"already-correct row(s) hidden",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--diff output is missing %q:\n%s", want, out)
 		}
+	}
+	// The unchanged definition row is a first-class outcome — the whole reason
+	// the sigil column exists — but it is a --verbose detail now, not default
+	// noise. It must NOT appear by default, and MUST appear under --verbose.
+	if strings.Contains(out, "= file /etc/gvm/instances/valheim-1.yaml") {
+		t.Errorf("--diff showed an already-correct row by default:\n%s", out)
+	}
+	_, vout, _ := runWith(t, h, "", "apply", "valheim-1", "--diff", "--verbose")
+	if !strings.Contains(vout, "= file /etc/gvm/instances/valheim-1.yaml") {
+		t.Errorf("--diff --verbose did not show the unchanged definition row:\n%s", vout)
 	}
 	// A diff never runs the write-probe, and must say so rather than showing
 	// a sandbox that looks checked.
