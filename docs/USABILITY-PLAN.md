@@ -227,7 +227,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 26 🟡 | Choose a game, and always know the next step | `gvm game show`; `next:` after every command; RAM/disk warnings | S | M | 22 |
 | 27 🟡 | The runner never kills a game mid-save, and never boots blind | Proton ladder fix; a2s/mc_ping probes; boot deaths stop looping; ProtectProc | H | L | 22, 24 |
 | 28 ◆ 🟡 | A server that cannot run says why; stop always stops | crash loops shown; guard capped; stop works on a dead runner | H | L | 27 |
-| 29 | Passwords and keys, set locally | `gvm secret set/show`; join password by default | G | L | 22, 24 |
+| 29 🟡 | Passwords and keys, set locally | `gvm secret set/show`; join password by default | G | L | 22, 24 |
 | 30 ◆ | Settings and hooks reach the game | config_files rendered; pre-start hooks; operator accepts the EULA | G | L | 26, 29 |
 | 31 | Game files: install, update and repair | `gvm install` works; update timers either work or say they can't | G | L | 26, 28, 30 |
 | 32 ◆ | Prove a game boots before it is offered | `gvm game try --scratch`; boot ledger; Valheim, Palworld, Paper, PZ verified | G | XL | 31 |
@@ -1437,6 +1437,23 @@ This phase ships in the same release as Phase 30 (U3). A password gvm stores mus
 - **Rule 10:** the character ban is enforced at write for every secret that reaches a game, and generated passwords are base62. Host API keys never reach a game, so they keep only the file-format rules, which is what rule 10 already allows.
 - **Rule 4:** nothing restarts automatically, and `--restart` uses the ladder.
 - **Rule 11:** gvm never generates or rotates an adopted instance's secrets. Its values arrive only through cutover's import (Phase 50), after discovery has stayed read-only.
+
+### 🟡 Partial — the rule-10 validation and a secrets help topic landed 2026-10-15; the secret command surface remains
+
+The pure rule-10 core and the operator-facing explanation are in. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Rule-10 instance-secret validation.** `secrets.ValidateInstanceValue` is `ValidateValue` plus the ban on characters a secret cannot carry into a game's argv or config files — a quote, backslash, dollar sign, backtick, semicolon, equals sign or whitespace — reporting the offending byte's OFFSET and its reason (`ErrBannedChar`), never the byte and never the value. Host-scope secrets keep only the file-format rules, so a CurseForge `$2a$10$…` key passes as a host secret and is refused as an instance one — the separation item 1 calls for. `TestValidateInstanceValueBansGameHostileChars`, `TestHostSecretsKeepOnlyFileRules`.
+- **`gvm help secrets`** explains instance vs host secrets, the character rule, that a value never comes from argv, and that setting secrets from the CLI lands in a later release.
+
+**Remaining (a dedicated session should take these — the L-effort body):**
+- **Item 1 — the `gvm secret set|list|show-path|rotate|show` surface** through `secrets.Store`, in-process as root, with the no-echo TTY prompt, `--from-file`/`--generate`/stdin value sources, the `.source` sidecar, length+fingerprint output and the `secret.write`/`secret.read` audit. This flips `secret` from NotInBuild to built, which cascades into verification (Phase 32).
+- **Item 2 — the declarative `secrets:` block** in manifests, plus the revision bumps across the 16 shipped games.
+- **Items 3–6 — passworded-by-default `create`, the join-password print, `secret show` read-back.**
+- **Item 7 — doctor INST-011 (credentials) and HOST-006..008** in their own check file (HOST-006/007 Skip pre-dashboard, HOST-008 runs now).
+- **Item 8 (rest) — the misleading-text fixes** at the four cited call sites.
+
+**Effort for this task:** the rule-10 validation and the help topic implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–28. The secret command surface, the manifest `secrets:` blocks and the doctor checks are their own body of work.
 
 ---
 
