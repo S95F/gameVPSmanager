@@ -428,6 +428,20 @@ func createExec(ctx context.Context, env *Env, h *HostEnv, t Transport, opt crea
 			Hint: "copy it to /etc/gvm/games/" + opt.Game + ".yaml and change metadata.id first",
 		})
 	}
+	// The EULA gate (D-22): a game behind a licence agreement is not created
+	// until the operator accepts it themselves, by setting the manifest's
+	// acceptance var true. gvm never accepts it for them, and no hook does.
+	if l := m.Spec.Legal; l != nil && l.EULA != nil && opt.Vars[l.EULA.Var] != "true" {
+		msg := "this game requires accepting its EULA before it can be created"
+		if l.EULA.Prompt != "" {
+			msg = l.EULA.Prompt
+		}
+		hint := "then add --var " + l.EULA.Var + "=true"
+		if l.EULA.URL != "" {
+			hint = "read " + l.EULA.URL + ", " + hint
+		}
+		return refused(&userError{Msg: msg, Hint: hint})
+	}
 
 	// The allocation below reads reserved_ports from /etc/gvm/gvm.yaml, so a
 	// create cannot proceed on a config it cannot trust: a typo'd key is
