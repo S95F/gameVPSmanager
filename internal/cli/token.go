@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"flag"
-	"fmt"
 )
 
 func tokenGroup() subGroup {
@@ -50,7 +49,7 @@ func runTokenRevoke(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("token revoke: <token-prefix> required")
+		return usageErr(&userError{Msg: "revoke needs a token prefix", Hint: "`gvm token list` shows the prefixes"})
 	}
 	return errAdminUnbuilt("token revoke")
 }

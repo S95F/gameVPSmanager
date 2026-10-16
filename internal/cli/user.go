@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"flag"
-	"fmt"
 	"strings"
 
 	"github.com/S95F/gameVPSmanager/internal/avail"
@@ -60,7 +59,7 @@ func runUserShow(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("user show: <email> required")
+		return usageErr(&userError{Msg: "show needs an email", Hint: "the user to show"})
 	}
 	return errAdminUnbuilt("user show")
 }
@@ -72,7 +71,7 @@ func runUserSetRole(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 2 {
-		return fmt.Errorf("user set-role: <email> <role> required")
+		return usageErr(&userError{Msg: "set-role needs <email> <role>", Hint: "the user, then viewer|operator|admin"})
 	}
 	return errAdminUnbuilt("user set-role")
 }
@@ -84,7 +83,7 @@ func runUserSetPassword(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("user set-password: <email> required")
+		return usageErr(&userError{Msg: "set-password needs an email", Hint: "the user whose password to set"})
 	}
 	return errAdminUnbuilt("user set-password")
 }
@@ -96,7 +95,7 @@ func runUserDisable(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("user disable: <email> required")
+		return usageErr(&userError{Msg: "disable needs an email", Hint: "the user to disable"})
 	}
 	return errAdminUnbuilt("user disable")
 }
@@ -108,7 +107,7 @@ func runUserEnable(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("user enable: <email> required")
+		return usageErr(&userError{Msg: "enable needs an email", Hint: "the user to enable"})
 	}
 	return errAdminUnbuilt("user enable")
 }
@@ -120,7 +119,7 @@ func runUserResetTOTP(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("user reset-totp: <email> required")
+		return usageErr(&userError{Msg: "reset-totp needs an email", Hint: "the user whose TOTP enrolment to clear"})
 	}
 	return errAdminUnbuilt("user reset-totp")
 }
