@@ -577,16 +577,20 @@ func overrideSkipNote(diags spec.Diags) string {
 // for `gvm stop` and for `gvm status` must be the same sentence: two spellings
 // of the same refusal read as two different problems.
 func oneInstance(pos []string) (string, error) {
+	// A missing, extra or malformed instance is a usage mistake, not a failed
+	// action: it carries exit 2 (U8) so a script can tell "typed it wrong" from
+	// "the action failed", and the same userError shape every other usage error
+	// uses.
 	switch len(pos) {
 	case 0:
-		return "", errors.New("name an instance")
+		return "", usageErr(&userError{Msg: "name an instance", Hint: "`gvm list` shows them"})
 	case 1:
 		if err := instance.ValidateName(pos[0]); err != nil {
-			return "", err
+			return "", usageErr(err)
 		}
 		return pos[0], nil
 	default:
-		return "", fmt.Errorf("name one instance, not %d", len(pos))
+		return "", usageErr(fmt.Errorf("name one instance, not %d", len(pos)))
 	}
 }
 

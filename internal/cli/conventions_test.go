@@ -39,6 +39,25 @@ func TestDryRunAliases(t *testing.T) {
 	})
 }
 
+// TestMissingInstanceIsUsageError: a verb invoked with no instance is a usage
+// mistake (exit 2, U8), not a failed action (exit 1), across every verb that
+// resolves its instance through oneInstance.
+func TestMissingInstanceIsUsageError(t *testing.T) {
+	for _, verb := range []string{"apply", "start", "stop", "restart", "destroy", "logs"} {
+		t.Run(verb, func(t *testing.T) {
+			h := newTestHost(t)
+			code, _, errb := runWith(t, h, "", verb)
+			if code != exitUsage {
+				t.Errorf("`gvm %s` with no instance exited %d, want %d (usage):\n%s",
+					verb, code, exitUsage, errb)
+			}
+			if !strings.Contains(errb, "name an instance") {
+				t.Errorf("`gvm %s` did not say to name an instance:\n%s", verb, errb)
+			}
+		})
+	}
+}
+
 // TestBackupRunAlias: `gvm backup run <instance>` is the explicit spelling of
 // `gvm backup <instance>` — it routes to the same nightly, so `run` never gets
 // mistaken for an instance name.

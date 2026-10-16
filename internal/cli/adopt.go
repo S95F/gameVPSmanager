@@ -55,7 +55,7 @@ func runAdoptDiscover(_ context.Context, env *Env, args []string) error {
 	discEnv := adopt.OSDiscoverEnv("")
 	r, err := adopt.DiscoverPZ(discEnv, *unitName)
 	if err != nil {
-		return fmt.Errorf("adopt discover: %w", err)
+		return fmt.Errorf("discover: %w", err)
 	}
 
 	fmt.Fprint(env.Stdout, adopt.FormatDiscoverResult(r))
@@ -63,7 +63,7 @@ func runAdoptDiscover(_ context.Context, env *Env, args []string) error {
 	// Exit non-zero if there are any errors in the findings.
 	for _, f := range r.Findings {
 		if f.Severity == "error" {
-			return fmt.Errorf("adopt discover: %d finding(s) require attention before cutover",
+			return fmt.Errorf("discover: %d finding(s) require attention before cutover",
 				countErrors(r.Findings))
 		}
 	}
@@ -82,7 +82,10 @@ func runAdoptFinalize(ctx context.Context, env *Env, args []string) error {
 		return flagErr(err)
 	}
 	if *serverName == "" || *unitPath == "" {
-		return fmt.Errorf("adopt finalize: --name and --unit-path are required")
+		return usageErr(&userError{
+			Msg:  "finalize needs --name and --unit-path",
+			Hint: "the instance, and the legacy unit file to remove",
+		})
 	}
 	if *adoptedFrom != "" {
 		fmt.Fprintln(env.Stderr, "adopt finalize: --adopted-from is ignored; the value is read "+

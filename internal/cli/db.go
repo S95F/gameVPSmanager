@@ -72,14 +72,14 @@ func runDBStatus(ctx context.Context, env *Env, args []string) error {
 
 	pool, closer, err := dbWaitPool(ctx, *dsn)
 	if err != nil {
-		return fmt.Errorf("db status: %w", err)
+		return fmt.Errorf("status: %w", err)
 	}
 	defer closer()
 
 	m := store.NewMigrator(pool)
 	v, err := m.Version(ctx)
 	if err != nil {
-		return fmt.Errorf("db status: %w", err)
+		return fmt.Errorf("status: %w", err)
 	}
 	status := "up to date"
 	switch {
@@ -121,14 +121,14 @@ func runDBMigrate(ctx context.Context, env *Env, args []string) error {
 
 	pool, closer, err := dbWaitPool(ctx, migDSN)
 	if err != nil {
-		return fmt.Errorf("db migrate: %w", err)
+		return fmt.Errorf("migrate: %w", err)
 	}
 	defer closer()
 
 	m := store.NewMigrator(pool)
 	before, _ := m.Version(ctx)
 	if err := m.Migrate(ctx); err != nil {
-		return fmt.Errorf("db migrate: %w", err)
+		return fmt.Errorf("migrate: %w", err)
 	}
 	after, _ := m.Version(ctx)
 	if before == after {
@@ -154,13 +154,13 @@ func runDBReplaySpool(ctx context.Context, env *Env, args []string) error {
 
 	pool, closer, err := dbWaitPool(ctx, *dsn)
 	if err != nil {
-		return fmt.Errorf("db replay-spool: %w", err)
+		return fmt.Errorf("replay-spool: %w", err)
 	}
 	defer closer()
 
 	stats, err := audit.ReplaySpool(ctx, pool, *spoolDir)
 	if err != nil {
-		return fmt.Errorf("db replay-spool: %w", err)
+		return fmt.Errorf("replay-spool: %w", err)
 	}
 	fmt.Fprintf(env.Stdout, "replayed %d file(s) from %s: %d inserted, %d duplicate\n",
 		stats.Files, *spoolDir, stats.OK, stats.Dup)
@@ -182,7 +182,7 @@ func runDBCheckGrants(ctx context.Context, env *Env, args []string) error {
 
 	pool, closer, err := dbWaitPool(ctx, webDSN)
 	if err != nil {
-		return fmt.Errorf("db check-grants: %w", err)
+		return fmt.Errorf("check-grants: %w", err)
 	}
 	defer closer()
 
@@ -193,7 +193,7 @@ func runDBCheckGrants(ctx context.Context, env *Env, args []string) error {
 	if queryErr == nil {
 		// A row was returned: SELECT was permitted and a value was readable.
 		fmt.Fprintln(env.Stderr, "FAIL: gvm_web can read totp_secret_ct (a restricted column was readable)")
-		return errors.New("db check-grants: totp_secret_ct is readable by gvm_web")
+		return errors.New("check-grants: totp_secret_ct is readable by gvm_web")
 	}
 	if isPermissionDenied(queryErr) {
 		fmt.Fprintln(env.Stdout, "OK: gvm_web cannot read totp_secret_ct (the restricted column is not readable)")
@@ -202,13 +202,13 @@ func runDBCheckGrants(ctx context.Context, env *Env, args []string) error {
 	if errors.Is(queryErr, pgx.ErrNoRows) {
 		// No rows, but the query was permitted — the column IS readable.
 		fmt.Fprintln(env.Stderr, "FAIL: gvm_web can read totp_secret_ct (table empty but SELECT was not denied — the column is readable)")
-		return errors.New("db check-grants: totp_secret_ct is readable by gvm_web")
+		return errors.New("check-grants: totp_secret_ct is readable by gvm_web")
 	}
 	// Any other error (e.g. table doesn't exist yet) counts as inconclusive.
 	// Inconclusive (e.g. the table does not exist yet): exit 4, so a CI gate
 	// does not read "could not check" as "checked and safe" (admin-security-7).
 	fmt.Fprintf(env.Stdout, "INCONCLUSIVE: could not check totp_secret_ct: %v\n", queryErr)
-	return checked(fmt.Errorf("db check-grants: inconclusive: %v", queryErr))
+	return checked(fmt.Errorf("check-grants: inconclusive: %v", queryErr))
 }
 
 // dbWaitPool opens a store, waits for the pool to be ready within

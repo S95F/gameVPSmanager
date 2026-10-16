@@ -179,10 +179,10 @@ func runBackupPrune(ctx context.Context, env *Env, args []string) error {
 func oneOrNoInstance(pos []string, flagName string) (string, error) {
 	switch {
 	case len(pos) > 1:
-		return "", fmt.Errorf("name one instance, not %d", len(pos))
+		return "", usageErr(fmt.Errorf("name one instance, not %d", len(pos)))
 	case len(pos) == 1 && flagName != "" && pos[0] != flagName:
-		return "", fmt.Errorf("two different instances named: %q and --instance %q",
-			pos[0], flagName)
+		return "", usageErr(fmt.Errorf("two different instances named: %q and --instance %q",
+			pos[0], flagName))
 	case len(pos) == 1:
 		return pos[0], instanceNameOK(pos[0])
 	case flagName != "":
