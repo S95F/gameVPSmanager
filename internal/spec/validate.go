@@ -128,6 +128,25 @@ func (r registry) names() []string {
 
 func (r registry) nearest(name string) string { return nearestName(name, r.names()) }
 
+// implemented returns the entries this build declares SupportImplemented.
+func (r registry) implemented() []string {
+	out := make([]string, 0, len(r.entries))
+	for n, s := range r.entries {
+		if s == SupportImplemented {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ImplementedProbeKinds returns the readiness probe kinds this build declares
+// as fully supported. internal/runner's TestEveryImplementedProbeKindIsBuilt
+// reads it to prove BuildProbes can construct each one, so the validation
+// registry and the builder cannot drift (a kind validate accepts but the
+// runner cannot build would send READY=1 for a check that never ran).
+func ImplementedProbeKinds() []string { return probeKinds.implemented() }
+
 var (
 	providerKinds = registry{what: "provider kind", entries: map[string]Support{
 		ProviderSteamCMD:  SupportImplemented,
@@ -160,12 +179,15 @@ var (
 	}}
 
 	probeKinds = registry{what: "readiness probe kind", entries: map[string]Support{
-		"log_marker":   SupportImplemented,
-		"tcp_probe":    SupportImplemented,
-		"udp_probe":    SupportImplemented,
-		"a2s":          SupportImplemented,
-		"mc_ping":      SupportImplemented,
-		"control_auth": SupportImplemented,
+		"log_marker": SupportImplemented,
+		"tcp_probe":  SupportImplemented,
+		"udp_probe":  SupportImplemented,
+		"a2s":        SupportImplemented,
+		"mc_ping":    SupportImplemented,
+		// control_auth is planned, not built: the runner's BuildProbes cannot
+		// construct it yet, so validate warns rather than letting a manifest
+		// rely on a readiness check that would never run.
+		"control_auth": SupportPlanned,
 	}}
 
 	// hookNames is the v1 registry of section 8.8. internal/hook.Get is the

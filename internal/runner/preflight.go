@@ -38,6 +38,14 @@ const (
 	// ProtectHome mistake, which must fail here in under a second rather than
 	// silently at the first world write.
 	ExitConfig = 78
+	// ExitBootDied (69) means the game exited before it was ready. It is
+	// deliberately NOT restart-prevented: a single transient death — a slow
+	// disk, a one-off upstream hiccup — should retry.
+	ExitBootDied = 69
+	// ExitBootLoop (79) means the game failed to reach ready three times in a
+	// row, so gvm stopped retrying. It IS restart-prevented: a server that
+	// cannot boot three times needs a human, not a fourth restart.
+	ExitBootLoop = 79
 )
 
 // Failure is a preflight refusal: a check that failed, the sentence systemd's

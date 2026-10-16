@@ -495,6 +495,7 @@ func TestTheExitCodeTableHasAHintForEveryRestartPreventedCode(t *testing.T) {
 		runner.ExitDataErr:  "gvm doctor pz-main",
 		exitPortUnavailable: "gvm ports pz-main",
 		runner.ExitConfig:   "gvm apply --diff pz-main",
+		runner.ExitBootLoop: "gvm logs pz-main --shutdown",
 	}
 	for code, hint := range want {
 		o := base()
@@ -512,6 +513,24 @@ func TestTheExitCodeTableHasAHintForEveryRestartPreventedCode(t *testing.T) {
 		if !strings.Contains(v.Reason, exitMeaning(code)) {
 			t.Errorf("exit %d reason %q does not explain the code", code, v.Reason)
 		}
+	}
+}
+
+// TestExitMeaningClassifiesEveryRoleCode: every exit code in the section 7.8
+// contract has a sentence, and the boot codes 69/79 are present (Phase 27).
+func TestExitMeaningClassifiesEveryRoleCode(t *testing.T) {
+	for _, code := range []int{
+		runner.ExitUsage, runner.ExitDataErr, exitPortUnavailable,
+		runner.ExitBootDied, runner.ExitSoftware, runner.ExitTempFail,
+		runner.ExitConfig, runner.ExitBootLoop,
+	} {
+		if m := exitMeaning(code); m == "unclassified" {
+			t.Errorf("exit %d has no sentence in the section 7.8 table", code)
+		}
+	}
+	// 75's sentence now admits the readiness-failure cause, not only the orphan.
+	if m := exitMeaning(runner.ExitTempFail); !strings.Contains(m, "readiness") {
+		t.Errorf("exit 75 meaning %q should mention readiness failure", m)
 	}
 }
 

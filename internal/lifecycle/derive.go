@@ -441,9 +441,13 @@ func exitHint(o Observation) string {
 		// write-probe, which is what names the path (D-15).
 		return "gvm apply --diff " + o.Name
 	case runner.ExitTempFail:
-		// 75: an orphan from the previous run. It clears itself, so the hint
-		// is to look rather than to act.
+		// 75: an orphan from the previous run, or a readiness failure. It
+		// clears itself, so the hint is to look rather than to act.
 		return "gvm status " + o.Name
+	case runner.ExitBootLoop:
+		// 79: gave up after three failed boots. The shutdown record of the last
+		// attempt holds the STATUS line that says why.
+		return "gvm logs " + o.Name + " --shutdown"
 	}
 	return "gvm logs " + o.Name
 }
@@ -516,14 +520,33 @@ func exitMeaning(code int) string {
 		return "preflight failed"
 	case exitPortUnavailable:
 		return "port unavailable at bind time"
+	case runner.ExitBootDied:
+		return "the game exited before it was ready"
 	case runner.ExitSoftware:
 		return "the runner panicked"
 	case runner.ExitTempFail:
-		return "an orphaned game process from a previous run is still alive"
+		return "readiness failed (timeout, stall or marker), or an orphan from a previous run"
 	case runner.ExitConfig:
 		return "the sandbox blocks a required write"
+	case runner.ExitBootLoop:
+		return "the game failed to reach ready 3 times in a row; gvm stopped retrying"
 	}
 	return "unclassified"
+}
+
+// RestartPreventExitStatus is the exit codes where a restart cannot help, so
+// systemd must not retry — the Go twin of gvm@.service's RestartPreventExitStatus=
+// directive. A packaging test asserts the two agree. Phase 28's NeedsOperator
+// and the role-exit test read it, so the set lives in one place.
+//
+// 69 (boot death) is NOT here: a single transient death should retry. 79 (boot
+// loop) IS: three failures in a row need a human.
+var RestartPreventExitStatus = []int{
+	runner.ExitUsage,    // 64
+	runner.ExitDataErr,  // 65
+	exitPortUnavailable, // 66
+	runner.ExitConfig,   // 78
+	runner.ExitBootLoop, // 79
 }
 
 func holdReason(o Observation) string {
