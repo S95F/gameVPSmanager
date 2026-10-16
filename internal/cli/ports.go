@@ -179,6 +179,7 @@ func runPorts(ctx context.Context, env *Env, args []string) error {
 		fs.PrintDefaults()
 	}
 	remote := fs.String("remote", "", "dashboard URL to run this against instead of the local host")
+	asJSON := fs.Bool("json", false, "print the occupancy (and any conflicts) as JSON")
 
 	pos, err := parseWithInstance(fs, args)
 	if err != nil {
@@ -209,25 +210,68 @@ func runPorts(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOccupancy(env.Stdout, occ, notes)
 
-	if name == "" {
-		return nil
+	// When an instance is named we also re-check its materialised allocation,
+	// so gather the conflicts before choosing a format: --json emits one
+	// document, the text path prints the two sections.
+	var cs []ports.Conflict
+	if name != "" {
+		in, _, err := loadInstance(h, name)
+		if err != nil {
+			return err
+		}
+		m, err := pinnedManifest(h, in)
+		if err != nil {
+			return err
+		}
+		cs, err = ports.CheckSpec(name, m.Spec, ports.Allocation(in.Spec.Ports), occ)
+		if err != nil {
+			return err
+		}
 	}
-	in, _, err := loadInstance(h, name)
-	if err != nil {
-		return err
+
+	if *asJSON {
+		return writeJSON(env.Stdout, portsJSON(occ, notes, name, cs))
 	}
-	m, err := pinnedManifest(h, in)
-	if err != nil {
-		return err
+	printOccupancy(env.Stdout, occ, notes)
+	if name != "" {
+		printPortConflicts(env.Stdout, name, cs)
 	}
-	cs, err := ports.CheckSpec(name, m.Spec, ports.Allocation(in.Spec.Ports), occ)
-	if err != nil {
-		return err
-	}
-	printPortConflicts(env.Stdout, name, cs)
 	return nil
+}
+
+// portsJSON is the structured twin of printOccupancy/printPortConflicts, so a
+// script reads the same facts a human does without parsing the table.
+func portsJSON(occ *ports.Occupancy, notes []string, name string, cs []ports.Conflict) map[string]any {
+	eps := occ.Endpoints()
+	ports.SortEndpoints(eps)
+	endpoints := make([]map[string]any, 0, len(eps))
+	for _, ep := range eps {
+		claims := make([]map[string]any, 0)
+		for _, c := range occ.Claims(ep) {
+			claims = append(claims, map[string]any{
+				"source": string(c.Source), "owner": c.Owner, "desc": c.Desc,
+			})
+		}
+		endpoints = append(endpoints, map[string]any{
+			"proto": ep.Proto, "port": ep.Port, "claims": claims,
+		})
+	}
+	r := occ.Ephemeral()
+	out := map[string]any{
+		"endpoints": endpoints,
+		"ephemeral": map[string]any{"low": r.Low, "high": r.High, "assumed": occ.EphemeralAssumed()},
+		"notes":     notes,
+	}
+	if name != "" {
+		conflicts := make([]map[string]any, 0, len(cs))
+		for _, c := range cs {
+			conflicts = append(conflicts, map[string]any{"kind": c.Kind, "detail": c.Detail})
+		}
+		out["instance"] = name
+		out["conflicts"] = conflicts
+	}
+	return out
 }
 
 func printOccupancy(w io.Writer, occ *ports.Occupancy, notes []string) {

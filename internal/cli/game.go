@@ -473,6 +473,7 @@ func plural(n int, noun string) string {
 
 func runGameList(env *Env, args []string) error {
 	fs, unapproved := gameFlags(env, "list", "")
+	asJSON := fs.Bool("json", false, "print the catalog as JSON")
 	if err := fs.Parse(args); err != nil {
 		return flagErr(err)
 	}
@@ -484,6 +485,38 @@ func runGameList(env *Env, args []string) error {
 	cat := gameCatalog()
 	ids, listErr := cat.List()
 	auth := overrideAuth(*unapproved)
+
+	if *asJSON {
+		games := make([]map[string]any, 0, len(ids))
+		broken := 0
+		for _, id := range ids {
+			cands, _, err := cat.Resolve(id, auth)
+			if err != nil {
+				broken++
+				games = append(games, map[string]any{"id": id, "unreadable": err.Error()})
+				continue
+			}
+			for _, c := range cands {
+				if !c.Winner {
+					continue
+				}
+				games = append(games, map[string]any{
+					"id": id, "name": c.Manifest.Metadata.Name,
+					"revision": c.Revision, "ref": c.Ref,
+				})
+			}
+		}
+		if err := writeJSON(env.Stdout, map[string]any{"games": games, "broken": broken}); err != nil {
+			return err
+		}
+		if listErr != nil {
+			return listErr
+		}
+		if broken > 0 {
+			return fmt.Errorf("%s could not be read", plural(broken, "manifest"))
+		}
+		return nil
+	}
 
 	fmt.Fprintln(env.Stdout)
 	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
@@ -526,6 +559,7 @@ func shadowNote(cands []spec.Candidate) string {
 
 func runGameWhich(env *Env, args []string) error {
 	fs, unapproved := gameFlags(env, "which", "<game-id>")
+	asJSON := fs.Bool("json", false, "print the candidate resolution as JSON")
 	if err := fs.Parse(args); err != nil {
 		return flagErr(err)
 	}
@@ -536,6 +570,25 @@ func runGameWhich(env *Env, args []string) error {
 	id := fs.Arg(0)
 
 	cands, diags, err := gameCatalog().Resolve(id, overrideAuth(*unapproved))
+
+	if *asJSON {
+		out := make([]map[string]any, 0, len(cands))
+		for _, c := range cands {
+			row := map[string]any{"ref": c.Ref, "revision": c.Revision, "winner": c.Winner, "sha256": c.SHA256}
+			if c.Err != nil {
+				row["error"] = c.Err.Error()
+			}
+			if c.Skipped != "" {
+				row["skipped"] = c.Skipped
+			}
+			out = append(out, row)
+		}
+		if werr := writeJSON(env.Stdout, map[string]any{"id": id, "candidates": out}); werr != nil {
+			return werr
+		}
+		return err
+	}
+
 	w := env.Stdout
 	fmt.Fprintln(w)
 	for _, c := range cands {

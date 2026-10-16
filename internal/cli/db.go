@@ -47,7 +47,16 @@ func runDB(ctx context.Context, env *Env, args []string) error {
 	return dbGroup().dispatch(ctx, env, args)
 }
 
-func runDBVersion(_ context.Context, env *Env, _ []string) error {
+func runDBVersion(_ context.Context, env *Env, args []string) error {
+	fs := flag.NewFlagSet("db version", flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	asJSON := fs.Bool("json", false, "print the schema version as JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *asJSON {
+		return writeJSON(env.Stdout, map[string]any{"schema_version": store.SchemaVersion})
+	}
 	fmt.Fprintf(env.Stdout, "%d\n", store.SchemaVersion)
 	return nil
 }
@@ -56,6 +65,7 @@ func runDBStatus(ctx context.Context, env *Env, args []string) error {
 	fs := flag.NewFlagSet("db status", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	dsn := fs.String("dsn", "", "postgres DSN (default: unix socket peer auth)")
+	asJSON := fs.Bool("json", false, "print the schema status as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -71,13 +81,26 @@ func runDBStatus(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return fmt.Errorf("db status: %w", err)
 	}
+	status := "up to date"
+	switch {
+	case v < int64(store.SchemaVersion):
+		status = "needs migration"
+	case v > int64(store.SchemaVersion):
+		status = "ahead of binary"
+	}
+	if *asJSON {
+		return writeJSON(env.Stdout, map[string]any{
+			"schema_live": v, "schema_binary": store.SchemaVersion, "status": status,
+		})
+	}
 	fmt.Fprintf(env.Stdout, "current schema version : %d\n", v)
 	fmt.Fprintf(env.Stdout, "binary expects version : %d\n", store.SchemaVersion)
-	if v == int64(store.SchemaVersion) {
+	switch status {
+	case "up to date":
 		fmt.Fprintln(env.Stdout, "status: up to date")
-	} else if v < int64(store.SchemaVersion) {
+	case "needs migration":
 		fmt.Fprintln(env.Stdout, "status: needs migration — run `gvm db migrate`")
-	} else {
+	default:
 		fmt.Fprintln(env.Stdout, "status: schema is AHEAD of binary — downgrade not supported")
 	}
 	return nil
