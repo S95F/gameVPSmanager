@@ -222,7 +222,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 21 ◆ ✅ | Close the hazards already in this build | finalize can't delete early; backups go where configured; no comment wipe | H | L | 19 |
 | 22 🟡 | Help, errors and exit codes that work everywhere | `--help` never panics; plain errors; documented exit codes | S | L | 20 |
 | 23 🟡 | Install gvm on a fresh VPS | `sudo ./gvm host init`, verified tarball, real version | I | L | 22 |
-| 24 ◆ | `gvm doctor` tells the truth | 0 problems on a healthy host; checks every instance | I | L | 23 |
+| 24 ◆ 🟡 | `gvm doctor` tells the truth | 0 problems on a healthy host; checks every instance | I | L | 23 |
 | 25 | Adoption discovery you can trust | discover finds the live PZ server, says what blocks cutover, changed nothing | A | M | 22 |
 | 26 | Choose a game, and always know the next step | `gvm game show`; `next:` after every command; RAM/disk warnings | S | M | 22 |
 | 27 | The runner never kills a game mid-save, and never boots blind | Proton ladder fix; a2s/mc_ping probes; boot deaths stop looping; ProtectProc | H | L | 22, 24 |
@@ -952,6 +952,25 @@ The installer itself — the command that lets a non-Go operator stand gvm up on
 - **Rule 6:** doctor never actuates, which the recording test proves.
 - **Rule 1:** doctor works with Postgres absent, and database checks are Notes.
 - **Rule 7:** doctor never suggests enabling ufw, and skips rather than guesses when it has not read the ruleset (the spirit of D-42).
+
+### 🟡 Partial — the honest-output core (items 4, 5-core, 7-core) landed 2026-10-15; the runtime checks and the config loader remain
+
+The "Why now" is fixed: a healthy box no longer meets a doctor Problem on its first run, and doctor now says how many problems/warnings/notes it found and where to read next. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 4 — firewall/edge checks stop guessing.** `FW-001..006` are **Skip** with "not checked: gvm does not manage the firewall in this build" and no Fix that names enabling a firewall (U10); the live-ruleset arguments stay in `FirewallChecks`' signature so Phase 33 changes only that file. `EDGE-*` **Skip** when `edge.mode` is none (the games-only default). This removes the false `FW-001` Problem the default `ufw`-but-inactive stub produced. `TestFirewallChecksAllSkipInThisBuild`.
+- **Item 5 (core) — severities follow rule 1.** A missing Postgres is a **Note** ("dashboard and audit-database features unavailable; game servers unaffected"), counted as a note and exit 0, not a scary header line. `HOST-011`'s Fix is now `sudo gvm db replay-spool` (reaps stale runs in process); the old "restart gvmd" named a unit this build does not ship.
+- **Item 7 (core) — `--json`, totals, the troubleshooting pointer, and the Fix lint.** `gvm doctor --json` prints the findings and totals (stable snake_case keys). The text output ends with "N problems, N warnings, N notes · see: gvm help troubleshooting". Exit 4 when problems are found (U8, from Phase 22). **`TestDoctorFixesNameRealThings`** is an AST scan of every doctor `Fix:`: a `gvm <verb>` must be an available command (not NotInBuild), a `systemctl … <unit>` must name a packaged unit or postgresql/caddy/ufw — it goes red for `gvm firewall enable` (unbuilt) or `systemctl restart gvmd` (not packaged); `gvm caddy` is allowlisted as the Phase-48 command behind the Skip-gated edge checks. `TestDoctorTotalsLineAndHelpPointer`, `TestDoctorJSON`, `TestDoctorFirewallReadsSkipped`.
+
+**Remaining (a dedicated session should take these):**
+- **Item 1 — doctor checks instances.** `doctorLoadInstances`/`doctorLoadManifest` still return nil; wiring them to `lifecycle.List` + the pinned manifest, and sharing `Observer.Observe`/`lifecycle.Findings` so doctor and `gvm status` agree, is Linux-runtime work (an instance's real state needs a running host) with a shared-fixture test.
+- **Item 2 — the self-registering check registry** (each `checks_*.go` registers itself instead of `HostChecks` listing them).
+- **Item 3 — one host-config loader.** A new `spec.LoadHost` (merge onto `DefaultHostConfig`, strict `KnownFields` pass with did-you-mean on unknown keys) and `spec.ValidateHost` (backend ∈ {ufw,none}, CIDRs, ports, enums), wired into doctor/`ports`/`create` so `reserved_port:` yields "did you mean reserved_ports?" and `create` refuses until the file validates. A self-contained but fresh spec feature.
+- **Item 5 (rest) — the runtime severities:** `HOST-011` counting only `state='running' AND boot_id <> current`, and `HOST-010` reading merged dependency properties over read-only D-Bus.
+- **Item 6 — check what is installed:** every `packaging.FS` file byte-identical at its install path, the `ExecStart` inode vs `/proc/self/exe`, no stray `/usr/local/bin/gvm`, users/groups/memberships, tmpfiles modes, the timers enabled with a future elapse, steamcmd locatable, Java for `minecraft-*`. Deeply Linux-runtime, with `RuleUnitNotFound` split to say "reinstall: sudo gvm host init".
+- **Item 7 (rest) — `docs/doctor.schema.json`** generated alongside the doctor-ID table, with a CI diff.
+
+**Effort for this task:** items 4, 5-core and 7-core implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–23. The runtime checks (items 1, 5-rest, 6) and the config loader (item 3) are their own body of work.
 
 ---
 
