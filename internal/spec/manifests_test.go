@@ -46,6 +46,10 @@ var allowedWarnings = map[string][]string{
 	// build (gvm v1.1). The dialect is valid; the control channel renders as
 	// unavailable until the kind is wired up.
 	"rust": {"control kind \"websocket_rcon\" is known but not implemented in this build"},
+	// Core Keeper needs a virtual X display, and the xvfb wrapper is planned
+	// (Phase 42), not built: the manifest is valid and the launch renders as
+	// unavailable until the wrapper is wired.
+	"corekeeper": {"wrapper kind \"xvfb\" is known but not implemented in this build"},
 }
 
 func shippedManifest(t *testing.T, id string) (*Manifest, Diags) {
