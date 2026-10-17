@@ -215,7 +215,17 @@ func (l *Lease) Classify(now time.Time, bootID string, alive Tri) LeaseState {
 	if l == nil {
 		return LeaseNone
 	}
-	if bootID != "" && l.BootID != "" && bootID != l.BootID {
+	return classifyLiveness(now, bootID, l.BootID, alive, l.Deadline)
+}
+
+// classifyLiveness is the asymmetric rule itself, over the four facts it needs,
+// so that the typed Lease and the version-independent LeaseLiveness answer it
+// identically. The ordering is the point: evidence the holder is GONE (another
+// boot, or a dead pid) is required to call a lease stale, and absence of
+// evidence leaves it live; the deadline is only a backstop for the case where
+// neither could be established.
+func classifyLiveness(now time.Time, hostBoot, leaseBoot string, alive Tri, deadline time.Time) LeaseState {
+	if hostBoot != "" && leaseBoot != "" && hostBoot != leaseBoot {
 		return LeaseStale
 	}
 	switch alive {
@@ -224,10 +234,73 @@ func (l *Lease) Classify(now time.Time, bootID string, alive Tri) LeaseState {
 	case Yes:
 		return LeaseLive
 	}
-	if !l.Deadline.IsZero() && !now.IsZero() && now.After(l.Deadline) {
+	if !deadline.IsZero() && !now.IsZero() && now.After(deadline) {
 		return LeaseStale
 	}
 	return LeaseLive
+}
+
+// LeaseLiveness is the version-independent view of a lease: the holder fields
+// (pid, boot_id, unit) and the times (started_at, deadline) that decide whether
+// a job still owns the instance. Their meaning is frozen across versions by the
+// N-1 skew rule (U17), so a lease written by a NEWER gvm -- one whose LeaseProto
+// this build does not recognise, because an upgrade bumped it -- is still
+// answered "live or stale?" correctly here.
+//
+// It exists because ParseLease deliberately refuses a proto it does not know,
+// and routing the liveness question through that refusal is what let `gvm list`
+// call a held instance "failed" and advise `gvm job clear`, deleting the lease
+// of a job that was still running -- the exact collision the lease exists to
+// prevent, reached by following gvm's own advice. The liveness question needs
+// only who holds it and when, so it reads only that, and the one thing that
+// defeats it is a document that will not decode as JSON at all.
+type LeaseLiveness struct {
+	Proto     int       `json:"proto"`
+	Instance  string    `json:"instance"`
+	Kind      JobKind   `json:"kind"`
+	Unit      string    `json:"unit,omitempty"`
+	PID       int       `json:"pid,omitempty"`
+	BootID    string    `json:"boot_id,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+	Deadline  time.Time `json:"deadline,omitzero"`
+}
+
+// ParseLeaseLiveness reads the version-independent view of a lease. It fails
+// only when the bytes will not decode as JSON -- which is the whole of what
+// "unreadable" is allowed to mean. A newer proto, an unknown kind or a missing
+// started_at are things a future gvm might write and this one must still reason
+// about, not reasons to report a held instance as free.
+func ParseLeaseLiveness(r io.Reader) (*LeaseLiveness, error) {
+	var l LeaseLiveness
+	dec := json.NewDecoder(io.LimitReader(r, 64<<10))
+	if err := dec.Decode(&l); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrLease, err)
+	}
+	return &l, nil
+}
+
+// Classify answers live/stale from the liveness fields alone, by the same rule
+// Lease.Classify uses.
+func (l *LeaseLiveness) Classify(now time.Time, bootID string, alive Tri) LeaseState {
+	if l == nil {
+		return LeaseNone
+	}
+	return classifyLiveness(now, bootID, l.BootID, alive, l.Deadline)
+}
+
+// Lease rebuilds a *Lease from the liveness view, for the status surfaces that
+// print the holder. A lease from a future version may carry a Kind this build
+// does not know; that is fine for display, and such a kind simply does not mask
+// the phase (JobKind.Phase returns false), so the instance stays whatever
+// systemd and the runner report while still showing the lease.
+func (l *LeaseLiveness) Lease() *Lease {
+	if l == nil {
+		return nil
+	}
+	return &Lease{
+		Proto: l.Proto, Instance: l.Instance, Kind: l.Kind, Unit: l.Unit,
+		PID: l.PID, BootID: l.BootID, StartedAt: l.StartedAt, Deadline: l.Deadline,
+	}
 }
 
 // Age is how long the lease has been held.

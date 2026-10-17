@@ -649,6 +649,33 @@ func TestJobClearRefusesALiveLease(t *testing.T) {
 	}
 }
 
+// TestJobClearRefusesAFutureProtoLiveLease is the N-1 skew rule (U17) proven
+// end to end. A lease a newer gvm wrote carries a proto this build has never
+// seen. Before the skew rule, ParseLease refused it, the observer called the
+// instance "failed/unreadable", and the printed fix -- `gvm job clear` -- then
+// removed it, deleting the lease of a job that was still running. Now the
+// holder fields classify it LIVE, so the same command refuses.
+func TestJobClearRefusesAFutureProtoLiveLease(t *testing.T) {
+	h, _, _ := jobHost(t)
+	seedJobbableInstance(t, h, "pz-main")
+
+	future := `{"proto":2,"instance":"pz-main","kind":"update",` +
+		`"unit":"gvm-job@pz-main_nightly.service","pid":4242,"boot_id":"` + h.HostEnv.BootID + `",` +
+		`"started_at":"` + testTime.UTC().Format(time.RFC3339Nano) + `"}`
+	h.FS.put("/var/lib/gvm/instances/pz-main/lease.json", []byte(future), 0o640)
+
+	code, _, errb := runWith(t, h, "", "job", "clear", "pz-main")
+	if code == 0 {
+		t.Fatal("cleared a live lease a newer gvm wrote; following that advice deletes a running job's lease")
+	}
+	if !strings.Contains(errb, "LIVE lease") {
+		t.Errorf("stderr = %q; a future-proto live lease must be refused as live, not reported unreadable", errb)
+	}
+	if _, err := h.FS.ReadFile(clean("/var/lib/gvm/instances/pz-main/lease.json")); err != nil {
+		t.Error("the refusal removed the future-proto lease anyway")
+	}
+}
+
 // TestNoLeaseIsNotAnError: `gvm job clear` on a healthy instance is a no-op
 // that says so, because an operator reaching for it is already worried.
 func TestNoLeaseIsNotAnError(t *testing.T) {

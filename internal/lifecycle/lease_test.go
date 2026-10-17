@@ -124,6 +124,92 @@ func TestClassifyRequiresEvidenceOfDeath(t *testing.T) {
 	}
 }
 
+// TestLivenessReadsAcrossVersions is the N-1 skew rule (U17) for the lease.
+//
+// ParseLease refuses a proto it does not recognise, which is correct for a
+// caller that wants the whole typed lease. But the liveness question -- is a
+// job still holding this instance? -- must never depend on the version that
+// wrote the file: a lease a newer gvm wrote after bumping LeaseProto is still a
+// lease a running job holds, and reading it as "unreadable" is what let `gvm
+// list` advise clearing it. ParseLeaseLiveness answers that question from the
+// frozen holder fields alone, and fails only on bytes that are not JSON.
+func TestLivenessReadsAcrossVersions(t *testing.T) {
+	now := at("2026-09-04T19:00:00Z")
+	const boot = "5f1c0b3e-7a24-4b8e-9c31-2d8e6a4f0b17"
+
+	// A lease from a FUTURE gvm: a proto this build has never seen, and a job
+	// kind it does not know either. ParseLease would refuse both; liveness must
+	// not, because the holder is real.
+	future := `{"proto":2,"kind":"defrag","unit":"gvm-job@pz-main_x.service",` +
+		`"pid":900,"boot_id":"` + boot + `","started_at":"2026-09-04T18:55:00Z"}`
+
+	if _, err := ParseLease(strings.NewReader(future)); err == nil {
+		t.Fatal("ParseLease accepted a future proto; the strict reader is supposed to refuse it")
+	}
+
+	live, err := ParseLeaseLiveness(strings.NewReader(future))
+	if err != nil {
+		t.Fatalf("ParseLeaseLiveness refused a future lease: %v", err)
+	}
+	if live.PID != 900 || live.BootID != boot || live.Unit == "" {
+		t.Fatalf("liveness lost the holder fields: %+v", live)
+	}
+
+	// Classified from the holder fields, the future lease behaves exactly like
+	// a current one: alive -> live, demonstrably dead -> stale, another boot ->
+	// stale. Version plays no part.
+	for _, tc := range []struct {
+		name  string
+		boot  string
+		alive Tri
+		want  LeaseState
+	}{
+		{"alive", boot, Yes, LeaseLive},
+		{"dead", boot, No, LeaseStale},
+		{"another boot", "a-different-boot", Yes, LeaseStale},
+		{"could not look", "", Unknown, LeaseLive},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := live.Classify(now, tc.boot, tc.alive); got != tc.want {
+				t.Fatalf("Classify = %s, want %s", got, tc.want)
+			}
+		})
+	}
+
+	// The liveness view rebuilds a *Lease for the status surfaces, carrying the
+	// holder through even when the kind is unknown.
+	if l := live.Lease(); l == nil || l.PID != 900 || l.Kind != JobKind("defrag") {
+		t.Fatalf("Lease() dropped the holder: %+v", live.Lease())
+	}
+}
+
+// TestLivenessUnreadableMeansCorruptOnly: the only thing that makes a lease
+// unreadable is bytes that will not decode. Everything a future gvm might
+// legitimately write -- a newer proto, an unknown kind, a missing started_at --
+// is still readable for liveness.
+func TestLivenessUnreadableMeansCorruptOnly(t *testing.T) {
+	readable := map[string]string{
+		"a future proto":  `{"proto":2,"started_at":"2026-09-04T18:55:00Z"}`,
+		"an unknown kind": `{"proto":1,"kind":"defrag","pid":900}`,
+		"no started_at":   `{"proto":1,"kind":"update","pid":900}`,
+		"no proto":        `{"kind":"update","pid":900}`,
+	}
+	for name, body := range readable {
+		if _, err := ParseLeaseLiveness(strings.NewReader(body)); err != nil {
+			t.Errorf("%s: ParseLeaseLiveness refused it (%v); only corrupt bytes are unreadable", name, err)
+		}
+	}
+	corrupt := map[string]string{
+		"not json": `{ this is not json`,
+		"empty":    ``,
+	}
+	for name, body := range corrupt {
+		if _, err := ParseLeaseLiveness(strings.NewReader(body)); !errors.Is(err, ErrLease) {
+			t.Errorf("%s: err = %v, want ErrLease: corrupt bytes are the one unreadable case", name, err)
+		}
+	}
+}
+
 func TestJobKindPhaseCoversTheWholeEnum(t *testing.T) {
 	// Every kind must have a decided answer, and the mutating set must be
 	// exactly the jobs that rewrite the install tree or the world. A kind
