@@ -94,14 +94,16 @@ func TestReportPrintsTheHintAndTheFindings(t *testing.T) {
 	}
 }
 
-func TestSummariseCountsRunningStoppedAndProblems(t *testing.T) {
+func TestSummariseCountsRunningBusyStoppedAndProblems(t *testing.T) {
 	mk := func(p Phase) Status { return Status{Phase: p} }
 	got := Summarise([]Status{
-		mk(PhaseRunning), mk(PhaseRunning), mk(PhaseStopped),
-		mk(PhaseFailed), mk(PhaseDegraded), mk(PhaseDeclared),
+		mk(PhaseRunning), mk(PhaseRunning), // running: 2
+		mk(PhaseStopped), mk(PhaseDeclared), // stopped (deliberately off / never applied): 2
+		mk(PhaseStarting), mk(PhaseUpdating), // busy (in flight): 2
+		mk(PhaseFailed), mk(PhaseDegraded), mk(PhaseAwaitingManualFiles), // needs a person: 3
 	})
-	if got.Total != 6 || got.Running != 2 || got.Problems != 2 || got.Stopped != 2 {
-		t.Fatalf("Summarise = %+v", got)
+	if got.Total != 9 || got.Running != 2 || got.Busy != 2 || got.Stopped != 2 || got.Problems != 3 {
+		t.Fatalf("Summarise = %+v, want {Total:9 Running:2 Busy:2 Stopped:2 Problems:3}", got)
 	}
 }
 

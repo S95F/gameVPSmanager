@@ -102,8 +102,64 @@ func TestListEnumeratesFromEtc(t *testing.T) {
 			t.Errorf("list is missing %q:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "2 instance") {
+	// The summary line follows the rows. Two freshly created, unapplied
+	// instances are declared, so they count as stopped, not running.
+	if !strings.Contains(out, "needing attention") {
 		t.Errorf("the summary line is missing:\n%s", out)
+	}
+	if !strings.Contains(out, "2 stopped") {
+		t.Errorf("two declared instances should read as 2 stopped:\n%s", out)
+	}
+}
+
+// TestListProblemsOnAHealthyHostSaysSo is day2-ops-14: `list --problems` on a
+// host with nothing wrong used to print "no instances", which reads as "this
+// box is empty" rather than "this box is fine". It now says so and accounts for
+// the servers it checked, and exits 0 so a monitor sees a clean result.
+func TestListProblemsOnAHealthyHostSaysSo(t *testing.T) {
+	h := newTestHost(t)
+	seedInstance(t, h, "valheim-1", "valheim", "--var", "public_name=One")
+	seedInstance(t, h, "valheim-2", "valheim", "--var", "public_name=Two")
+
+	code, out, errb := runWith(t, h, "", "list", "--problems")
+	if code != 0 {
+		t.Fatalf("a host with nothing wrong exited %d, want 0\n%s\n%s", code, out, errb)
+	}
+	if !strings.Contains(out, "nothing needs attention") {
+		t.Errorf("did not say the host is fine:\n%s", out)
+	}
+	if !strings.Contains(out, "2 instances") {
+		t.Errorf("did not account for the servers it checked:\n%s", out)
+	}
+}
+
+// TestListProblemsListsTheUnhealthyAndExitsFour: a drifting instance is
+// something a person has to act on, so `list --problems` shows it, points at
+// the two commands that say more, and exits 4 (checked and found something).
+func TestListProblemsListsTheUnhealthyAndExitsFour(t *testing.T) {
+	h := newTestHost(t)
+	seedInstance(t, h, "valheim-1", "valheim", "--var", "public_name=Test")
+	if code, _, errb := runWith(t, h, "", "apply", "valheim-1"); code != 0 {
+		t.Fatalf("apply: %s", errb)
+	}
+	// Edit the spec without applying: the drop-in's recorded sha no longer
+	// matches, which is drift -- a problem an operator must resolve.
+	raw, err := h.FS.ReadFile(instance.PathsFor("valheim-1").Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.FS.put(instance.PathsFor("valheim-1").Spec,
+		append(raw, []byte("\n# edited, not applied\n")...), 0o640)
+
+	code, out, errb := runWith(t, h, "", "list", "--problems")
+	if code != exitChecked {
+		t.Fatalf("exit %d, want %d (checked)\n%s\n%s", code, exitChecked, out, errb)
+	}
+	if !strings.Contains(out, "valheim-1") {
+		t.Errorf("the unhealthy instance is not listed:\n%s", out)
+	}
+	if !strings.Contains(out, "gvm status") || !strings.Contains(out, "gvm doctor") {
+		t.Errorf("the result does not point at the commands that say more:\n%s", out)
 	}
 }
 
