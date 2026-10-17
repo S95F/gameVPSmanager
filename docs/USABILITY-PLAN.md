@@ -240,7 +240,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 38 🟡 | Get a world back | `restore --to`, archive-first restore, rebuild for content-free games | B | L | 21, 34, 37 |
 | 39 🟡 | Change settings without hand-editing YAML | `gvm set`, `enable/disable`, `ports move`, `manifest upgrade`, strict apply | O | XL | 35, 38 |
 | 40 🟡 | gvm opens the ports, and never locks you out | apply stages tagged ufw rules; `gvm firewall apply` for host rules; guarded `gvm firewall enable` | N | L | 33, 39 |
-| 41 | Planned restarts players see coming · **J2** | `--warn` countdown; restart says which rung saved | O | M | 37, 38, 39, 40 |
+| 41 🟡 | Planned restarts players see coming · **J2** | `--warn` countdown; restart says which rung saved | O | M | 37, 38, 39, 40 |
 | **J3** | **Every game, mods and custom games** | | | | |
 | 42 | The whole catalog boots | Proton, Mono, native Satisfactory/ARK, 7DTD, Core Keeper, CS2 verified | G | XL | 32, 39 (item 10 only) |
 | 43 | Mod lists that are easy to edit and read | URLs and titles; import from ini; `content update --check` | C | L | 39 |
@@ -2662,6 +2662,20 @@ The pieces that need no live ufw, no `/etc/ufw` read and no `/proc` are in. fmt 
 - **Rules 2 and 3:** the control channel goes through `console.sock`, never admin.sock or a shell.
 - **Rule 10:** the message is sanitised.
 - **Rule 6:** no new automatic restarts. `warn:` only decorates jobs the operator scheduled.
+
+### 🟡 Partial — the warn-countdown decision logic (item 1's core) landed 2026-10-17; the flags and `warn:` field, the broadcast wiring, the restart rung and the J2 CI journey remain
+
+The pure part — when a countdown broadcasts and which messages are safe — is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 1 (core) — `internal/warn`, the planned-restart warning's decision logic (day2-ops-11).** `warn.Schedule(d)` returns the offsets before a stop at which a countdown broadcasts, earliest first: the full warning, plus the 1-minute and 10-second reminders that still fall inside the window, deduplicated (a 2m warning fires at 2m / 1m / 10s; 30s at 30s / 10s; 10s once; off at 0). `warn.ValidateMessage` gates an operator's broadcast message, refusing the characters a game console cannot be trusted to quote — `' " \ $`, a backtick, and every control character including a newline (a newline in a broadcast is a second command running as the server) — and an over-long one, while accepting an empty message (warn with the countdown alone). `TestScheduleIsEarliestFirstAndClampedToTheWindow` and `TestValidateMessageRefusesConsoleInjection` prove it. These are the decisions the runtime countdown drives.
+
+**Remaining (a dedicated session should take these — the lifecycle wiring, the control path, a running game, a VM):**
+- **Item 1 (wiring) — `--warn <dur>` and `--message` on stop/restart/update, and `warn:` on `spec.Job`** (`create` may set `warn: 5m` on the restart jobs it writes; the CLI default stays off). The countdown runs before any state change — inside the lease but before any stopping step for a job, after update's decision says Stop — sending the manifest's broadcast verb over the runner's control path (`console.sock`, never admin.sock, never a shell) at each `warn.Schedule` tick. Ctrl-C aborts with "nothing was stopped"; the wait is skipped only when the player count is known to be 0; with no broadcast verb or control not ready, gvm notes it and continues without delay.
+- **Item 2 — restart reports the rung**: "ladder ended on \<rung\> after \<d\>" (plus DEGRADED) from the first `shutdown.jsonl` record at or after the restart, or "no shutdown record for this restart; see gvm logs \<n\> --shutdown".
+- **Item 3 — the J2 journey in `ci/golden-journey.sh`** (an upgrade from J1, a nightly backup and update with `warn:`, `gvm set`, `gvm restore --latest`, `gvm apply` opening ports, `job last` and `audit tail`).
+
+**Effort for this task:** the warn-countdown decision logic implemented by Claude (Opus 4.8) on 2026-10-17. The flag / `warn:` wiring, the console broadcast, the restart rung line and the J2 golden-journey CI are the lifecycle, control-path and VM body of the phase.
 
 ---
 
