@@ -253,7 +253,31 @@ func runDestroy(ctx context.Context, env *Env, args []string) error {
 		return fmt.Errorf("removing the %s: %w", hostops.FileInstanceSpec, err)
 	}
 	fmt.Fprintf(env.Stdout, "  the archive is still at %s\n", ref.Path)
+	printLeftInPlace(env.Stdout, opt.Name, paths)
 	return nil
+}
+
+// printLeftInPlace names what destroy did NOT remove, and why.
+//
+// destroy removes the install tree, the data tree and the control-plane files,
+// but it deliberately keeps the secrets, the service account, the recorded
+// state, the logs and the SteamCMD home — each because removing it is either
+// irreversible (secrets), risky (an account that may own files elsewhere) or
+// useful to keep (logs that explain what happened, a Steam cache that saves a
+// multi-GB re-download). The hazard gvm-self-upgrade-uninstall-7 names is that
+// it kept them SILENTLY, so an operator who thought "destroy" meant "gone"
+// found passwords and an account still on the box. This block says so.
+func printLeftInPlace(w io.Writer, name string, p instance.Paths) {
+	fmt.Fprintf(w, "\n  LEFT IN PLACE (kept on purpose; remove by hand if you are sure):\n")
+	for _, it := range []struct{ what, why string }{
+		{p.SecretsDir, "secrets (join, RCON and admin passwords) — removing them is not reversible"},
+		{instance.UserName(name), "the service account, in case it still owns files elsewhere on the box"},
+		{p.State, "recorded state (observed status, leases, port echo)"},
+		{p.Logs, "console and job logs, which say what this server did"},
+		{p.SteamHome, "the SteamCMD home (cached depots), which a re-create would otherwise re-download"},
+	} {
+		fmt.Fprintf(w, "    %-44s %s\n", it.what, it.why)
+	}
 }
 
 // confirmFrom takes the typed value from a flag or from the terminal, and

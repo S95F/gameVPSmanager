@@ -164,6 +164,37 @@ func TestDestroyDisablesTheUnitAndEveryJobTimer(t *testing.T) {
 	}
 }
 
+// TestDestroyNamesWhatItLeftInPlace is gvm-self-upgrade-uninstall-7: destroy
+// keeps secrets, the account, state, logs and the Steam home, and it must SAY
+// so — an operator who read "destroy" as "gone" should not later find
+// passwords and a service account still on the box.
+func TestDestroyNamesWhatItLeftInPlace(t *testing.T) {
+	h := newTestHost(t)
+	install, data, arc := destroyable(t, h, "valheim-1")
+	seedInstance(t, h, "valheim-1", "valheim", "--install", install, "--data", data,
+		"--var", "public_name=Test")
+
+	code, out, errb := runWith(t, h, "valheim-1\ny\n", "destroy", "valheim-1", "--archive", arc)
+	if code != 0 {
+		t.Fatalf("destroy: exit %d\n%s\n%s", code, out, errb)
+	}
+	if !strings.Contains(out, "LEFT IN PLACE") {
+		t.Fatalf("destroy printed no LEFT IN PLACE block:\n%s", out)
+	}
+	for _, want := range []string{
+		"gvm-valheim-1",       // the service account, by name
+		"secrets",             // the secrets directory
+		"not reversible",      // why the secrets are kept
+		"instances/valheim-1", // the recorded state
+		"logs",                // the logs
+		"steam",               // the SteamCMD home
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the LEFT IN PLACE block is missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestDestroyDryRunReportsAndRemovesNothing keeps --dry's contract intact after
 // the space refusal was wired in: a dry run measures and reports, so a full
 // volume must produce a report rather than a non-zero exit.
