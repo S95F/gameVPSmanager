@@ -34,6 +34,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -174,26 +176,155 @@ func runRestoreOnto(ctx context.Context, env *Env, name string, opt jobOptions) 
 		return err
 	}
 	if opt.Engine.Restore.To != "" {
-		// `--to <dir>` is the inspection path. It stops no server and
-		// overwrites no world, so there is nothing for the destructive-action
-		// contract to protect -- but the extraction itself is still steps 4
-		// and 5, and those belong to the engine.
-		return fmt.Errorf("%w: extracting into %s is internal/archive.Restore, which this "+
-			"build has; what it is missing is the path that drives it",
-			restoreRunnerGap(), opt.Engine.Restore.To)
+		// `--to <dir>` is the inspection path. It stops no server and overwrites
+		// no world, so there is nothing for the destructive-action contract to
+		// protect and nothing for the job engine to order -- it is a direct,
+		// digest-checked extract into a directory the operator named.
+		return runRestoreToDir(ctx, env, h, src, opt.Engine.Restore)
 	}
 	return runKind(ctx, env, "restore", lifecycle.JobRestore, name, opt)
 }
 
-// restoreRunnerGap is internal/jobs' own refusal for the restore kind, so the
-// sentence naming the package that will bring it is written in exactly one
-// place (execute.go's `pending`) and this file cannot drift from it.
-func restoreRunnerGap() error {
-	_, err := jobs.Lookup(lifecycle.JobRestore)
-	if err == nil {
-		return errors.New("gvm: the restore path is built; this message should not appear")
+// runRestoreToDir is `gvm restore <archive> --to <dir>`: extract an archive
+// somewhere to look at it, without touching any live world.
+//
+// The one hazard the inspection path still has is aim: a `--to` that lands on
+// an instance's own tree would, member by member, overwrite the live world the
+// operator was trying to avoid. So before a byte is written gvm resolves the
+// target through symlinks and refuses if it is at, under or above any
+// instance's install, data, home, logs or backup directory, naming the one it
+// hit. Everything else is archive.Restore's: the same stream verification the
+// onto-a-world path runs.
+func runRestoreToDir(ctx context.Context, env *Env, h *HostEnv, src string, ro restoreOptions) error {
+	dir, err := filepath.Abs(ro.To)
+	if err != nil {
+		return err
 	}
-	return err
+	if err := ensureEmptyRestoreDir(dir); err != nil {
+		return err
+	}
+	if hit, err := restoreToOverlap(h, dir); err != nil {
+		return err
+	} else if hit != "" {
+		return refused(fmt.Errorf("refusing to extract into %s: it overlaps %s.\n"+
+			"  --to is for inspecting an archive, so point it at a scratch directory outside "+
+			"gvm's own trees; to put a world back in place use `gvm restore <instance>`", dir, hit))
+	}
+
+	rep, err := archive.Restore(ctx, archive.RestoreOptions{
+		Source: src, To: dir,
+		// Default: files land owned by root (whoever runs gvm). --preserve-ownership
+		// restores the recorded uid/gid instead, for a copy meant to be handed
+		// straight back to the game account.
+		PreserveOwnership: ro.PreserveOwnership,
+		Now:               h.Now,
+		OnNote:            func(s string) { fmt.Fprintf(env.Stderr, "  note: %s\n", s) },
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(env.Stdout, "\nextracted %d member(s), %s, into %s\n",
+		rep.Members, spec.FormatBytes(rep.Bytes), dir)
+	prefixes := make([]string, 0, len(rep.Restored))
+	for p := range rep.Restored {
+		prefixes = append(prefixes, p)
+	}
+	sort.Strings(prefixes)
+	for _, p := range prefixes {
+		fmt.Fprintf(env.Stdout, "  %-9s %s\n", p, rep.Restored[p])
+	}
+	fmt.Fprint(env.Stdout, "\n  nothing live was touched. `gvm backup verify` these files, or copy "+
+		"what you need out by hand.\n")
+	return nil
+}
+
+// ensureEmptyRestoreDir enforces `--to`'s "absent or empty" rule, so an extract
+// never mixes its members with whatever was already in the directory.
+func ensureEmptyRestoreDir(dir string) error {
+	ents, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(ents) > 0 {
+		return usageErr(fmt.Errorf("%s is not empty; --to needs an absent or empty directory so a "+
+			"restore never mixes with what is already there", dir))
+	}
+	return nil
+}
+
+// restoreToOverlap returns a description of the first instance path that `dir`
+// overlaps, or "" when it is clear. It is best-effort by design: an instance
+// whose spec cannot be read is skipped rather than allowed to block every
+// restore, because the paths that matter for this guard are the ones a readable
+// spec declares.
+func restoreToOverlap(h *HostEnv, dir string) (string, error) {
+	resolved := resolveThroughSymlinks(dir)
+	names, _, err := lifecycle.List(h.files())
+	if err != nil {
+		return "", err
+	}
+	for _, name := range names {
+		in, _, err := loadInstance(h, name)
+		if err != nil {
+			continue
+		}
+		for _, cand := range []struct{ label, path string }{
+			{"install", in.Spec.Paths.Install},
+			{"data", in.Spec.Paths.Data},
+			{"home", in.Spec.Paths.Home},
+			{"logs", in.Spec.Paths.Logs},
+			{"backup", h.backupDir(name)},
+		} {
+			if cand.path == "" {
+				continue
+			}
+			if pathsOverlap(resolved, resolveThroughSymlinks(cand.path)) {
+				return fmt.Sprintf("%s's %s directory (%s)", name, cand.label, cand.path), nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// resolveThroughSymlinks returns dir with every symlink in it resolved, so the
+// overlap check compares real locations. A path that does not exist yet is
+// resolved as far as its nearest existing ancestor and the remainder appended,
+// because `--to` is normally a directory about to be created.
+func resolveThroughSymlinks(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return filepath.Clean(dir)
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return real
+	}
+	parent := filepath.Dir(abs)
+	if parent == abs {
+		return abs
+	}
+	if real, err := filepath.EvalSymlinks(parent); err == nil {
+		return filepath.Join(real, filepath.Base(abs))
+	}
+	return abs
+}
+
+// pathsOverlap reports whether two paths are the same, or one contains the
+// other. It is component-aware: /srv/gvm/v1 does not overlap /srv/gvm/v10.
+func pathsOverlap(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	return a == b || isUnderPath(a, b) || isUnderPath(b, a)
+}
+
+func isUnderPath(child, parent string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // absArchive refuses a relative archive path.
@@ -329,6 +460,7 @@ func runRestoreList(ctx context.Context, env *Env, only, from string, opt jobOpt
 	}
 	printArchiveRows(env.Stdout, all)
 	fmt.Fprint(env.Stdout, "\n  gvm restore <archive> --instance <name> puts one back. "+
-		"The current world is archived first.\n")
+		"The current world is archived first.\n"+
+		"  gvm restore <archive> --to <dir> extracts one to inspect, touching no world.\n")
 	return nil
 }
