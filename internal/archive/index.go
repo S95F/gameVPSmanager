@@ -111,8 +111,18 @@ func LoadIndex(dir string) (*Index, error) {
 	if err := json.Unmarshal(b, &ix); err != nil {
 		return nil, fmt.Errorf("archive: parse %s: %w", IndexPath(dir), err)
 	}
-	if ix.Schema != SchemaVersion {
-		return nil, fmt.Errorf("%w: index schema %d, this build reads %d", ErrSchema, ix.Schema, SchemaVersion)
+	// The index is a cache rebuilt from the archives, so a schema that does not
+	// match is a rebuild (Reindex discards an ErrSchema prev and re-reads), not a
+	// dead end. An OLDER schema is read as-is and upgraded; only a NEWER one is
+	// refused, with the same install hint the manifest reader gives — the
+	// archives beside it are likely newer too, and a partial rebuild would hide
+	// that.
+	if ix.Schema > SchemaVersion {
+		return nil, fmt.Errorf("%w: the archive index uses schema %d and this gvm reads up to %d; "+
+			"install a newer gvm", ErrSchema, ix.Schema, SchemaVersion)
+	}
+	if ix.Schema < 1 {
+		return nil, fmt.Errorf("%w: index schema %d is not a valid version", ErrSchema, ix.Schema)
 	}
 	return &ix, nil
 }

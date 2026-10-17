@@ -157,9 +157,18 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("%w: nil manifest", ErrNoManifest)
 	}
 	var errs []error
-	if m.Schema != SchemaVersion {
-		errs = append(errs, fmt.Errorf("%w: schema %d, this build writes and reads %d",
-			ErrSchema, m.Schema, SchemaVersion))
+	// Backward-compatible across releases (gvm-self-upgrade-uninstall-10): an
+	// archive written by an OLDER gvm is still readable — its schema is at or
+	// below this build's, and gvm upgrades it on read. Only a NEWER schema is
+	// refused, with the one thing the operator can do about it, because this
+	// build genuinely does not know the newer shape and guessing at it could
+	// mis-read a world's own backup.
+	switch {
+	case m.Schema > SchemaVersion:
+		errs = append(errs, fmt.Errorf("%w: this archive uses manifest schema %d and this gvm reads "+
+			"up to %d; install a newer gvm to read it", ErrSchema, m.Schema, SchemaVersion))
+	case m.Schema < 1:
+		errs = append(errs, fmt.Errorf("%w: manifest schema %d is not a valid version", ErrSchema, m.Schema))
 	}
 	if m.Instance.Name == "" {
 		errs = append(errs, errors.New("manifest: instance.name is empty; the archive cannot say what it is a backup of"))
