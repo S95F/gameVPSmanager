@@ -250,7 +250,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | **J4** | **Friends without SSH** | | | | |
 | 47 🟡 | Make the web skeleton safe before it is wired | no anonymous pages, no fake 202s, §15.2 roles | W | L | 22 |
 | 48 🟡 | Dashboard v0 | invite a friend; start/stop/restart; live console | W | XL | 47, 33, 37, 40 |
-| 49 | Dashboard v1 · **J4** | connect card, mods tab, settings tab, plain-language status | W | L | 48, 39, 44 |
+| 49 🟡 | Dashboard v1 · **J4** | connect card, mods tab, settings tab, plain-language status | W | L | 48, 39, 44 |
 | **J5** | **Adopt, package, recover** | | | | |
 | 50 | Make adoption's safety net real | adoption record; safe cutover/rollback library; record-based finalize | A | L | 21, 25, 39, 40 |
 | 51 | Adopt the live Project Zomboid server | cutover in one window; `gvm adopt status`; `instance promote` | A | L | 50 |
@@ -3461,6 +3461,24 @@ Item 2 is the one piece the plan says to land before the first user exists, so n
 - **Rule 5:** immutable and rebuild changes stay CLI-only, with typed confirmation.
 - **Rule 4:** the restart button walks the ladder.
 - **Rule 1:** the CLI path stays complete with the web tier down.
+
+### 🟡 Partial — the plain-language rule→text table (item 2's core) landed 2026-10-17; the dashboard cards, tabs, gvmd verbs and tokens remain
+
+The one piece that needs no gvmd, no Postgres and no browser — the mapping a moderator's status text is built from — is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 2 (core) — a plain-language table from every lifecycle rule to dashboard text (failure-recovery-13).** A verdict's operator Hint is usually a shell command a signed-in moderator has no way to run, so `internal/web`'s `dashboardRuleText` maps every `lifecycle.Rule` to a sentence written for them — what is true, and that "the server operator" (the person with SSH) is who can fix it when they cannot. `DashboardStatusText` returns it, with a safe generic fallback. `TestEveryRuleHasDashboardText` keeps the table complete (and free of stale entries) as the rule set grows, and `TestDashboardTextShowsNoShellHints` keeps a `sudo`/`systemctl`/`journalctl`/`gvm`/flag string from ever reaching a moderator. `internal/web` stays unlinked from the binary (Phase 48 wiring), so this is library code tested on its own.
+
+**Remaining (a dedicated session should take these — gvmd, Postgres, the browser, SSE, a VM):**
+- **Item 1 — the "How to connect" card** (the Phase 33 connect model, password masked without `secret:read`).
+- **Item 3 — the read-only Mods tab** (served from the browser mux, owned-keys projection, the Sync button to gvmd's `content.sync`).
+- **Item 4 — the Settings tab** (generated from VarSpec, gated on `instance:config`, posting to gvmd's `instance.set` with the sha256 If-Match; join-password rotation write-only through `secret.write`).
+- **Item 5 — the three new gvmd verbs** (`content.sync`, `instance.set`, `secret.write`, each with its permission and audit action; `TestGvmdVerbSetIsClosed`).
+- **Item 6 — token lifecycle** (`token rotate`, the 90-day default expiry, the role-ceiling refusal).
+- **Item 7 — the footer** showing the version and the restart-pending count to signed-in users only.
+- **The `TestNoBrowserPageFetchesAPIv1` guard** and the J4 journey CI.
+
+**Effort for this task:** the rule→dashboard-text table implemented by Claude (Opus 4.8) on 2026-10-17. The connect card, the Mods and Settings tabs, the gvmd verbs, token lifecycle and the footer are the gvmd-and-browser body of the dashboard.
 
 ---
 
