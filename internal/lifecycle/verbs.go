@@ -88,7 +88,7 @@ var decls = map[Verb]Decl{
 		Summary: "run the shutdown ladder and hold the instance down",
 	},
 	VerbRestart: {
-		Verb: VerbRestart, Host: hostops.VerbUnitRestart, Audit: audit.InstanceStart,
+		Verb: VerbRestart, Host: hostops.VerbUnitRestart, Audit: audit.InstanceRestart,
 		Hold: HoldClear, Wants: PhaseRunning,
 		Summary: "restart the instance as one systemd job",
 	},

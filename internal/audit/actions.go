@@ -28,6 +28,7 @@ type Action string
 const (
 	InstanceStop    Action = "instance.stop"
 	InstanceStart   Action = "instance.start"
+	InstanceRestart Action = "instance.restart"
 	InstanceRebuild Action = "instance.rebuild"
 	InstanceApply   Action = "instance.apply"
 
@@ -104,6 +105,15 @@ var allowedParams = map[Action]Spec{
 	},
 	InstanceStart: {
 		Params:   []string{"reason", "ready_after_sec"},
+		Instance: true,
+	},
+	// instance.restart is its own action, not instance.start: a row that says
+	// "started" for a restart hides that the server went down and back up, which
+	// is exactly what an operator reading the trail after a blip needs to see.
+	// The hostops restart carries the operator's reason and nothing a start does
+	// not.
+	InstanceRestart: {
+		Params:   []string{"reason"},
 		Instance: true,
 	},
 	// archive_path/sha/bytes are required on success because "archive before
