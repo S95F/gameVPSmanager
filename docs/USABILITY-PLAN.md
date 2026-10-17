@@ -235,7 +235,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 34 🟡 | First server, start to finish · **J1** | progress while booting; `gvm up`; first public release | S | L | 21, 32, 33 |
 | **J2** | **Week to week** | | | | |
 | 35 🟡 | Upgrade gvm without stopping the worlds | N-1 skew rule; restart-pending; `restart --pending` | I | L | 34 |
-| 36 | Backup health you can see | snapshot line, GiB remedies, BACKUP doctor checks | B | M | 21, 24 |
+| 36 🟡 | Backup health you can see | snapshot line, GiB remedies, BACKUP doctor checks | B | M | 21, 24 |
 | 37 | One glance: status, job history and the audit trail | last/next job, players, uptime, `audit tail`, `logs -f` | O | XL | 34, 36 |
 | 38 | Get a world back | `restore --to`, archive-first restore, rebuild for content-free games | B | L | 21, 34, 37 |
 | 39 | Change settings without hand-editing YAML | `gvm set`, `enable/disable`, `ports move`, `manifest upgrade`, strict apply | O | XL | 35, 38 |
@@ -2146,6 +2146,23 @@ The one piece that needs no format bump, no systemd and no live upgrade is in. f
 - **Rule 5:** preserve archives are still never pruned automatically, and the prune rules are unchanged. `backup delete` is explicit, typed with the instance name, and never removes the newest verified copy of a live world.
 - **Rule 6:** the doctor checks only report.
 - **Rule 1:** everything is read from the on-disk index.
+
+### 🟡 Partial — `gvm backup delete` (item 3's verb) and OpenSSH host-key fingerprints (item 6) landed 2026-10-17; the snapshot/push run reporting, the disk checks and the BACKUP doctor checks remain
+
+The two pieces that need no `statfs`, no running backup and no remote are in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 3 (the verb) — `gvm backup delete <archive> [--dry-run]` (offsite-backup-dr-12, failure-recovery-12).** The one explicit way to remove an archive, preserve archives included — without it, reclaiming a destroy- or rebuild-authorising archive meant `rm` under `/var/backups` as root, bypassing the index, the archive-first guard and any record that it happened. It shows the archive's instance, class, reason, pin, age and size, then requires the **instance name** to be typed (`TypedConfirm`, no `--yes`; a wrong name is a refusal, exit 5). It refuses the newest verified archive of an instance that still exists, so a live world always keeps one verified copy; for an instance that is gone it allows the delete and says when it was the last copy. It removes the tarball and its `.preserve` sidecar through the new `archive.ForceDeleteArchive` — the one deliberate, operator-gated bypass of the never-prune rule `archive.DeleteArchive` enforces — reindexes, and audits `backup.delete` with path/sha256/bytes (new `audit.BackupDelete` action + allowlist entry). `TestBackupDeleteRefusesAWrongTypedName`, `TestBackupDeleteRemovesAPreserveArchiveWithTheTypedName`, `TestBackupDeleteRefusesTheNewestVerifiedCopyOfALiveInstance` and `TestBackupDeleteDryRunRemovesNothing` (cli) and `TestForceDeleteArchiveRemovesEvenAPreserveAndItsPin` (archive) prove it. The DoD line "`sudo gvm backup delete <old preserve archive>` … removes the file and its pin … On the newest verified archive of a live instance it refuses and removes nothing. A wrong typed name exits 5" is covered.
+- **Item 6 — OpenSSH-style host-key fingerprints (offsite-backup-dr-15).** `HostKey.Fingerprint()` now prints `SHA256:` + the unpadded base64 of `sha256(blob)` — byte for byte what `ssh-keygen -lf` prints — instead of the algorithm plus a truncated slice of the key's own base64 that matched no standard tool's output. The pin in a push log can now be cross-checked against `ssh-keyscan`/`ssh-keygen` directly, and still carries no key material into a journal. `TestFingerprintIsTheOpenSSHSHA256Form`, plus the updated Describe/no-dialer tests, prove it.
+
+**Remaining (a dedicated session should take these — `statfs`, a running backup, the archive index's new fields):**
+- **Item 1 — snapshot reporting**: the run summary's `snapshot_method`/`snapshot_why`/`stall_ms`/`snapshot_fallback`, the one-line print (red above `StallRed`), `spec.backup.snapshot: auto|direct` → `AllowMethods`, the index-entry copy, and doctor **BACKUP-005** reading it back with `statfs`/`stat` capability hints. Needs a running backup.
+- **Item 2 — push fields**: `push_target`/`push_name`/`push_bytes`/`encrypted_to`/`push_skipped_reason` on the run summary, `pushed_at`/`pushed_to` on index entries, and `backup list`'s OFF-BOX column ("not made (no transport in this build)" until Phase 54).
+- **Item 3 (the rest) — out of space in plain terms**: the `spec.FormatBytes` sweep, the three-remedy refusal, and the realistic estimate (`max(previous compressed × 1.5 × growth, 512 MiB)` when a run thaws before archiving or crosses devices; `uncompressed × 1.1` otherwise). The `gvm backup delete` verb that the refusal's remedies point at is now in place.
+- **Item 4 — HOST-013 disk check**: `statfs` across the backup dir, `/var/lib/gvm`, `/var/log/gvm`, the instances' install and data paths and `/var/lib/postgresql`, de-duplicated by filesystem id; the 15%/2×-largest-archive/5% thresholds; the `gvm status` volume note; the Postgres WAL hint moving here from the 503 page. Linux `statfs`.
+- **Item 5 — doctor BACKUP-001..004** (stale newest-verified archive; backups on the world's device with no remote; preserve bytes as a share of free space, its fix naming `gvm backup list` and `gvm backup delete`; an unsupported or never-succeeded remote), plus the leftover `*.snap` report, in one new check file alongside BACKUP-005.
+
+**Effort for this task:** the `gvm backup delete` verb and the OpenSSH host-key fingerprint implemented by Claude (Opus 4.8) on 2026-10-17. The snapshot and push run reporting, the disk checks and the BACKUP doctor checks are their own body of `statfs`-and-running-backup work.
 
 ---
 
