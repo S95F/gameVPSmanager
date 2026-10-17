@@ -115,13 +115,21 @@ func gameFlags(env *Env, name, args string) (*flag.FlagSet, *bool) {
 
 func runGameValidate(env *Env, args []string) error {
 	fs, unapproved := gameFlags(env, "validate", "<file.yaml|game-id>...")
-	if err := fs.Parse(args); err != nil {
+	asJSON := fs.Bool("json", false, "print the findings as JSON (one object per target)")
+	// parseInterspersed, not fs.Parse: an operator writes `validate mygame.yaml
+	// --json`, and stdlib flag stops at the first positional, so --json after the
+	// target would be read as a second target ("invalid game id").
+	targets, err := parseInterspersed(fs, args)
+	if err != nil {
 		return flagErr(err)
 	}
-	targets := fs.Args()
 	if len(targets) == 0 {
 		fs.Usage()
 		return errors.New("name a manifest file or a game id")
+	}
+
+	if *asJSON {
+		return validateJSON(env, targets, *unapproved)
 	}
 
 	bad := 0
@@ -136,6 +144,81 @@ func runGameValidate(env *Env, args []string) error {
 		if !ok {
 			bad++
 		}
+	}
+	if bad > 0 {
+		return fmt.Errorf("%d of %d manifests have errors", bad, len(targets))
+	}
+	return nil
+}
+
+// validateResult is one target's findings in `gvm game validate --json`. It is
+// the same verdict the text output reaches, in a shape a CI step or an authoring
+// tool can read: ok is false when the manifest could not be read or carries any
+// error, and the diags carry their own severity so a consumer can show warnings
+// without failing on them.
+type validateResult struct {
+	Target    string             `json:"target"`
+	Ref       string             `json:"ref,omitempty"`
+	OK        bool               `json:"ok"`
+	Errors    int                `json:"errors"`
+	Warnings  int                `json:"warnings"`
+	ReadError string             `json:"read_error,omitempty"`
+	Diags     []validateDiagJSON `json:"diags,omitempty"`
+}
+
+type validateDiagJSON struct {
+	Severity string `json:"severity"`
+	Path     string `json:"path,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	Col      int    `json:"col,omitempty"`
+	Message  string `json:"message"`
+}
+
+func validateJSON(env *Env, targets []string, unapproved bool) error {
+	out := make([]validateResult, 0, len(targets))
+	bad := 0
+	for _, t := range targets {
+		res := validateResult{Target: t, OK: true}
+		ref, raw, readErr := readManifestTarget(t, unapproved)
+		if readErr != nil {
+			res.OK, res.ReadError = false, readErr.Error()
+			bad++
+			out = append(out, res)
+			continue
+		}
+		res.Ref = ref
+
+		m, diags, parseErr := spec.ValidateBytes(ref, raw)
+		if parseErr == nil {
+			// The same per-codec key check the text path merges in, so --json and
+			// the human output reach an identical verdict (a bad codec key is an
+			// error in both).
+			if ix, ixErr := spec.IndexBytes(ref, raw); ixErr == nil {
+				diags = append(diags, codecKeyDiags(m, ix, diags)...)
+			}
+		}
+		for _, d := range diags {
+			sev := "error"
+			if d.Sev == spec.SevWarning {
+				sev = "warning"
+			} else {
+				res.Errors++
+			}
+			if d.Sev == spec.SevWarning {
+				res.Warnings++
+			}
+			res.Diags = append(res.Diags, validateDiagJSON{
+				Severity: sev, Path: d.Path, Line: d.Line, Col: d.Col, Message: d.Msg,
+			})
+		}
+		if parseErr != nil || diags.HasErrors() {
+			res.OK = false
+			bad++
+		}
+		out = append(out, res)
+	}
+	if err := writeJSON(env.Stdout, out); err != nil {
+		return err
 	}
 	if bad > 0 {
 		return fmt.Errorf("%d of %d manifests have errors", bad, len(targets))
