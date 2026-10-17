@@ -64,6 +64,30 @@ func TestValidateHostEnumsCIDRsPorts(t *testing.T) {
 	}
 }
 
+// TestValidateHostRejectsNftBackend is Phase 40 item 2's other lock: the nft
+// backend is off, so a host config that asks for it is refused at validation,
+// not left to fail later when nft.Available returns false. ufw and none stay
+// accepted.
+func TestValidateHostRejectsNftBackend(t *testing.T) {
+	h := DefaultHostConfig()
+	h.Spec.Firewall.Backend = "nft"
+	ds := ValidateHost("gvm.yaml", &h)
+	if !ds.HasErrors() {
+		t.Fatalf("backend: nft validated clean:\n%s", ds.String())
+	}
+	if got := ds.String(); !strings.Contains(got, "is not a firewall backend") {
+		t.Errorf("the refusal does not name the backend problem:\n%s", got)
+	}
+
+	for _, ok := range []string{"ufw", "none", ""} {
+		h := DefaultHostConfig()
+		h.Spec.Firewall.Backend = ok
+		if ds := ValidateHost("gvm.yaml", &h); ds.HasErrors() {
+			t.Errorf("backend %q was rejected but is supported:\n%s", ok, ds.String())
+		}
+	}
+}
+
 // A valid config validates clean — the default must never fail its own checks.
 func TestValidateHostAcceptsDefault(t *testing.T) {
 	h := DefaultHostConfig()
