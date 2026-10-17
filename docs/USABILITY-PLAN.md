@@ -236,7 +236,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | **J2** | **Week to week** | | | | |
 | 35 🟡 | Upgrade gvm without stopping the worlds | N-1 skew rule; restart-pending; `restart --pending` | I | L | 34 |
 | 36 🟡 | Backup health you can see | snapshot line, GiB remedies, BACKUP doctor checks | B | M | 21, 24 |
-| 37 | One glance: status, job history and the audit trail | last/next job, players, uptime, `audit tail`, `logs -f` | O | XL | 34, 36 |
+| 37 🟡 | One glance: status, job history and the audit trail | last/next job, players, uptime, `audit tail`, `logs -f` | O | XL | 34, 36 |
 | 38 | Get a world back | `restore --to`, archive-first restore, rebuild for content-free games | B | L | 21, 34, 37 |
 | 39 | Change settings without hand-editing YAML | `gvm set`, `enable/disable`, `ports move`, `manifest upgrade`, strict apply | O | XL | 35, 38 |
 | 40 | gvm opens the ports, and never locks you out | apply stages tagged ufw rules; `gvm firewall apply` for host rules; guarded `gvm firewall enable` | N | L | 33, 39 |
@@ -2281,6 +2281,26 @@ The two pieces that need no `statfs`, no running backup and no remote are in. fm
 - **Rule 2:** the journald socket, gzip and the webhook are pure Go.
 - **Rule 8:** the `root_cli` migration runs only through `gvm db migrate`.
 - **Rule 10:** the players regex is data.
+
+### 🟡 Partial — the `instance.restart` audit action (item 6) and the `gvm list --problems` wording (item 9) landed 2026-10-17; the job records, status Details, player poll, offline audit trail, delegation, `logs -f` and the notifier remain
+
+The two pieces that need no job runner, no D-Bus timer read and no running game are in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 6 (part) — a restart is audited as `instance.restart`, not `instance.start` (admin-security-8).** `VerbUnitRestart` (hostops) and `VerbRestart` (lifecycle) both carried `audit.InstanceStart`, so the trail recorded a restart as a plain start and hid that the server went down and back up — the gap an operator reading the log after a blip is trying to account for. A new `audit.InstanceRestart` action and allowlist entry (reason, instance-scoped) is now the audit action on both declarations. `TestARestartIsAuditedAsARestartNotAStart` (hostops) and the cross-check `TestEveryVerbBecomesExactlyOneDeclaredPrivilegedVerb` (lifecycle), which fails if the two sides disagree, prove it.
+- **Item 9 — `gvm list --problems` wording (day2-ops-14, failure-recovery-15).** On a host with nothing wrong it printed "no instances", which reads as "this box is empty" rather than "this box is fine"; it now prints "nothing needs attention (N instances, N running)" and exits 0. A non-empty result lists the unhealthy instances, a whole-host summary, and "→ gvm status \<name\> for details; gvm doctor for host checks", and exits 4. The summary line gained a **busy** bucket — "N running, N busy, N stopped, N needing attention" — so an instance in flight (starting, updating) is no longer counted as one an operator turned off. `TestListProblemsOnAHealthyHostSaysSo`, `TestListProblemsListsTheUnhealthyAndExitsFour` (cli) and the extended `TestSummariseCountsRunningBusyStoppedAndProblems` (lifecycle) prove it.
+
+**Remaining (a dedicated session should take these — a job runner, a D-Bus timer read, a running game, the spool):**
+- **Item 1 — job records on disk**: `jobs.Execute`'s finish step writing `/var/lib/gvm/instances/<n>/jobs/<job>.json` (and `/var/lib/gvm/jobs/` for host jobs) through a new atomic O_NOFOLLOW hostops file kind, the start/finish fields, the bounded ring of 20, and the "did not finish (killed or timed out)" read for a record from a dead pid or earlier boot.
+- **Item 2 — job history commands**: `gvm job last`/`gvm job history`, and `gvm job list`'s LAST RUN/RESULT/NEXT columns from the timers' `NextElapseUSecRealtime`/`LastTriggerUSec` over read-only D-Bus, with host-local zoned timestamps.
+- **Item 3 — `lifecycle.Details` (display-only, U12)**: uptime, installed build, update-available (from the recorded check, never a network read), last/next backup, next job, free disk, the join line, and the last-job/guard/degraded breadcrumbs, with the `gvm status`/`gvm list` columns, plus the lint that `Derive`/`Manager`/the guard never import it.
+- **Item 4 — players, reusing the readiness probe** (a2s/mc_ping re-query, or the RCON regex), stopping when a shutdown begins.
+- **Items 5 & 6 (rest) — the offline audit trail**: `gvm audit tail`/`search` over the spool with a best-effort Postgres merge, the journald sink, and the remaining action mappings (destroy/rebuild/restore/update/prune parent rows, `console.send`/`content.sync`, the `root_cli` migration).
+- **Item 7 — delegation**: the commented `sudoers.d/gvm-moderators` example, the doc, and the claimed `sudo_user`/`sudo_uid` on lifecycle rows.
+- **Item 8 — better `gvm logs`**: `-f` tailing by seeking from the end and reopening on rotation, `-n`, `--all` over the rotated `.gz`, and the last five console lines in a stopped instance's status.
+- **Item 10 — the opt-in failure notifier** (`gvm notify job-failed`, an attention marker plus an optional webhook, never acting), and doctor INST-016.
+
+**Effort for this task:** the `instance.restart` audit action and the `gvm list --problems` wording implemented by Claude (Opus 4.8) on 2026-10-17. The job records, the status Details, the player poll, the offline audit trail, delegation, `logs -f` and the notifier are the ten-item body of job-runner, D-Bus, running-game and spool work the phase is mostly made of.
 
 ---
 
