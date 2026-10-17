@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
@@ -143,15 +144,22 @@ func (h HostKey) Matches(algo string, blob []byte) bool {
 	return subtle.ConstantTimeCompare(h.Blob, blob) == 1
 }
 
-// Fingerprint is the pin as it goes in a log line: the algorithm and the first
-// bytes of the blob, which is enough for an operator to compare against
-// `ssh-keygen -lf` without putting a whole key in a journal.
+// Fingerprint is the pin as it goes in a log line: OpenSSH's SHA256 form,
+// "SHA256:" followed by the unpadded base64 of sha256(blob). It is byte for
+// byte what `ssh-keygen -lf` prints for the same key, so an operator can
+// compare the pin in a push log against their own `ssh-keyscan`/`ssh-keygen`
+// output directly, and a whole key never ends up in a journal.
+//
+// The earlier form printed the algorithm and a truncated slice of the key's own
+// base64, which matched nothing an operator could produce with a standard tool;
+// a fingerprint they cannot cross-check is a fingerprint that quietly stops
+// being checked.
 func (h HostKey) Fingerprint() string {
 	if h.Algo == "" {
 		return "(unpinned)"
 	}
-	b := base64.RawStdEncoding.EncodeToString(h.Blob)
-	return h.Algo + " " + truncate(b, 24)
+	sum := sha256.Sum256(h.Blob)
+	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
 }
 
 // SSHConfig is everything a dialer needs, and nothing it does not.

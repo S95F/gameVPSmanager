@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -141,8 +142,35 @@ func TestThePinRejectsADifferentKeyAndADifferentAlgorithm(t *testing.T) {
 	if hk.Matches("ecdsa-sha2-nistp256", hk.Blob) {
 		t.Error("the pin accepted the right bytes under the wrong algorithm")
 	}
-	if !strings.HasPrefix(hk.Fingerprint(), "ssh-ed25519 ") {
-		t.Errorf("Fingerprint() = %q, want the algorithm and a truncated key", hk.Fingerprint())
+}
+
+// TestFingerprintIsTheOpenSSHSHA256Form: the pin a push log prints is exactly
+// what `ssh-keygen -lf` prints for the same key — "SHA256:" then the unpadded
+// base64 of sha256(blob) — so an operator can compare the two without special
+// tooling, and no key material lands in the journal.
+func TestFingerprintIsTheOpenSSHSHA256Form(t *testing.T) {
+	_, blob, line := ed25519HostKey(0x44)
+	hk, err := ParseHostKey(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(blob)
+	want := "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
+	got := hk.Fingerprint()
+	if got != want {
+		t.Errorf("Fingerprint() = %q, want %q (ssh-keygen -lf's form)", got, want)
+	}
+	// The format itself: the OpenSSH prefix, no base64 padding, and the 43
+	// characters a 32-byte digest raw-encodes to. ssh-keygen prints exactly
+	// this token, so any drift here is drift away from it.
+	if !strings.HasPrefix(got, "SHA256:") {
+		t.Errorf("Fingerprint() = %q, want the SHA256: prefix ssh-keygen uses", got)
+	}
+	if strings.Contains(got, "=") {
+		t.Errorf("Fingerprint() = %q carries base64 padding; ssh-keygen prints the unpadded form", got)
+	}
+	if digest := strings.TrimPrefix(got, "SHA256:"); len(digest) != 43 {
+		t.Errorf("the digest is %d chars, want 43 (a 32-byte sha256, raw-base64): %q", len(digest), got)
 	}
 }
 
@@ -227,7 +255,7 @@ func TestAConfiguredSFTPTargetWithNoDialerRefusesAndSaysWhatIsUnaffected(t *test
 	// The description is what goes in the job log: who, where, which pin. The
 	// private key is a PATH handed to the dialer and must not appear.
 	d := tr.Describe()
-	for _, want := range []string{"gvmpush", "backup.example.net:2222", "/srv/backups/gvm/pz-main", "ssh-ed25519"} {
+	for _, want := range []string{"gvmpush", "backup.example.net:2222", "/srv/backups/gvm/pz-main", "SHA256:"} {
 		if !strings.Contains(d, want) {
 			t.Errorf("Describe() = %q, missing %q", d, want)
 		}
