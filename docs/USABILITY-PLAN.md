@@ -243,7 +243,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 41 🟡 | Planned restarts players see coming · **J2** | `--warn` countdown; restart says which rung saved | O | M | 37, 38, 39, 40 |
 | **J3** | **Every game, mods and custom games** | | | | |
 | 42 🟡 | The whole catalog boots | Proton, Mono, native Satisfactory/ARK, 7DTD, Core Keeper, CS2 verified | G | XL | 32, 39 (item 10 only) |
-| 43 | Mod lists that are easy to edit and read | URLs and titles; import from ini; `content update --check` | C | L | 39 |
+| 43 🟡 | Mod lists that are easy to edit and read | URLs and titles; import from ini; `content update --check` | C | L | 39 |
 | 44 | Apply Workshop mod changes safely | `gvm content sync`; PZ updates; rebuild for modded games | C | L | 41, 43 |
 | 45 | Minecraft mods: Modrinth, then CurseForge | MC mods by name; honest blocked-mod ladder; MC updates | C | XL | 29, 44 |
 | 46 | Add a game with YAML alone · **J3** | `game approve`; deep validate; field reference | G | L | 42, 45 |
@@ -2881,6 +2881,24 @@ This phase is verified by `gvm game try <id> --scratch` on Debian 12 and Ubuntu 
 - **Rule 11:** adopt discovery never calls `import`, and its ini read is read-only.
 - **Rule 10:** titles are sanitised data.
 - **Rule 1:** list edits are files, and `list` and `diff` are offline reads.
+
+### 🟡 Partial — id validation at `add` (item 1's core) landed 2026-10-17; titles, `content set`, import, `update --check`, the dry-run diff and the help pass remain
+
+The pure part — validating and normalising an id before it is written — is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 1 (core) — `content add` validates ids before writing them (content-mods-7).** `content.NormalizeID` turns each source's accepted forms into the canonical id and refuses the rest at `add`, where the operator still has the context to fix it, instead of at the next sync with a 404. A Steam Workshop id is the numeric id or a `steamcommunity.com/…?id=<n>` URL; a display name or an activation id (a `Mods=` entry) is refused and pointed at `gvm content why`. Modrinth takes a `slug[:versionId]` or a `modrinth.com/mod/<slug>` URL; CurseForge a numeric `projectID[:fileID]` (a slug URL is refused, naming the Project ID). `--pin` on a Steam Workshop item is refused — it has no per-version id. `runContentAdd` normalises each id through it (a usage error, exit 2, writing nothing on refusal). `TestNormalizeIDAcceptsTheFormsEachSourceUses`, `TestNormalizeIDRefusesWhatWouldFailAtSync`, `TestWorkshopActivationIDRefusalNamesContentWhy` (content) and `TestContentAddValidatesIdsBeforeWriting` (cli) prove it. The DoD line "`content add` stores an id from its URL … `ThatDamnLibrary` is refused with the item hint" is covered.
+
+**Remaining (a dedicated session should take these — a best-effort network lookup, a live ini read, the ACF parser, the content diff):**
+- **Item 1 (rest) — `gvm content set <inst> <id> [--note] [--requires] [--pin]`** through the intent writer (the requires-itself fix uses it).
+- **Item 2 — show titles**: `add`'s keyless best-effort title lookup filling `note`, the `consumer_app_id` mismatch refusal, `--no-fetch`, and the offline `list`/`diff` fallback to the lock's `Upstream.Title`.
+- **Item 3 — import what the operator has**: `content collection set` and `create --collection`, `content import --from-ini` (read-only, `activation_policy: preserve`, never from adopt discovery), and the TTY-gated collection-sync merge that keeps hand-added items unattended.
+- **Item 4 — `content update <inst> --check`**: the keyless `time_updated` read compared with the `appworkshop_<appid>.acf` ACF, titles and ages, exit 4 when updates exist; the inert `--dry-run` removed.
+- **Item 5 — `content why` accepting Workshop ids** as well as activation ids.
+- **Item 6 — one state description**: `sync --dry-run`'s DECLARED-vs-LOCKED rows and single "will write" block, and the "fix first: gvm content remove …" + exit 4 when `Unaccounted` is non-empty.
+- **Item 7 — the help pass**: `--json` on every content verb (or removed), plain-language help with a per-source id example, and the missing-root note only when no declared root holds items.
+
+**Effort for this task:** the id validation implemented by Claude (Opus 4.8) on 2026-10-17. Titles, `content set`, import, `update --check`, the dry-run diff and the help pass are the network-lookup and live-config body of the phase.
 
 ---
 
