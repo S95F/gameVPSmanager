@@ -234,7 +234,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 33 ◆ 🟡 | Players know how to connect | join line; SSH-safe `gvm firewall plan`; `gvm ports` names owners | N | L | 24, 29 |
 | 34 🟡 | First server, start to finish · **J1** | progress while booting; `gvm up`; first public release | S | L | 21, 32, 33 |
 | **J2** | **Week to week** | | | | |
-| 35 | Upgrade gvm without stopping the worlds | N-1 skew rule; restart-pending; `restart --pending` | I | L | 34 |
+| 35 🟡 | Upgrade gvm without stopping the worlds | N-1 skew rule; restart-pending; `restart --pending` | I | L | 34 |
 | 36 | Backup health you can see | snapshot line, GiB remedies, BACKUP doctor checks | B | M | 21, 24 |
 | 37 | One glance: status, job history and the audit trail | last/next job, players, uptime, `audit tail`, `logs -f` | O | XL | 34, 36 |
 | 38 | Get a world back | `restore --to`, archive-first restore, rebuild for content-free games | B | L | 21, 34, 37 |
@@ -2049,6 +2049,24 @@ There is a second gap: without a render generation, fixes to drop-ins are silent
 - **Rule 6:** `restart --pending` and `apply --all` run only when the operator invokes them, never from timers, the guard or `host init`. `upgrade status` is read-only.
 - **Rule 5:** `apply --all` refuses destructive steps without the typed name.
 - **Rules 1 and 3:** version stamps are files, and no admin.sock is involved.
+
+### 🟡 Partial — version-independent lease liveness (item 3) landed 2026-10-17; the console handshake, render generation, `upgrade status`, `restart --pending` and the cross-version CI remain
+
+The one piece that needs no format bump, no systemd and no live upgrade is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`. `TestFrozenFormats` still stands — it guards the other six formats until their N-1 readers land.
+
+**Landed, with tests:**
+- **Item 3 — lease liveness no longer depends on the version that wrote the lease (gvm-self-upgrade-uninstall-3).** `ParseLeaseLiveness` reads the frozen holder fields (`pid`, `boot_id`, `unit`, `started_at`, `deadline`) regardless of the lease's `proto`, and `classifyLiveness` — shared with the typed `Lease.Classify`, so the two answer identically — decides live/stale from them. The observer classifies through it, so a lease a newer gvm wrote (a `LeaseProto` this build has never seen, after an upgrade bumped it) reads **live**, not **unreadable**. "Unreadable" is now reserved for bytes that will not decode as JSON at all. This closes the hazard the October review documented: before, a bumped `LeaseProto` made `gvm list` report a held instance as *failed* and print `gvm job clear`, and that command's own `LeaseLive` guard was never reached — so following gvm's own advice deleted the lease of a job still writing the install tree. Now the instance reads live and `gvm job clear` refuses it. `TestLivenessReadsAcrossVersions` and `TestLivenessUnreadableMeansCorruptOnly` (lifecycle), `TestObserveDoesNotCallAFutureLeaseUnreadable` (observer) and `TestJobClearRefusesAFutureProtoLiveLease` (cli, end to end) prove it. `ParseLease` keeps its strict, proto-gated contract for callers that need the whole typed lease, so `TestFrozenFormats` and the existing refusal tests stay green.
+
+**Remaining (a dedicated session should take these — a format bump, systemd, a live N-1 → N upgrade):**
+- **Item 1 — upgrading with `host init`**: rename the new binary over `/usr/bin/gvm`, rewrite the units, `daemon-reload`, never touch `gvm@*`/`gvm-job@*`, and end by printing `gvm upgrade status`. Linux self-copy and systemd.
+- **Item 2 — the rest of the N-1 skew rule**: the console `hello` carrying `gvm_version` and `lease_schema` and the CLI accepting the current protocol and N-1; the `gvm stop` protocol-mismatch fallback to `VerbUnitStop` with the rung read back; the freeze-lease schema negotiation; the newer-`status.json` "fields may be missing" read. These cross-version readers, with `docs/upgrading.md`, are what let `TestFrozenFormats` be replaced.
+- **Item 4 — runners report their version**: `runner.json`/`status.json` gain `gvm_version`, `commit`, `console_proto` and `lease_schema`; the root CLI's `/proc/<MainPID>/exe` "(deleted)"/inode check; the `gvm list`/`status` "restart pending" row. Linux `/proc`.
+- **Item 5 — `RenderGeneration`** in drop-in and timer headers with golden-unit tests; `gvm list` "apply suggested"; `apply --all [--diff]` serial, typed-name-gated, never restarting, printing "takes effect at next restart: gvm restart --pending"; the egress/sandbox-diff warning.
+- **Item 6 — `gvm upgrade status [--since <ver>]`** (local, DB-free: runner version, render generation, pinned-vs-shipped revision with ledger state, the CHANGELOG's "Operator actions"). Mostly cross-platform; follows items 4–5.
+- **Item 7 — `sudo gvm restart --pending`** and `gvm stop --all`: one instance at a time through the ladder, skipping held or leased instances, halting at the first that does not come back, never invoked by timers, the guard or `host init`.
+- **Item 3 tail — `gvm job clear` on a genuinely corrupt lease** refusing unless the unit is inactive and its pid is dead or from another boot. This needs systemd unit state, because a corrupt lease names no unit to check.
+
+**Effort for this task:** the version-independent lease liveness implemented by Claude (Opus 4.8) on 2026-10-17. The console handshake, the render generation, the version stamps, `upgrade status`, `restart --pending` and the cross-version upgrade CI are their own body of format-bump, systemd and live-upgrade work, and they are what finally retire `TestFrozenFormats`.
 
 ---
 
