@@ -245,7 +245,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 42 🟡 | The whole catalog boots | Proton, Mono, native Satisfactory/ARK, 7DTD, Core Keeper, CS2 verified | G | XL | 32, 39 (item 10 only) |
 | 43 🟡 | Mod lists that are easy to edit and read | URLs and titles; import from ini; `content update --check` | C | L | 39 |
 | 44 | Apply Workshop mod changes safely | `gvm content sync`; PZ updates; rebuild for modded games | C | L | 41, 43 |
-| 45 | Minecraft mods: Modrinth, then CurseForge | MC mods by name; honest blocked-mod ladder; MC updates | C | XL | 29, 44 |
+| 45 🟡 | Minecraft mods: Modrinth, then CurseForge | MC mods by name; honest blocked-mod ladder; MC updates | C | XL | 29, 44 |
 | 46 | Add a game with YAML alone · **J3** | `game approve`; deep validate; field reference | G | L | 42, 45 |
 | **J4** | **Friends without SSH** | | | | |
 | 47 | Make the web skeleton safe before it is wired | no anonymous pages, no fake 202s, §15.2 roles | W | L | 22 |
@@ -3041,6 +3041,21 @@ The pieces this phase builds on did land earlier: the id validation and comment-
 - **Rule 13:** URLs are used verbatim, the key is operator-supplied via `secret set --host` (which accepts its `$2a$10$…` shape, because rule 10's ban applies to game passwords only), and the nosynth gate stays.
 - **Rule 4:** sync goes through the ladder.
 - **Rule 1:** reads are offline, and jobs execute under systemd.
+
+### 🟡 Partial — the one exported drop-box constant (item 2's core) landed 2026-10-17; the Modrinth/CurseForge wiring, resolve-blocked, dependencies and the engine flips remain
+
+This phase depends on Phase 44's content job engine (not built) and its definition of done is end-to-end against running Minecraft servers, so most of it is runtime. The one piece that is pure and needs neither — the shared drop-box path — is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 2 (core) — one exported drop-box constant (content-mods-6, documentation-11).** `curseforge.DropBoxDir` is now the single, host-wide `/var/lib/gvm/downloads/mods` that the drop-box scanner, the `gvm content blocked` report and the docs all name. Before this, the scanner's dead `dropBoxPath` returned a *different*, per-instance path (`/var/lib/gvm/instances/<n>/blocked-mods`) while the CLI hardcoded the correct `/var/lib/gvm/downloads/mods` as a literal of its own — exactly the drift the plan asks one constant to close. The dead function is removed, the CLI references the symbol, and `TestDropBoxDirIsTheDocumentedPath` (curseforge) pins the value while `TestBlockedReportNamesTheSharedDropBox` (cli) proves the report uses it. (`murmur2` fingerprinting and `ScanDropBox`/`WalkDropBox`, which the resolve path scans this directory with, already exist.)
+
+**Remaining (a dedicated session should take these — the content job engine from Phase 44, a running Minecraft server, network reads):**
+- **Item 1 — Modrinth wiring**: `Observe` by hashing jars offline, the `internal/content/fetch` client with its host allowlist, the no-URL `Materialize` refusal, `Schema.GameVersion`/`Loader` from the provider block, digest-guarded presence deactivation, the CLI constructing `modrinth.New`, and the `engineWired(content_sync|update|repair|rebuild)` flips for Paper/Forge/NeoForge — all gated on Phase 44's engine.
+- **Item 2 (rest) — CurseForge**: the typed ladder results (`auth_failed` / `not_found` / `withdrawn` / `transient`), `blocked-mods.json` with `websiteUrl` verbatim, the murmur2/sha1 drop-box match with the "different build" diagnostic, `gvm content resolve-blocked`, and the `secret set --host curseforge` key.
+- **Item 3 — dependencies**: required-dependency rows, `diff`'s "X requires Y" line with the exact `add`, `add --with-deps`, the `incompatible` abort, and the loader filter.
+- **Item 4 — docs** (`docs/curseforge-blocked-mods.md` rewrite, the Minecraft game pages' mods section).
+
+**Effort for this task:** the exported drop-box constant implemented by Claude (Opus 4.8) on 2026-10-17. The Modrinth and CurseForge wiring, `resolve-blocked`, dependencies and the engine flips are the content-engine and network body of the phase, gated on Phase 44.
 
 ---
 
