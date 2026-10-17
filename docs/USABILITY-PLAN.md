@@ -246,7 +246,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 43 🟡 | Mod lists that are easy to edit and read | URLs and titles; import from ini; `content update --check` | C | L | 39 |
 | 44 | Apply Workshop mod changes safely | `gvm content sync`; PZ updates; rebuild for modded games | C | L | 41, 43 |
 | 45 🟡 | Minecraft mods: Modrinth, then CurseForge | MC mods by name; honest blocked-mod ladder; MC updates | C | XL | 29, 44 |
-| 46 | Add a game with YAML alone · **J3** | `game approve`; deep validate; field reference | G | L | 42, 45 |
+| 46 🟡 | Add a game with YAML alone · **J3** | `game approve`; deep validate; field reference | G | L | 42, 45 |
 | **J4** | **Friends without SSH** | | | | |
 | 47 | Make the web skeleton safe before it is wired | no anonymous pages, no fake 202s, §15.2 roles | W | L | 22 |
 | 48 | Dashboard v0 | invite a friend; start/stop/restart; live console | W | XL | 47, 33, 37, 40 |
@@ -3128,6 +3128,21 @@ This phase depends on Phase 44's content job engine (not built) and its definiti
 - **Rule 10:** the template guard runs at load. The approval file is not a manifest, and the password rules still apply.
 - **Rule 9:** gvm-web cannot forge an approval, because of the file's mode and owner.
 - **Rule 5:** approval is typed, and scratch proof is still required before create.
+
+### 🟡 Partial — `gvm game validate --json` (item 2's `--json`) landed 2026-10-17; `game approve`, the one-pass validate rules, the schema reference and the J3 CI journey remain
+
+The one piece that needs no approval-file FS plumbing, no runtime and no shipped-manifest churn is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 2 (`--json`) — `gvm game validate --json` (game-catalog-config-13).** The same verdict the human output reaches, in a shape a CI step or an authoring tool can read: one object per target with `ok`, the error and warning counts, and each diagnostic's severity, path and line:col (the per-codec key check is merged in, so `--json` and the text output never disagree). `ok` is false when the manifest cannot be read or carries any error, and the command exits non-zero then. `validate` now also parses its flags interspersed, so `gvm game validate mygame.yaml --json` works rather than reading `--json` as a second target. `TestGameValidateJSON` proves the clean and the broken paths.
+
+**Remaining (a dedicated session should take these — approval-file FS plumbing, the shipped-manifest validation rules, a running game for the J3 CI):**
+- **Item 1 — `sudo gvm game approve <id>`**: the typed, sha-pinned approval written to `/etc/gvm/games/.approved/<id>` (0700 dir, 0600 file, not a manifest), a persistent `OverrideAuthorizer` that reads it and invalidates on any edit, `create` accepting an approved override without `--unapproved-override`, and `game list`'s "not approved (sha …)". This needs an injectable FS seam the catalog and `overrideAuth` do not have yet.
+- **Item 2 (rest) — the one-pass validate**: the template-guard failure no longer hiding later stages, `content.Compile` per block (source/mechanism must be implemented; `server_boot` names a resolver), the Phase 32 runtime rules, the `port_stride`-unused-`group` warning (plus the six shipped-manifest `group:` fixes and revision bumps, data-only), and REPLACE-ME markers warning in templates and erroring elsewhere.
+- **Item 3 — reference material**: `gvm game hooks` showing resolvers and source/mechanism pairs, `gvm game schema [ports|vars|…]`, the generated `docs/manifest-authoring.md` (CI diff), and generic-steam pointing at approve/try.
+- **The J3 journey CI** (import and sync a PZ mod list, add and sync a Modrinth and a CurseForge mod, create a non-J1 game), gated on Phases 44–45's content engine.
+
+**Effort for this task:** `gvm game validate --json` implemented by Claude (Opus 4.8) on 2026-10-17. `game approve`, the one-pass validate rules, the schema reference and the J3 CI journey are the approval-plumbing, validation and running-game body of the phase.
 
 ---
 
