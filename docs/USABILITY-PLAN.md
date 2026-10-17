@@ -3694,6 +3694,14 @@ The one piece that is pure string generation and validation — needing no syste
 - **Rule 6:** status is read-only.
 - **Rule 10:** imported credentials pass the character ban, which Phase 25's blocker and Phase 50's import enforce.
 
+### ⏸️ Not landed here — Phase 51 is the runtime wiring of Phase 50's adoption library, with no cross-platform slice (reviewed 2026-10-17)
+
+Phase 51 wires the Phase 50 adoption library into live commands — `gvm adopt cutover`/`rollback` (today `avail.Unbuilt`), `gvm adopt status`, and `gvm instance promote` — and its definition of done is a transcript on a VM restored from a real Project Zomboid backup. Every item drives systemd, a live legacy JVM, a save-first stop, a downtime counter and the on-disk adoption record. The record and the cutover driver those depend on are themselves Phase 50's remaining work — only Phase 50's rollback script landed — so there is nothing here to build and verify without a running legacy server.
+
+This session lands none of it, rather than wire a cutover that cannot be exercised or write `gvm help adopt` text for commands that still refuse. `gvm adopt cutover` and `rollback` keep answering "not in this build", which is the honest state until the cutover driver, the adoption record and a box to adopt exist together.
+
+**Effort for this task:** reviewed by Claude (Opus 4.8) on 2026-10-17; no code landed, because an honest increment here needs the runtime the definition of done is written against, and the Phase 50 library it wires.
+
 ---
 
 ## Phase 52 — Packaged gvm: .deb, migrations and a rollback policy
