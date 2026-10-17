@@ -7,8 +7,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"path"
 	"strings"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/S95F/gameVPSmanager/internal/spec"
 )
@@ -22,17 +25,22 @@ import (
 // an interface so S3 and B2 land later without touching the engine.
 //
 // What is in this file is everything that can be got wrong WITHOUT a network:
-// the host-key pin, the refusal to trust on first use, the remote path, the
+// the host-key pin, the refusal to trust on first use (including the
+// ssh.HostKeyCallback a dialer installs, Callback below), the remote path, the
 // name, and the fact that the private key never passes through this package.
 // Those are the parts that decide whether the upload is safe, and they are all
-// pure functions with tests.
+// pure functions with tests. `x/crypto/ssh` is already in the module -- bcrypt
+// and argon2 are in it too -- so the pin is verified in the type ssh actually
+// consumes without taking on a new dependency.
 //
-// What is NOT in this file is the SSH handshake, and that is a dependency
-// decision rather than an omission. The project's dependency set is yaml.v3,
-// x/sys, pgzip and go-systemd, and adding x/crypto plus pkg/sftp is a decision
-// that belongs to the phase that ships the wire -- not one to smuggle in
-// underneath a backup engine. So Dialer is the seam, newSFTPTarget without one
-// REFUSES, and the refusal names what is missing.
+// What is NOT in this file is the SSH handshake itself, and that is a
+// dependency decision rather than an omission: it needs `github.com/pkg/sftp`
+// over `x/crypto/ssh`, and pkg/sftp is a module this build does not yet
+// require. Adding it belongs to the phase that ships the wire -- not one to
+// smuggle in underneath a backup engine -- and it cannot be tested honestly
+// without an SFTP server. So Dialer is the seam, it is handed Callback so it
+// cannot reach for known_hosts, newSFTPTarget without a dialer REFUSES, and the
+// refusal names what is missing.
 //
 // It refuses rather than skipping, and that distinction is the whole reason it
 // is written this way: a push that quietly did nothing would leave an operator
@@ -142,6 +150,37 @@ func (h HostKey) Matches(algo string, blob []byte) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare(h.Blob, blob) == 1
+}
+
+// Callback is the ssh.HostKeyCallback a dialer installs, and it is the whole of
+// host-key verification on this path: no known_hosts, no ssh.FixedHostKey built
+// from a file, and above all no ssh.InsecureIgnoreHostKey.
+//
+// x/crypto/ssh runs the host-key callback during the key exchange, before it
+// sends the user-auth request -- so a non-nil error here aborts the connection
+// BEFORE the private key that can read every world on the box is offered to the
+// far end. That ordering is the entire value of a pin, and it is why the dialer
+// is handed this ready-made: a dialer left to assemble its own callback is a
+// dialer that might reach for ssh's known_hosts helper and reintroduce
+// trust-on-first-use through the back door.
+//
+// Matches on a zero HostKey returns false, so an unconfigured pin refuses every
+// key rather than trusting the first one -- the same fail-closed default the
+// pin has everywhere else in this file, expressed in the shape ssh consumes.
+func (h HostKey) Callback() ssh.HostKeyCallback {
+	return func(_ string, _ net.Addr, key ssh.PublicKey) error {
+		if h.Matches(key.Type(), key.Marshal()) {
+			return nil
+		}
+		if h.Algo == "" {
+			return fmt.Errorf("%w: no host key is pinned, so the server's %s key (%s) cannot be "+
+				"checked against anything; gvm does not trust a host on first use",
+				ErrHostKeyMismatch, key.Type(), ssh.FingerprintSHA256(key))
+		}
+		return fmt.Errorf("%w: the server offered a %s key (%s) and the pin is %s. Either the "+
+			"server was rebuilt or something is between gvm and it, and which it is only the "+
+			"operator can decide", ErrHostKeyMismatch, key.Type(), ssh.FingerprintSHA256(key), h.Fingerprint())
+	}
 }
 
 // Fingerprint is the pin as it goes in a log line: OpenSSH's SHA256 form,
