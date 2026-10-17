@@ -523,6 +523,7 @@ func runGameList(env *Env, args []string) error {
 				games = append(games, map[string]any{
 					"id": id, "name": c.Manifest.Metadata.Name,
 					"revision": c.Revision, "ref": c.Ref,
+					"proton": isProtonTitle(c.Manifest),
 				})
 			}
 		}
@@ -559,8 +560,14 @@ func runGameList(env *Env, args []string) error {
 				continue
 			}
 			shown++
+			note := shadowNote(cands)
+			if isProtonTitle(c.Manifest) {
+				// A Proton title needs the operator to supply Proton, so it is
+				// worth flagging in the listing, not only in `game show`.
+				note += "  · Proton (install it yourself: gvm help proton)"
+			}
 			fmt.Fprintf(tw, "  %s\t%s\trevision %d\t%s%s\n",
-				id, c.Manifest.Metadata.Name, c.Revision, c.Ref, shadowNote(cands))
+				id, c.Manifest.Metadata.Name, c.Revision, c.Ref, note)
 		}
 	}
 	_ = tw.Flush()

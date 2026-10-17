@@ -78,14 +78,30 @@ func printGameShow(w io.Writer, m *spec.Manifest) {
 	fmt.Fprintf(w, "\n  create it:\n    %s\n", createLine(m))
 }
 
+// protonProviderLine is what `game show` and `game list` say about a Proton
+// title, in the operator's terms: gvm runs it, but the operator supplies Proton.
+const protonProviderLine = "Windows server under Proton — install Proton yourself"
+
+// isProtonTitle reports whether a manifest launches its server through Proton.
+// The authoritative marker is the runtime wrapper, not the provider platform: a
+// Proton title is one gvm wraps in a Proton prefix the operator must bring
+// themselves (see: gvm help proton).
+func isProtonTitle(m *spec.Manifest) bool {
+	w := m.Spec.Runtime.Wrapper
+	return w != nil && w.Kind == "proton"
+}
+
 // showProviderLine says, in an operator's terms, what runs the game and what
 // they must bring themselves.
 func showProviderLine(m *spec.Manifest) string {
+	if isProtonTitle(m) {
+		return protonProviderLine
+	}
 	p := m.Spec.Provider
 	switch p.Kind {
 	case "steamcmd":
 		if p.SteamCMD != nil && p.SteamCMD.Platform == "windows" {
-			return "Windows server under Proton — install Proton yourself"
+			return protonProviderLine
 		}
 		return "Steam (SteamCMD)"
 	case "minecraft":
