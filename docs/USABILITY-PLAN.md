@@ -239,7 +239,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 37 🟡 | One glance: status, job history and the audit trail | last/next job, players, uptime, `audit tail`, `logs -f` | O | XL | 34, 36 |
 | 38 🟡 | Get a world back | `restore --to`, archive-first restore, rebuild for content-free games | B | L | 21, 34, 37 |
 | 39 🟡 | Change settings without hand-editing YAML | `gvm set`, `enable/disable`, `ports move`, `manifest upgrade`, strict apply | O | XL | 35, 38 |
-| 40 | gvm opens the ports, and never locks you out | apply stages tagged ufw rules; `gvm firewall apply` for host rules; guarded `gvm firewall enable` | N | L | 33, 39 |
+| 40 🟡 | gvm opens the ports, and never locks you out | apply stages tagged ufw rules; `gvm firewall apply` for host rules; guarded `gvm firewall enable` | N | L | 33, 39 |
 | 41 | Planned restarts players see coming · **J2** | `--warn` countdown; restart says which rung saved | O | M | 37, 38, 39, 40 |
 | **J3** | **Every game, mods and custom games** | | | | |
 | 42 | The whole catalog boots | Proton, Mono, native Satisfactory/ARK, 7DTD, Core Keeper, CS2 verified | G | XL | 32, 39 (item 10 only) |
@@ -2592,6 +2592,24 @@ The keystone the phase names as missing — "no intent writer exists today" — 
 - **Rule 5:** `firewall apply`, `firewall enable` and `adopt-rules` use typed confirmation.
 - **Rule 1:** rules are rebuilt from files, and ufw keeps them across reboots without gvmd.
 - **Rule 2:** ufw is exec'd as `/usr/sbin/ufw` by absolute path with argv, and only a root-owned, non-writable binary is run.
+
+### 🟡 Partial — the ufw backend's argv safety fix (item 1's core) and nft-off (item 2) landed 2026-10-17; the staged-rules parse, the apply firewall step, `firewall apply`/`enable`, the doctor checks and the docs remain
+
+The pieces that need no live ufw, no `/etc/ufw` read and no `/proc` are in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64` — which is where the ufw backend compiles.
+
+**Landed, with tests:**
+- **Item 1 (core) — the ufw backend passes a rule's comment as a bare argv element (network-firewall-9).** The backend built its argv with `strings.Fields(rule.UFWSpec())`, which turned a comment of `gvm:v1:game` into the single element `'gvm:v1:game'` — quotes included — so ufw stored the quotes as part of the comment and the tag-matching that orphan detection and tag-owned deletes rely on silently broke; a comment with a space would also have split into extra arguments. The new `Rule.UFWArgs(includeComment bool)` returns a proper argv slice in the canonical `<verb> [proto P] [from X] to any [port N] comment TAG` form, with the tag as one unquoted element, and a delete omits the comment (ufw matches a delete by spec alone). `ufw_linux.go`'s `Apply` now uses it, and no longer executes `StepAdopt` — adoption re-tags a hand-written rule and runs only through `gvm firewall adopt-rules` (item 5), never from a plain apply. `TestUFWArgsAreAProperArgvWithTheTagUnquoted` proves the argv shape cross-platform.
+- **Item 2 — the nft backend is off for now (network-firewall-9).** `nft.Backend.Available()` returns `false, "nft backend not supported yet; use ufw or none"` regardless of whether an `nft` binary is installed, so a host can never land on a backend the firewall surface has not been exercised against, and `buildScript` is unreachable. `ValidateHost` already rejected `backend: nft` (only ufw/none/"" pass); a test now pins both locks. `TestNftIsOffForNow` (nft) and `TestValidateHostRejectsNftBackend` (spec) prove it.
+
+**Remaining (a dedicated session should take these — a live ufw, `/etc/ufw` reads, `/proc`, a VM):**
+- **Item 1 (rest) — the staged-rules parse and the exec hardening**: reading `/etc/ufw/user.rules` and `user6.rules` read-only through a parser with its own `Trusted` flag (an unrecognised line makes the parse untrusted), so gvm can see rules ufw staged while inactive; and execing `/usr/sbin/ufw` by absolute path, refused unless root-owned and not group/world-writable, with `Available()` statting that path. Plus the parse-after-apply golden test and the Linux CI round-trip.
+- **Item 3 — a firewall step in `reconcile.BuildPlan`**: the `~ firewall` block in `apply --diff`; `gvm apply <name>` adding and deleting only `gvm:<name>:*`; nothing deleted on an untrusted parse (D-42); staging while ufw is inactive; `destroy` reconciling away an instance's rules; the `KeepPorts` input.
+- **Item 4 — `sudo gvm firewall apply [--diff]`**: the host's own `gvm:host:*` rules from `firewall.Desired` (SSH first), orphan pruning (instance file absent only), the typed host-name confirmation, refusing unless SSH detection is confident.
+- **Item 5 — `sudo gvm firewall enable`**: the one guarded path that enables ufw — the staged-ruleset preview, the orphan drop, the typed confirmation, SSH rules added first, re-verify after enable; plus `gvm firewall adopt-rules`, the only place `StepAdopt` runs.
+- **Item 6 — doctor write-path checks** (staged-but-inactive Warning; orphaned-tag Warning naming `gvm firewall apply`).
+- **Item 7 — docs** (`docs/networking.md` recipes, the firewall help topic, the README row).
+
+**Effort for this task:** the ufw argv safety fix and nft-off implemented by Claude (Opus 4.8) on 2026-10-17. The staged-rules parse, the apply firewall step, `firewall apply`/`enable`, the doctor checks and the docs are the live-ufw, VM body of the phase.
 
 ---
 
