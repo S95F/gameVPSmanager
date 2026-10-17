@@ -252,7 +252,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 48 🟡 | Dashboard v0 | invite a friend; start/stop/restart; live console | W | XL | 47, 33, 37, 40 |
 | 49 🟡 | Dashboard v1 · **J4** | connect card, mods tab, settings tab, plain-language status | W | L | 48, 39, 44 |
 | **J5** | **Adopt, package, recover** | | | | |
-| 50 | Make adoption's safety net real | adoption record; safe cutover/rollback library; record-based finalize | A | L | 21, 25, 39, 40 |
+| 50 🟡 | Make adoption's safety net real | adoption record; safe cutover/rollback library; record-based finalize | A | L | 21, 25, 39, 40 |
 | 51 | Adopt the live Project Zomboid server | cutover in one window; `gvm adopt status`; `instance promote` | A | L | 50 |
 | 52 | Packaged gvm: .deb, migrations, rollback policy | `apt install ./gvm.deb` with worlds live | I | L | 35, 48 |
 | 53 | Remove a server, or gvm itself, cleanly | LEFT IN PLACE block; guarded uninstall keeps backups | I | L | 40, 50, 52 |
@@ -3617,6 +3617,23 @@ The one piece that needs no gvmd, no Postgres and no browser — the mapping a m
 - **Rule 10:** imported passwords pass the same checks as `gvm secret set`, and a failing one blocks cutover instead of being altered.
 - **Rule 6:** INST-012 and INST-013 only report.
 - **Rule 7:** a rolled-back adoption never loses its port rules.
+
+### 🟡 Partial — the systemctl-only rollback script (item 4's core) landed 2026-10-17; the adoption record, the rewired finalize/cutover and credential import remain
+
+The one piece that is pure string generation and validation — needing no systemd, no live legacy server and no VM — is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 4 — the rollback script runs only systemctl; the world restore is printed, never run (migration-adopt-5, rule 2).** `GenerateRollbackScript` previously executed `tar -xzf` over the world, so a single `sh rollback.sh` could overwrite exactly what the pre-cutover archive existed to protect. It now executes only systemctl — `disable --now gvm@<n>`, then `enable`/`start` the legacy unit — and PRINTS the world-restore sequence (stop, move the live world aside, `tar -xzf <archive> -C <dataDir>`, chown, start) for the operator to run by hand, deliberately. `ValidateRollbackScript`'s allowlist is now `{systemctl, echo, set}`: a bare `tar` line is rejected, while the same command shown inside an `echo` as guidance is fine. `TestRollbackScriptRunsOnlySystemctl` (nothing destructive is executed), `TestValidateRollbackScriptRejectsABareTarLine` and the existing legacy-unit test prove it.
+
+**Remaining (a dedicated session should take these — systemd, a live legacy server, the on-disk index, a VM):**
+- **Item 1 — the adoption record** (`/var/lib/gvm/adopt/<name>.json` via a new `FileAdoptRecord` hostops kind; the planned → cutover-in-progress → complete/rolled-back → finalized state machine; cutover writes and updates it).
+- **Item 2 — `gvm adopt finalize` reads the record** (the never-bypassable state checks, the `--force`-only time/evidence checks, the typed name; replacing the Phase 21 interim).
+- **Item 3 — cutover never leaves two servers on one world** (disarm the legacy timer first, the gvm save-and-quit stop, the commit-point assert-inactive, the scoped legacy-unit hostops verbs with `TestLegacyUnitVerbsRefuseOtherUnits`, the pre- and post-commit rollback paths).
+- **Item 4 (rest) — the printed restore's exact `-C`/strip and `TestRollbackRestoreLandsUnderDataDir`**, which need item 5's real pre-cutover archive.
+- **Item 5 — the real pre-cutover archive** (`archive.CreateAndVerify`, the space check, the same-world check).
+- **Items 6–8 — the rolled-back-adoption restore refusal, doctor INST-012/013, and cutover's read-only credential import** (`source: adopted`, the rotate blocker, `--rotate-rcon`).
+
+**Effort for this task:** the systemctl-only rollback script implemented by Claude (Opus 4.8) on 2026-10-17. The adoption record, the rewired finalize and cutover, the real pre-cutover archive and the credential import are the systemd-and-live-server body of the phase.
 
 ---
 
