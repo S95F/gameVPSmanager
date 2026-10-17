@@ -8,45 +8,59 @@ import (
 	"time"
 )
 
-// GenerateRollbackScript produces a shell script that re-enables the legacy
-// server and restores the pre-cutover backup. The script depends ONLY on
-// systemctl and tar (asserted by TestRollbackScriptDependsOnlyOnSystemctlAndTar).
+// GenerateRollbackScript produces a shell script that undoes the cutover: it
+// stops the gvm-managed unit and brings the legacy server back, using ONLY
+// systemctl. It does NOT extract the world.
+//
+// Restoring world data overwrites files, and a script that ran `tar -xzf` over
+// a live world is one `sh rollback.sh` away from destroying exactly what the
+// pre-cutover archive was taken to protect. So the restore is PRINTED for the
+// operator to run by hand, deliberately, and ValidateRollbackScript refuses any
+// script whose executable lines are not systemctl/echo/set — a bare `tar` line
+// is rejected (migration-adopt-5, rule 2).
 func GenerateRollbackScript(serverName, legacyUnit, backupPath, dataDir, timestamp string) string {
 	return fmt.Sprintf(`#!/bin/sh
 # gvm adopt rollback — %s
 # Generated: %s
-# Depends only on: systemctl, tar
+# Depends only on: systemctl
 #
-# Run this script as root to undo the cutover and restore the legacy server.
-# It will:
-#   1. Stop the gvm-managed unit (if running).
-#   2. Re-enable and start the legacy unit.
-#   3. Restore world data from the pre-cutover backup.
+# Run this as root to undo the cutover: it stops the gvm-managed unit and brings
+# the legacy server back. It NEVER touches the world itself — restoring world
+# data overwrites files, so that step is PRINTED below for you to run by hand.
 set -e
 
 echo "=== gvm adopt rollback: %s ==="
 
-# Step 1: Stop gvm unit.
-systemctl stop gvm@%s.service 2>/dev/null || true
+# Stop and disable the gvm-managed unit.
+systemctl disable --now gvm@%s.service 2>/dev/null || true
 
-# Step 2: Restore legacy unit.
+# Bring the legacy unit back.
 systemctl enable %s
 systemctl start %s
 
-# Step 3: Restore world backup.
-echo "Restoring world data from: %s"
-tar -xzf %s -C %s
-
-echo "=== Rollback complete. Legacy server started. ==="
-echo "Verify with: systemctl status %s"
+echo ""
+echo "The legacy server is running again on its current world."
+echo ""
+echo "If the world changed after cutover and you need the pre-cutover copy,"
+echo "restore it BY HAND from the verified archive, in this order:"
+echo "  1. systemctl stop %s"
+echo "  2. move the live world aside (Saves, <srv>_player, db/) to *.after-cutover-%s"
+echo "  3. tar -xzf %s -C %s   # strip the archive's own prefix so files land under the data dir"
+echo "  4. chown -R the data dir back to the legacy server's user"
+echo "  5. systemctl start %s"
+echo ""
+echo "gvm will not do that for you: it overwrites a world, and that is your call."
+echo "=== Rollback complete: legacy server started. ==="
 `,
 		serverName,
 		timestamp,
 		serverName,
-		serverName,
-		legacyUnit, legacyUnit,
-		backupPath, backupPath, filepath.Dir(dataDir),
-		legacyUnit,
+		serverName,             // disable --now gvm@<n>
+		legacyUnit, legacyUnit, // enable, start
+		legacyUnit,          // restore step 1: stop
+		timestamp,           // restore step 2: suffix
+		backupPath, dataDir, // restore step 3: tar -xzf <archive> -C <dataDir>
+		legacyUnit, // restore step 5: start
 	)
 }
 
@@ -82,11 +96,15 @@ func runTar(src, dst string) error {
 	return runProgram("tar", "-czf", dst, "-C", filepath.Dir(src), filepath.Base(src))
 }
 
-// ValidateRollbackScript checks that the script contains no commands other
-// than systemctl and tar. Used by TestRollbackScriptDependsOnlyOnSystemctlAndTar.
+// ValidateRollbackScript checks that the script's executable lines are only
+// systemctl, echo and set — never tar. gvm never runs this script, but an
+// operator will, and a `tar -xzf` line that overwrote a world the moment they
+// ran it is the whole reason the restore is printed rather than scripted. A
+// bare tar line is rejected; a tar command shown inside an echo (as guidance)
+// is fine, because its executable word is echo.
 func ValidateRollbackScript(script string) error {
 	// Allowed program names at the start of a line (after optional spaces/tabs).
-	allowed := map[string]bool{"systemctl": true, "tar": true, "echo": true, "set": true}
+	allowed := map[string]bool{"systemctl": true, "echo": true, "set": true}
 	for _, line := range strings.Split(script, "\n") {
 		stripped := strings.TrimLeft(line, " \t")
 		if stripped == "" || strings.HasPrefix(stripped, "#") {

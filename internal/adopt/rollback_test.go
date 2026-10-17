@@ -2,11 +2,12 @@ package adopt
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestRollbackScriptDependsOnlyOnSystemctlAndTar(t *testing.T) {
+func TestRollbackScriptRunsOnlySystemctl(t *testing.T) {
 	script := GenerateRollbackScript("servertest", "zomboid.service",
 		"/var/backups/pzserver/adopt-servertest-20240101T000000Z.tar.gz",
 		"/home/pzserver/Zomboid",
@@ -14,6 +15,24 @@ func TestRollbackScriptDependsOnlyOnSystemctlAndTar(t *testing.T) {
 	)
 	if err := ValidateRollbackScript(script); err != nil {
 		t.Errorf("rollback script uses disallowed commands: %v", err)
+	}
+	// Nothing destructive is EXECUTED: every non-comment line is systemctl, echo
+	// or set. In particular no line extracts an archive over a live world.
+	for _, line := range splitLines(script) {
+		s := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(s, "tar ") || s == "tar" || strings.HasPrefix(s, "chown ") {
+			t.Errorf("rollback script executes a world-overwriting command: %q", line)
+		}
+	}
+}
+
+// TestValidateRollbackScriptRejectsABareTarLine is the migration-adopt-5 gate:
+// a script that would extract an archive when run is refused, so the restore is
+// never something gvm (or a generated script) does on its own.
+func TestValidateRollbackScriptRejectsABareTarLine(t *testing.T) {
+	bad := "#!/bin/sh\nset -e\nsystemctl stop gvm@x.service\ntar -xzf /b/a.tar.gz -C /home/pz/Zomboid\n"
+	if err := ValidateRollbackScript(bad); err == nil {
+		t.Error("a bare tar line was allowed; gvm must never auto-extract a world")
 	}
 }
 
