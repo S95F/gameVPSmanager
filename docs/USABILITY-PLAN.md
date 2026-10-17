@@ -2970,6 +2970,16 @@ One adapter, `jobs.Contents`, unlocks three verbs: content sync, PZ's update con
 - **Rule 6:** content checks decide and the job acts. No reconciler is involved.
 - **Rule 1:** the lock and intent are files, and the job is a systemd unit.
 
+### ⏸️ Not landed here — Phase 44 is the runtime content job-engine adapter, with no cross-platform slice (reviewed 2026-10-17)
+
+Unlike Phases 34–43, Phase 44 has no bounded piece that can be built and verified without a running game, so this session landed none of it rather than fabricate one.
+
+Its whole content is the `jobs.Contents` adapter over `internal/content` (item 1) and the boot branch in `runner_content.go` (item 2) — a stop-through-the-ladder → boot-to-acquire → resolve-from-disk → activate → start cycle — surfaced by `sudo gvm content sync` through `runDetachable` (item 3). The `engineWired(content_sync|update|rebuild)` flips (item 4) are the gate that tells an operator "this works now"; flipping them without the adapter, or without an end-to-end run against a real Project Zomboid server (every DoD check is one), would claim a feature that is not there. `engineWired` today still answers `content_sync` with "applying mod changes is not in this build", which is the honest state until the adapter and a game to boot it against exist together.
+
+The pieces this phase builds on did land earlier: the id validation and comment-preserving list edits (Phases 43 and 39), the warn countdown's decision logic (Phase 41), and `restore --to` / archive-first machinery (Phase 38). The adapter itself is left for a session with a game to boot.
+
+**Effort for this task:** reviewed by Claude (Opus 4.8) on 2026-10-17; no code landed, because an honest increment here needs the runtime the definition of done is written against.
+
 ---
 
 ## Phase 45 — Minecraft mods: Modrinth, then CurseForge
