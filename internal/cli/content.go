@@ -1146,9 +1146,22 @@ func runContentAdd(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
+	// A Steam Workshop item has no per-version id, so `--pin` cannot mean
+	// anything for one; accepting it would record a pin gvm silently ignores.
+	if *pin != "" && v.Schema.Source == content.KindSteamWorkshop {
+		return usageErr(errors.New("--pin is not valid for a Steam Workshop item: it has no " +
+			"per-version id, so gvm always fetches the latest. Drop --pin, or pin a Modrinth/CurseForge item"))
+	}
 	add := make([]content.Ref, 0, len(pos)-1)
-	for _, id := range pos[1:] {
-		ref := content.Ref{ID: strings.TrimSpace(id), Pin: *pin, Note: *note}
+	for _, raw := range pos[1:] {
+		// Validate the id against this instance's source BEFORE writing it, so a
+		// URL is normalised and a mistyped name or an activation id fails here
+		// with a sentence rather than at the next sync with a 404.
+		id, err := content.NormalizeID(v.Schema.Source, raw)
+		if err != nil {
+			return usageErr(err)
+		}
+		ref := content.Ref{ID: id, Pin: *pin, Note: *note}
 		for _, r := range strings.Split(*requires, ",") {
 			if r = strings.TrimSpace(r); r != "" {
 				ref.Requires = append(ref.Requires, r)

@@ -154,6 +154,50 @@ func TestFirstContentAddKeepsTopComment(t *testing.T) {
 	}
 }
 
+// TestContentAddValidatesIdsBeforeWriting is Phase 43 item 1: `add` normalises
+// a Workshop URL to its item id and refuses an activation id / display name
+// before anything is written, instead of failing at the next sync with a 404.
+func TestContentAddValidatesIdsBeforeWriting(t *testing.T) {
+	setup := func(t *testing.T) *testHost {
+		h := newTestHost(t)
+		seedInstance(t, h, "pz-main", "projectzomboid", "--var", "public_name=Test")
+		h.HostEnv.ContentRoot = func(abs string) (fs.FS, error) {
+			return nil, &fs.PathError{Op: "open", Path: abs, Err: fs.ErrNotExist}
+		}
+		return h
+	}
+
+	// A Workshop URL is stored as its numeric id.
+	h := setup(t)
+	code, _, errb := runWith(t, h, "", "content", "add", "pz-main",
+		"https://steamcommunity.com/sharedfiles/filedetails/?id=2392709985")
+	if code != 0 {
+		t.Fatalf("add by URL: exit %d\n%s", code, errb)
+	}
+	got, err := h.FS.ReadFile(h.HostEnv.paths("pz-main").Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "2392709985") {
+		t.Errorf("the Workshop URL was not normalised to its id:\n%s", got)
+	}
+
+	// An activation id / display name is refused as a usage error, and nothing
+	// is written.
+	h = setup(t)
+	before := len(h.FS.writes)
+	code, _, errb = runWith(t, h, "", "content", "add", "pz-main", "ThatDamnLibrary")
+	if code != exitUsage {
+		t.Fatalf("add of an activation id: exit %d, want %d (usage)\n%s", code, exitUsage, errb)
+	}
+	if !strings.Contains(errb, "gvm content why") {
+		t.Errorf("the refusal does not point at `gvm content why`:\n%s", errb)
+	}
+	if len(h.FS.writes) != before {
+		t.Errorf("a refused add wrote to the instance file: %v", h.FS.writes[before:])
+	}
+}
+
 // writeLock lays down the recorded intent. It is built through the same
 // structs the sync path writes, so a field renamed in internal/content breaks
 // this fixture rather than silently producing a lock the CLI reads as empty.
