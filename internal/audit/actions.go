@@ -46,6 +46,7 @@ const (
 
 	BackupCreate  Action = "backup.create"
 	BackupRestore Action = "backup.restore"
+	BackupDelete  Action = "backup.delete"
 
 	FirewallApply Action = "firewall.apply"
 	JobRun        Action = "job.run"
@@ -188,6 +189,15 @@ var allowedParams = map[Action]Spec{
 	BackupRestore: {
 		Params:   []string{"path", "sha256", "target"},
 		Required: []string{"path", "sha256"},
+		Instance: true,
+	},
+	// backup.delete is the one explicit removal of an archive, including a
+	// preserve one that no retention path may touch. path/sha256/bytes identify
+	// exactly which bytes were removed, so the row answers "what did I delete"
+	// as precisely as backup.create answered "what did I write".
+	BackupDelete: {
+		Params:   []string{"path", "sha256", "bytes"},
+		Required: []string{"path", "sha256", "bytes"},
 		Instance: true,
 	},
 	// ssh_port is required because section 17.5's promise -- a computed rule

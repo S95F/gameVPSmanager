@@ -41,6 +41,46 @@ func archivesIn(t *testing.T, dir string) []string {
 	return out
 }
 
+// TestForceDeleteArchiveRemovesEvenAPreserveAndItsPin is the archive-package
+// half of `gvm backup delete`. DeleteArchive refuses a preserve archive so no
+// retention path can ever reclaim one; ForceDeleteArchive is the one deliberate
+// bypass the operator-gated verb reaches, and it takes the preserve sidecar with
+// it so a later Reindex cannot pin a file that is gone.
+func TestForceDeleteArchiveRemovesEvenAPreserveAndItsPin(t *testing.T) {
+	src, dir := t.TempDir(), t.TempDir()
+	writeTree(t, src, map[string]file{"world.bin": {body: "w", perm: 0o644, mtime: fixed}})
+	// A preserve archive, and a sidecar pin on top of it (as a destroy writes),
+	// so the test covers both the manifest-class refusal and the sidecar removal.
+	ref := makeArchive(t, dir, src, ClassPreserve, "pre-rebuild", fixed)
+	if err := WritePreservePin(ref.Path, PreservePin{
+		Reason: "destroy-authorised", PinnedAt: fixed, Instance: "pz-main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The retention-safe deleter refuses a preserve archive outright.
+	if err := DeleteArchive(ref.Path); !errors.Is(err, ErrPreserveIsNeverPruned) {
+		t.Fatalf("DeleteArchive on a preserve archive = %v, want ErrPreserveIsNeverPruned", err)
+	}
+
+	// The explicit deleter removes both the archive and its sidecar.
+	if err := ForceDeleteArchive(ref.Path); err != nil {
+		t.Fatalf("ForceDeleteArchive: %v", err)
+	}
+	if _, err := os.Stat(ref.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the archive survived the force delete: %v", err)
+	}
+	if _, err := os.Stat(PreserveSidecarPath(ref.Path)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the preserve sidecar survived, so a reindex would resurrect the pin: %v", err)
+	}
+
+	// Idempotent: a delete interrupted after the tarball went but before the pin
+	// did completes cleanly rather than erroring on the half already done.
+	if err := ForceDeleteArchive(ref.Path); err != nil {
+		t.Errorf("a second ForceDeleteArchive was not a no-op: %v", err)
+	}
+}
+
 // TestPruneSkipsOtherInstancesArchives: a shared backup.dir can hold several
 // instances' archives, and retention for one must never reclaim another's
 // (offsite-backup-dr-2).

@@ -277,3 +277,25 @@ func DeleteArchive(path string) error {
 	}
 	return os.Remove(path)
 }
+
+// ForceDeleteArchive removes an archive and its preserve sidecar regardless of
+// class. It is the one deliberate, operator-gated bypass of the never-prune
+// rule DeleteArchive enforces: `gvm backup delete` reaches it only after the
+// operator has typed the instance name, so the invariant "a preserve archive is
+// removed only by explicit human action" is kept intact — the human is typing a
+// name to gvm instead of reaching for rm, which is strictly safer because gvm
+// can still refuse to remove the last verified copy of a live world.
+//
+// It is idempotent: a missing archive and a missing sidecar are both success,
+// so a delete interrupted after the tarball went but before the pin did
+// completes cleanly on a second run rather than erroring on the half it already
+// finished.
+func ForceDeleteArchive(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err := os.Remove(PreserveSidecarPath(path)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}

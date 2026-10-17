@@ -16,7 +16,7 @@ func TestEveryHelpPathExitsZero(t *testing.T) {
 		"game":    {"validate", "list", "show", "which", "hooks"},
 		"content": {"list", "diff", "why", "add", "remove", "move", "sync", "update", "lock", "blocked"},
 		"job":     {"run", "list", "clear"},
-		"backup":  {"verify", "prune", "list"},
+		"backup":  {"verify", "prune", "list", "delete"},
 		"control": {"caps", "status", "verb", "probe"},
 		"user":    {"list", "create", "show", "set-role", "set-password", "disable", "enable", "reset-totp"},
 		"token":   {"create", "list", "revoke"},
