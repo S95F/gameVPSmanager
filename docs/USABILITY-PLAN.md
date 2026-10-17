@@ -238,7 +238,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 36 🟡 | Backup health you can see | snapshot line, GiB remedies, BACKUP doctor checks | B | M | 21, 24 |
 | 37 🟡 | One glance: status, job history and the audit trail | last/next job, players, uptime, `audit tail`, `logs -f` | O | XL | 34, 36 |
 | 38 🟡 | Get a world back | `restore --to`, archive-first restore, rebuild for content-free games | B | L | 21, 34, 37 |
-| 39 | Change settings without hand-editing YAML | `gvm set`, `enable/disable`, `ports move`, `manifest upgrade`, strict apply | O | XL | 35, 38 |
+| 39 🟡 | Change settings without hand-editing YAML | `gvm set`, `enable/disable`, `ports move`, `manifest upgrade`, strict apply | O | XL | 35, 38 |
 | 40 | gvm opens the ports, and never locks you out | apply stages tagged ufw rules; `gvm firewall apply` for host rules; guarded `gvm firewall enable` | N | L | 33, 39 |
 | 41 | Planned restarts players see coming · **J2** | `--warn` countdown; restart says which rung saved | O | M | 37, 38, 39, 40 |
 | **J3** | **Every game, mods and custom games** | | | | |
@@ -2488,6 +2488,25 @@ The one piece that touches no live world — so it needs no ladder, no job engin
 - **Rule 5:** immutable changes go through rebuild. Manifest upgrade archives first and needs a typed confirmation for argv, destroy-glob, world-path and port changes.
 - **Rule 6:** list and doctor only report older or superseded revisions. Nothing upgrades automatically.
 - **Rule 10:** values are validated, and no template is introduced.
+
+### 🟡 Partial — the intent writer (item 1's core) landed 2026-10-17; `set`, enable/disable, `ports move`, strict apply, `manifest upgrade`, superseded revisions and schedules remain
+
+The keystone the phase names as missing — "no intent writer exists today" — is in, as a pure, fully-tested document editor. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 1 (core) — the intent writer in `internal/reconcile` (game-catalog-config-4).** `EditInstanceDoc` changes a scalar at any dotted path (`spec.vars.max_players`) as a yaml.v3 DOCUMENT, so every comment and every untouched line survives — the discipline the content writer uses for `spec.content.<block>.acquire`, generalised from one hard-coded path to any key. It grows a missing mapping block (the vars a create never wrote), infers the tag a human would type (a bare number as int, `true`/`false` as bool, else string, with a `!!str` override for a numeric-looking name), and refuses rather than guess when a path runs through a non-mapping or would overwrite a block with a scalar. `SpecDigest`/`CheckIfMatch` are the sha256 If-Match a verb checks between reading the file and writing it back, so a concurrent hand edit is caught (`ErrSpecChanged`) rather than clobbered. `TestEditPreservesCommentsAndSetsTheValue`, `TestEditGrowsAMissingPath`, `TestEditRefusesToClobberABlock`, `TestEditRefusesANonMappingPath`, `TestEditInfersScalarTags` and `TestIfMatchCatchesAConcurrentEdit` prove it. The DoD line "Instance-file comments survive every verb above" rests on this editor.
+
+**Remaining (a dedicated session should take these — each is a verb that reads, edits via the writer, and usually applies through hostops/the ladder):**
+- **Item 1 (integration) — the hostops write path**: the thin wrapper that reads the current spec, checks the If-Match, calls `EditInstanceDoc` and writes through `VerbFileWrite`/`FileInstanceSpec`, shared by every verb below.
+- **Item 2 — `gvm set <inst> KEY=VALUE… [--dry-run]`**: validate the assembled document with `ValidateInstance` plus the game's validators, normalise bools, refuse immutable vars (naming `gvm rebuild`), print "takes effect on: restart", and the heap-var recompute / MemoryMax guard.
+- **Item 3 — `gvm enable|disable <n>`**: flip `spec.enabled` through the writer and run apply; `disable` stops through the ladder; the Phase 20 hints point back here.
+- **Item 4 — `gvm ports move <inst> NAME=PORT`**: move the group by its stride, refuse while running, allocate with a pin and reserve in the ledger, print the config-key and firewall deltas; apply refuses an overlapping port.
+- **Item 5 — strict validation at apply**: unknown keys as positioned file:line errors with a did-you-mean, `ValidateInstance` blocking apply, immutables compared against `applied.yaml`, the writer's version in `manifest.lock.yaml`, and the `x-` extension prefix. `gvm run` stays lenient.
+- **Item 6 — `gvm manifest upgrade <inst> [--to N] [--dry-run]`**: the classified `spec.Diff`, the unverified-target refusal (U14), the typed confirmation for argv/destroy_globs/world_paths/ports changes, and the verified preserve pre-archive.
+- **Item 7 — superseded revisions** (`internal/spec/superseded.go` + doctor INST-017 + the status / `upgrade status` line).
+- **Item 8 — schedules**: `paused: true` rendering a stopped, disabled timer, and `gvm job pause|resume|skip`.
+
+**Effort for this task:** the intent writer implemented by Claude (Opus 4.8) on 2026-10-17. The seven verbs that use it — `set`, enable/disable, `ports move`, strict apply, `manifest upgrade`, superseded revisions and schedules — are the XL body of the phase.
 
 ---
 
