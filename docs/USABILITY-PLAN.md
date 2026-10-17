@@ -254,7 +254,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | **J5** | **Adopt, package, recover** | | | | |
 | 50 🟡 | Make adoption's safety net real | adoption record; safe cutover/rollback library; record-based finalize | A | L | 21, 25, 39, 40 |
 | 51 | Adopt the live Project Zomboid server | cutover in one window; `gvm adopt status`; `instance promote` | A | L | 50 |
-| 52 | Packaged gvm: .deb, migrations, rollback policy | `apt install ./gvm.deb` with worlds live | I | L | 35, 48 |
+| 52 🟡 | Packaged gvm: .deb, migrations, rollback policy | `apt install ./gvm.deb` with worlds live | I | L | 35, 48 |
 | 53 | Remove a server, or gvm itself, cleanly | LEFT IN PLACE block; guarded uninstall keeps backups | I | L | 40, 50, 52 |
 | 54 | Off-box backups that really leave the box | pinned SFTP + age push; `backup remote check/list/pull` | B | L | 36, 38 |
 | 55 | Move to a new host · **J5** | `create --from-archive`; DR drill passes | B | L | 38, 46, 53, 54 |
@@ -3757,6 +3757,21 @@ This session lands none of it, rather than wire a cutover that cannot be exercis
 - **Rule 6:** postinst never restarts anything game-related.
 - **Rule 8:** migrations run only through `gvm-db-migrate.service` or `gvm db migrate`, never inside gvmd.
 - **Rule 1:** a migration failure blocks only gvm-web.
+
+### 🟡 Partial — backward-compatible archive readers (item 3's core) landed 2026-10-17; the .deb, the migration unit and the upgrading doc remain
+
+The one piece that is pure archive-reader logic — needing no dpkg, no Postgres and no VM — is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 3 (core) — archive readers are backward compatible across releases (gvm-self-upgrade-uninstall-10).** The manifest and index readers previously refused any schema that was not exactly this build's, so an archive written by an older gvm would have been rejected as "unsupported" the day the schema bumped. They now accept every schema at or below the current one (upgrading on read) and refuse only a NEWER one, with the one thing the operator can do — "install a newer gvm to read it" — rather than a generic error; a schema below 1 is still malformed. The index, being a cache, refuses a newer schema the same way so `Reindex` rebuilds it from the archives rather than trusting a shape this build does not know. `TestManifestAcceptsCurrentAndRefusesNewer` and `TestLoadIndexAcceptsCurrentAndRefusesNewer` prove it. (`archive.SchemaVersion` stays 1 — frozen until the N-1 skew rule — so the accept-older path is latent until the first bump; the refuse-newer-with-the-install-hint path is exercised now.)
+
+**Remaining (a dedicated session should take these — nfpm, dpkg, Postgres, a VM):**
+- **Item 1 — the nfpm `.deb`** (amd64/arm64, package-owned units, the maintainer scripts that call `host init --from-package`, never touch `gvm@*`/`gvm-job@*`, and the SHA256SUMS release step).
+- **Item 2 — migrations** (`gvm-db-migrate.service` ordering, the goose provider with the Postgres session locker, the direction-dependent `AssertCompatible` messages, `db status --no-wait`, the expand-only rollback policy).
+- **Item 3 (rest) — the per-released-schema archive CI fixtures** that run `backup verify` and `restore --to` on each.
+- **Item 4 — `docs/upgrading.md`** (upgrading, the N-1 rule, rolling back).
+
+**Effort for this task:** the backward-compatible archive readers implemented by Claude (Opus 4.8) on 2026-10-17. The `.deb`, the migration unit, the per-schema CI fixtures and the upgrading doc are the packaging-and-Postgres body of the phase.
 
 ---
 
