@@ -256,7 +256,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 51 | Adopt the live Project Zomboid server | cutover in one window; `gvm adopt status`; `instance promote` | A | L | 50 |
 | 52 🟡 | Packaged gvm: .deb, migrations, rollback policy | `apt install ./gvm.deb` with worlds live | I | L | 35, 48 |
 | 53 🟡 | Remove a server, or gvm itself, cleanly | LEFT IN PLACE block; guarded uninstall keeps backups | I | L | 40, 50, 52 |
-| 54 | Off-box backups that really leave the box | pinned SFTP + age push; `backup remote check/list/pull` | B | L | 36, 38 |
+| 54 🟡 | Off-box backups that really leave the box | pinned SFTP + age push; `backup remote check/list/pull` | B | L | 36, 38 |
 | 55 | Move to a new host · **J5** | `create --from-archive`; DR drill passes | B | L | 38, 46, 53, 54 |
 
 The **J1 critical path** is 20 → 22 → 23 → 24 → 27 → 28 → 31 → 32 → 34. The branch 24 → 29 → 30 → 31 is co-critical: it is the same length (L + L), and Phase 31 needs both. Phases 26 and 33 run alongside. Phase 21 depends only on Phase 19, so it runs first or in parallel with Phase 20, and Phase 34 (the first public release) waits for it. Phase 25 hangs off Phase 22 and gates nothing in J1.
@@ -3898,6 +3898,22 @@ The one piece that only reads and prints — no account removal, no uninstall or
 - **Rule 2:** no `ssh` or `sftp` exec.
 - **Rule 5:** the remote prune rules are unchanged, and preserve archives are never pruned.
 - **Pin-only trust:** no TOFU anywhere.
+
+### 🟡 Partial — the pin-only host-key verification (item 1's security core, DoD line 1) landed 2026-10-17; the SFTP/age transport, the push job and `backup remote` remain
+
+The one piece that decides whether a push is safe and that can be proven without a network — the `HostKeyCallback` that compares against the pin only — is in, and it is proven against a real `x/crypto/ssh` handshake rather than only by calling it by hand. `x/crypto/ssh` is already in go.mod, so this took no new module; `github.com/pkg/sftp` and `filippo.io/age`, the two the wire itself needs, are still unimported. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 1 (security core) — `HostKey.Callback()` (`remote_sftp.go`), the pin-only `ssh.HostKeyCallback` a dialer installs.** It returns the pin comparison in the shape `ssh.ClientConfig` consumes: the pinned key is accepted, any other key is refused with `ErrHostKeyMismatch` naming both the presented and the pinned SHA256 fingerprint, and — the property that makes it a pin — a zero `HostKey` refuses *every* key, so a forgotten `host_key` fails closed instead of trusting the first server to answer. There is no `known_hosts`, no `ssh.FixedHostKey` from a file and no `ssh.InsecureIgnoreHostKey`. `TestTheHostKeyCallbackIsPinOnlyAndNeverTOFU` covers the three outcomes and the fingerprints.
+- **DoD line 1 — a mismatched pin aborts *before* authentication.** `TestAMismatchedPinAbortsTheHandshakeBeforeAuthentication` stands up a real `ssh.NewServerConn`/`ssh.NewClientConn` handshake over a `127.0.0.1` loopback (in-process, cross-platform, no external server), pins a key that is not the server's, and asserts the client aborts with the pin error while the server's auth callback is never reached — the exact ordering that keeps the key which can read every world on the box from being offered to the wrong host. This is the CI-SFTP-server line of the DoD, met at the handshake layer the pin lives in.
+
+**Remaining (a dedicated runtime session should take these — they need the two wire dependencies and an SFTP test server):**
+- **Item 1 (the wire) — the `Dialer` (`pkg/sftp` over `x/crypto/ssh`, SFTP subsystem only, installing `HostKey.Callback()`) and the `AgeEncrypter.New` (`filippo.io/age`)**, the push as its own job kind `gvm-job@<n>_push` started `--no-block` after verify, and `on_failure` governing that push job's verdict (degraded under `warn`, failed under `fail`) while the backup run's own result is untouched.
+- **Item 2 — `gvm backup remote check|list|pull <instance>`**: `check` putting/listing/removing a probe once the pin matches and printing the `SHA256:…` with the `ssh-keygen -lf` comparison line; `list`/`pull` read-only with `.age` shown as "encrypted, needs identity"; `encrypt_to` accepting a string *or* a list; the custody warning in help; no `gvm backup decrypt`.
+- **Item 3 — `pushed_at`/`push_error` feeding the `backup list` OFF-BOX column (`✓ <time>` / `✗ <reason>`), doctor BACKUP-004 and the status line**, plus the attention marker (Phase 37) on a failed push.
+- **The DoD's remaining lines** — a real nightly push, the stopped-server failure visibility, and the `pull → age -d → verify --file → restore --to` round trip — all need the transport and the SFTP test server.
+
+**Effort for this task:** the pin-only `HostKeyCallback` and its two tests implemented by Claude (Opus 4.8) on 2026-10-17. The SFTP/age transport, the push job unit, the `backup remote` verbs and the off-box visibility are the networked body of the phase.
 
 ---
 
