@@ -237,7 +237,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 35 🟡 | Upgrade gvm without stopping the worlds | N-1 skew rule; restart-pending; `restart --pending` | I | L | 34 |
 | 36 🟡 | Backup health you can see | snapshot line, GiB remedies, BACKUP doctor checks | B | M | 21, 24 |
 | 37 🟡 | One glance: status, job history and the audit trail | last/next job, players, uptime, `audit tail`, `logs -f` | O | XL | 34, 36 |
-| 38 | Get a world back | `restore --to`, archive-first restore, rebuild for content-free games | B | L | 21, 34, 37 |
+| 38 🟡 | Get a world back | `restore --to`, archive-first restore, rebuild for content-free games | B | L | 21, 34, 37 |
 | 39 | Change settings without hand-editing YAML | `gvm set`, `enable/disable`, `ports move`, `manifest upgrade`, strict apply | O | XL | 35, 38 |
 | 40 | gvm opens the ports, and never locks you out | apply stages tagged ufw rules; `gvm firewall apply` for host rules; guarded `gvm firewall enable` | N | L | 33, 39 |
 | 41 | Planned restarts players see coming · **J2** | `--warn` countdown; restart says which rung saved | O | M | 37, 38, 39, 40 |
@@ -2384,6 +2384,22 @@ The two pieces that need no job runner, no D-Bus timer read and no running game 
 - **Rule 4:** restore and rebuild stop through the ladder.
 - **Rule 2:** tar and gzip run in Go, with no exec.
 - **Rule 1:** no database is needed.
+
+### 🟡 Partial — the safe extract-to-directory (item 1, `restore --to`) landed 2026-10-17; the restore-onto-a-world runner, destroy's auto-archive and content-free rebuild remain
+
+The one piece that touches no live world — so it needs no ladder, no job engine and no running game — is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 1 — `gvm restore <archive> --to <dir>` (day2-ops-2, offsite-backup-dr-4).** The `--to` inspection path was gated off ("the path that drives it is missing"), even though `archive.Restore` has been built all along; it is now wired as a direct, digest-checked extract. `<dir>` must be absent or empty (a non-empty target is a usage error, exit 2). Before a byte is written, gvm resolves the target through symlinks and refuses (exit 5) if it is at, under or above any instance's install, data, home, logs or backup directory — naming the one it hit — so an inspection extract can never overwrite a live world. Files land root-owned unless `--preserve-ownership` is given, and the `restore --list` footer now shows the `--to` command. `TestRestoreToExtractsIntoAScratchDir`, `TestRestoreToRefusesADirThatOverlapsAnInstance` and `TestRestoreToRefusesANonEmptyDir` prove it. The DoD line "`sudo gvm restore <f>.tar.gz --to /root/r1` extracts the archive. `--to /srv/gvm/v1/data` is refused and names the overlap" is covered.
+
+**Remaining (a dedicated session should take these — the job engine, the ladder, a running game):**
+- **Item 2 — the §13.2 restore-onto-a-world runner**: `gvm restore <instance> --latest|--archive`, always taking a verified preserve pre-archive (the removed `--no-pre-archive` stays refused), stopping through the ladder, extracting, chowning, starting, and reclaiming the moved-aside `.gvm-replaced-*` tree once the server is ready — through `runDetachable` so an SSH drop never strands a half-restored world. This is internal/backup's restore path, still a `pending` gap in `jobs.Execute`.
+- **Item 3 — destinations from the target spec**: prefix label → `in.Spec.Paths.<label>`, `--map label=/abs`, nested-destination refusal. (The `--to` overlap guard and the preflight mapping are in; the onto-a-spec mapping follows item 2.)
+- **Item 4 — destroy archives first by default**: with no `--archive`, write and verify a fresh preserve archive before the prompt; `--archive latest` with the age and the Phase 21 warning; the `backup list` DIR header.
+- **Item 5 — rebuild for content-free games**: wire `h.Jobs.Rebuilds` with the production seams (lifecycle.Manager, hostops mask/unmask, the backup engine, `rebuild.JailDestroyer`, the hook registry) and a null content adapter, flipping `engineWired(rebuild)` for content-free manifests.
+- **Item 6 — `docs/backups-and-restore.md` (local half)**.
+
+**Effort for this task:** the safe extract-to-directory implemented by Claude (Opus 4.8) on 2026-10-17. The restore-onto-a-world runner, destroy's default archiving and content-free rebuild are the job-engine, ladder and running-game body of the phase.
 
 ---
 
