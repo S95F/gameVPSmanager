@@ -249,7 +249,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 46 🟡 | Add a game with YAML alone · **J3** | `game approve`; deep validate; field reference | G | L | 42, 45 |
 | **J4** | **Friends without SSH** | | | | |
 | 47 🟡 | Make the web skeleton safe before it is wired | no anonymous pages, no fake 202s, §15.2 roles | W | L | 22 |
-| 48 | Dashboard v0 | invite a friend; start/stop/restart; live console | W | XL | 47, 33, 37, 40 |
+| 48 🟡 | Dashboard v0 | invite a friend; start/stop/restart; live console | W | XL | 47, 33, 37, 40 |
 | 49 | Dashboard v1 · **J4** | connect card, mods tab, settings tab, plain-language status | W | L | 48, 39, 44 |
 | **J5** | **Adopt, package, recover** | | | | |
 | 50 | Make adoption's safety net real | adoption record; safe cutover/rollback library; record-based finalize | A | L | 21, 25, 39, 40 |
@@ -3355,6 +3355,26 @@ Phase 47's packages (`internal/web`, `auth`, `authz`, `edge`) are library code n
 - **Rule 8:** no implicit migrations; `gvm-db-migrate.service` is explicit; no pgbouncer or extensions.
 - **Rule 9:** TOTP is verified in gvmd, there is no anonymous view, and the API is bearer-only.
 - **Rule 7:** the edge never writes a firewall rule. Ports 80 and 443 open only through Phase 40's typed, SSH-first `gvm firewall apply`, and a dashboard listener off loopback is refused.
+
+### 🟡 Partial — argon2id passwords and Crockford recovery codes (item 2) landed 2026-10-17; the dashboard runtime (users, gvmd, gvm web, console, edge, tokens, docs) remains
+
+Item 2 is the one piece the plan says to land before the first user exists, so no stored hash ever needs migrating — and it is pure crypto, needing no Postgres, no daemon and no VM. The rest of the phase is the dashboard itself. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 2 — argon2id passwords and Crockford base32 recovery codes (admin-security-14).** `HashPassword` now uses argon2id (RFC 9106's 64 MiB / t=3 / p=4), replacing bcrypt and its silent 72-byte truncation — there is no length cap, only the stated 12-rune minimum, enforced at hashing so every stored hash met the policy. `CheckPassword` reads the cost parameters out of the PHC-format hash (so a future re-tuning does not strand old hashes) and compares in constant time. Recovery codes are now grouped Crockford base32 of 80 bits (the no-I/L/O/U alphabet an operator can read off a screen and type back): `NewRecoveryCode` shows the dashed form and stores the sha256 of the normalized form, and `NormalizeRecoveryCode` accepts the code in any case, with or without the dashes, mapping Crockford's confusables (O→0, I/L→1). `TestArgon2idRoundTrips` (with a >72-byte passphrase the old cap would have weakened), `TestPasswordMinimumIsEnforced`, `TestCheckPasswordRejectsAMalformedHash`, `TestRecoveryCodeIsCrockfordAndNormalises` and `TestNormalizeRejectsWrongLength` prove it.
+
+**Remaining (a dedicated session should take these — Postgres, the gvmd/gvm-web daemons, systemd, SSE, a VM):**
+- **Item 1 — user management from the root CLI** (`gvm user create|invite|grant|reset|sessions`, over peer-auth Postgres, the empty-users bootstrap page).
+- **Item 3 — `sudo gvm host init --dashboard`** (master.key, the unit installs, the apt and pg_hba lines, the doctor pg_hba check).
+- **Item 4 — `gvm gvmd`** (the closed verb set over the CLI's own lifecycle/hostops paths, no lease auto-resume, `AssertCompatible`).
+- **Item 5 — `gvm web`** (the gvm-user socket service, TOTP via gvmd, the status pages, start/stop/restart to gvmd with SSE progress).
+- **Item 6 — the console** (§16.6 hello/backlog, the stopped-server banner, the `console:write` send box that refuses the ladder's stop words).
+- **Item 7 — edge wiring** (`gvm edge plan`/`apply`, `gvm ca export`).
+- **Item 8 — the control-plane-dead gates** (the golden-unit assertions and the real kill test).
+- **Item 9 — docs** (`docs/dashboard.md`, `docs/admin-guide.md`).
+- **Item 10 — minimal API tokens** (`gvm token create|list|revoke` for `/api/v1`).
+
+**Effort for this task:** argon2id passwords and Crockford recovery codes implemented by Claude (Opus 4.8) on 2026-10-17. The user management, the two daemons, the console, the edge wiring and the kill-test gates are the Postgres-and-systemd body of the dashboard.
 
 ---
 
