@@ -242,7 +242,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 40 🟡 | gvm opens the ports, and never locks you out | apply stages tagged ufw rules; `gvm firewall apply` for host rules; guarded `gvm firewall enable` | N | L | 33, 39 |
 | 41 🟡 | Planned restarts players see coming · **J2** | `--warn` countdown; restart says which rung saved | O | M | 37, 38, 39, 40 |
 | **J3** | **Every game, mods and custom games** | | | | |
-| 42 | The whole catalog boots | Proton, Mono, native Satisfactory/ARK, 7DTD, Core Keeper, CS2 verified | G | XL | 32, 39 (item 10 only) |
+| 42 🟡 | The whole catalog boots | Proton, Mono, native Satisfactory/ARK, 7DTD, Core Keeper, CS2 verified | G | XL | 32, 39 (item 10 only) |
 | 43 | Mod lists that are easy to edit and read | URLs and titles; import from ini; `content update --check` | C | L | 39 |
 | 44 | Apply Workshop mod changes safely | `gvm content sync`; PZ updates; rebuild for modded games | C | L | 41, 43 |
 | 45 | Minecraft mods: Modrinth, then CurseForge | MC mods by name; honest blocked-mod ladder; MC updates | C | XL | 29, 44 |
@@ -2792,6 +2792,23 @@ Every manifest change below gets a revision bump. It is confirmed by `sudo gvm g
 - **Rule 7 / D-41:** prerequisites are named, never installed. Proton is never downloaded.
 - **Rule 10:** manifests stay data, and secrets leave argv where the game allows it.
 - **Hardening:** W^X is relaxed only for engines that boots show generate code, and `arch: i386` only where 32-bit is proven. The Proton tree is per instance, and ProtectProc stays.
+
+### 🟡 Partial — the Proton guidance (item 9's cross-platform half) landed 2026-10-17; the 15 scratch boots, the manifest fixes, the Xvfb wrapper and the secrets-off-argv work remain
+
+This phase is verified by `gvm game try <id> --scratch` on Debian 12 and Ubuntu 24.04 — 15 real boots on two distributions, plus a Linux Xvfb wrapper — and the plan is explicit that "labelling a game is not fixing it": a manifest change counts only once a scratch boot proves it. None of that can be done, or honestly claimed, without a VM, so what landed here is the one piece that needs no boot: the Proton guidance. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 9 (cross-platform half) — Proton titles are labelled, and `gvm help proton` explains them (game-runtime-compat-9, game-catalog-config-12).** `isProtonTitle` keys off the authoritative marker, `spec.runtime.wrapper.kind == proton`, and both `gvm game list` (a per-row "· Proton (install it yourself: gvm help proton)" note, plus a `proton` field in `--json`) and `gvm game show` ("Windows server under Proton — install Proton yourself") flag every Proton title from it — so an operator sees before they create one that they must supply Proton (D-41: gvm names prerequisites, never installs them). The new `docs/help/proton.md` topic covers how: a per-instance copy owned by `gvm-<inst>`, the ProtectHome warning, the W^X/arch expectations, and that a native server is preferable where one exists. `TestProtonTitlesAreLabelledEverywhere` proves list, show and the help topic.
+
+**Remaining (a dedicated session should take these — each needs a scratch boot on a Debian 12 and an Ubuntu 24.04 VM, recorded in the ledger):**
+- **Items 1–5 — the manifest fixes**, each confirmed by `gvm game try <id> --scratch` and entered in the ledger: the Proton titles' `STEAM_COMPAT_*` / `jit` / `arch` and save-and-quit ladders (V Rising, Enshrouded, ARK); native `satisfactory` and `ark-se`; Mono W^X off for Rust and 7DTD; worlds where backups look (Satisfactory, Enshrouded); console output to stdout (7DTD, V Rising).
+- **Item 6 — Core Keeper and the Xvfb wrapper**: the runner-side `xvfb` wrapper (spawn Xvfb directly, pre-register it in the sweep-exempt set so it cannot stretch a stop into SIGKILL, stop it only after the ladder), flipping `wrapperKinds` xvfb to implemented, and the `wrapper` preflight Failure check with its own derive hint instead of exit 64's pin message.
+- **Item 7 — secrets off argv** where the game allows it (V Rising, Rust, CS2, ARK via `config_files`), with the residual-risk table.
+- **Item 8 — CS2** `post_install` hooks and the `steamclient.so` validate/doctor rule.
+- **Item 9 (rest) — the preflight `wrapper` check naming `spec.runtime.wrapper`, the system-location Proton-path candidates, and `docs/proton.md`.**
+- **Item 10 — superseded-revision rows** (needs Phase 39's superseded table, itself still pending).
+
+**Effort for this task:** the Proton guidance implemented by Claude (Opus 4.8) on 2026-10-17. The 15 scratch boots on two distributions, the manifest fixes, the Xvfb wrapper and the secrets-off-argv work are the VM body of the phase, and the finding each names stays open until its game boots.
 
 ---
 
