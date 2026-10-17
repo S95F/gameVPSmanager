@@ -255,7 +255,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 50 🟡 | Make adoption's safety net real | adoption record; safe cutover/rollback library; record-based finalize | A | L | 21, 25, 39, 40 |
 | 51 | Adopt the live Project Zomboid server | cutover in one window; `gvm adopt status`; `instance promote` | A | L | 50 |
 | 52 🟡 | Packaged gvm: .deb, migrations, rollback policy | `apt install ./gvm.deb` with worlds live | I | L | 35, 48 |
-| 53 | Remove a server, or gvm itself, cleanly | LEFT IN PLACE block; guarded uninstall keeps backups | I | L | 40, 50, 52 |
+| 53 🟡 | Remove a server, or gvm itself, cleanly | LEFT IN PLACE block; guarded uninstall keeps backups | I | L | 40, 50, 52 |
 | 54 | Off-box backups that really leave the box | pinned SFTP + age push; `backup remote check/list/pull` | B | L | 36, 38 |
 | 55 | Move to a new host · **J5** | `create --from-archive`; DR drill passes | B | L | 38, 46, 53, 54 |
 
@@ -3825,6 +3825,20 @@ The one piece that is pure archive-reader logic — needing no dpkg, no Postgres
 - **Rule 7:** SSH is never removed, and D-42 applies.
 - **Rule 2:** the rollback script is never exec'd.
 - **Rule 11:** the adopted server is returned to its prior state.
+
+### 🟡 Partial — destroy's LEFT IN PLACE block (item 1's core) landed 2026-10-17; --purge-residue, secret purge and gvm uninstall remain
+
+The one piece that only reads and prints — no account removal, no uninstall orchestration, no VM — is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 1 (core) — destroy says what it left (gvm-self-upgrade-uninstall-7).** `gvm destroy` removes the install and data trees and the control-plane files, but keeps the secrets, the service account, the recorded state, the logs and the SteamCMD home — and now it ends with a LEFT IN PLACE block naming each and why it was kept, so an operator who read "destroy" as "gone" is not later surprised by passwords and a `gvm-<n>` account still on the box. `TestDestroyNamesWhatItLeftInPlace`, through the real-archive destroy harness, proves the block names the account, the secrets dir, the state, the logs and the Steam home.
+
+**Remaining (a dedicated session should take these — hostops account removal, the uninstall orchestrator, Postgres, a VM):**
+- **Item 1 (rest) — `destroy --purge-residue`** (removing state, logs and the Steam home, and the account only when its GECOS is "gvm instance <n>" and it owns no files, via hostops `user.remove`) and **`gvm secret purge <n>`** (typed-name-gated removal of the secrets dir).
+- **Item 2 — `gvm uninstall --dry-run`** (the REMOVE / KEEP / LEFT FOR YOU plan) and `docs/uninstalling.md`.
+- **Item 3 — `sudo gvm uninstall`** (typed host name, live-lease refusal, stop the guard and timers, per-instance verified backup then ladder stop, the Go adopted-handback, dpkg `/etc/gvm`-kept semantics, the root-0600 secrets export under `--purge-config`, `master.key` only with `--drop-database`, and the reconciler firewall cleanup that never removes SSH).
+
+**Effort for this task:** destroy's LEFT IN PLACE block implemented by Claude (Opus 4.8) on 2026-10-17. The residue purge, `secret purge` and the whole `gvm uninstall` are the account-removal and orchestration body of the phase.
 
 ---
 
