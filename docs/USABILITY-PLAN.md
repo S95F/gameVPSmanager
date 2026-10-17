@@ -248,7 +248,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 45 🟡 | Minecraft mods: Modrinth, then CurseForge | MC mods by name; honest blocked-mod ladder; MC updates | C | XL | 29, 44 |
 | 46 🟡 | Add a game with YAML alone · **J3** | `game approve`; deep validate; field reference | G | L | 42, 45 |
 | **J4** | **Friends without SSH** | | | | |
-| 47 | Make the web skeleton safe before it is wired | no anonymous pages, no fake 202s, §15.2 roles | W | L | 22 |
+| 47 🟡 | Make the web skeleton safe before it is wired | no anonymous pages, no fake 202s, §15.2 roles | W | L | 22 |
 | 48 | Dashboard v0 | invite a friend; start/stop/restart; live console | W | XL | 47, 33, 37, 40 |
 | 49 | Dashboard v1 · **J4** | connect card, mods tab, settings tab, plain-language status | W | L | 48, 39, 44 |
 | **J5** | **Adopt, package, recover** | | | | |
@@ -3225,6 +3225,23 @@ The one piece that needs no approval-file FS plumbing, no runtime and no shipped
 - **Rule 5:** destructive routes keep the typed name and archive-first on top of RBAC.
 - **Rule 7:** the edge never writes `/etc/caddy/Caddyfile`, and Caddy's admin API stays on a unix socket.
 - **Rule 8:** the `owner` enum migration runs only through `gvm db migrate`.
+
+### 🟡 Partial — the §15.2 cumulative role matrix (item 4) landed 2026-10-17; the web-handler, mux, envelope and edge-config items remain (all cross-platform)
+
+Phase 47's packages (`internal/web`, `auth`, `authz`, `edge`) are library code not yet linked into the binary, so every item is unit-testable with no runtime — this is a cross-platform phase. This session landed the security keystone; the rest is bounded web/edge work a later session can land the same way. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 4 — the §15.2 cumulative role matrix (web-dashboard-4, admin-security-3).** The roles now nest viewer ⊂ operator ⊂ admin ⊂ owner, with `owner` added to `authz.Role`. The matrix is reclassified to §15.2: an operator may start/stop/restart/update a server, write to its console, sync content, take a backup and run a job — but the previous matrix also gave operator apply, rebuild, restore, prune, content:edit, adopt and secret:rotate, exactly the irreversible actions the "Why now" names as the harm, and those now sit at admin; user management, secret rotation, manifest publish and host config are owner. `Check`, `AllGrants` (de-duplicated) and a new `CanGrant` (owner grants any; admin grants only operator or viewer) implement the tier. `TestOperatorCeiling` pins that operator is refused the destructive set and still holds the moderator set; `TestAdminCeiling`, `TestCanGrant`, `TestOwnerCanDoEverything` and the role-hierarchy / `ParseRole` updates cover the rest.
+
+**Remaining (a dedicated session can take these — all cross-platform, library-level, no runtime):**
+- **The `role_t` enum migration** adding `owner` (applied only by `gvm db migrate`), for when the store is wired in Phase 48.
+- **Item 1 — no fake success**: the start/stop/restart handlers returning 501 with an envelope, and the buttons hidden (`TestNoMutationReturns2xxWithoutDispatch`).
+- **Item 2 — every browser route needs a session** (`requireAuth`, the `/login?next=` redirect, the htmx `HX-Redirect`; `TestBrowserRoutesRequireSession`).
+- **Item 3 — the two muxes** (browser: session + auth + cross-origin protection; `/api/v1`: bearer-only, cookies ignored; `TestAPIIgnoresCookies`, `TestBearerIsVerified`).
+- **Item 5 — the structured error envelope** (`webapi/envelope.go` codes, `request_id`, the single 503 template with no instance name).
+- **Item 6 — the edge config** (one vhost, the doubled-`unix/` fix, the SSE `flush_interval -1` blocks, the enum validation, the Caddyfile goldens, the tmpfiles group).
+
+**Effort for this task:** the §15.2 role matrix implemented by Claude (Opus 4.8) on 2026-10-17. The web-handler, mux, envelope and edge-config items are the rest of the pre-wiring web skeleton, and the `role_t` migration is the one DB artifact — all for a session that continues the web work.
 
 ---
 
