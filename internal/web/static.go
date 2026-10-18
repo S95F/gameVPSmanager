@@ -22,24 +22,39 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-const gvmCSS = `body{font-family:system-ui,sans-serif;margin:0;background:#1a1a1a;color:#e0e0e0}
-nav{background:#111;padding:0.5rem 1rem;display:flex;gap:1rem;align-items:center}
-nav a{color:#7ec8e3;text-decoration:none}
+// gvmCSS is written mobile-first: inputs and buttons are at least 1rem (16px)
+// so phone browsers don't zoom the page when a field gets focus, touch
+// targets are comfortable, wide content (tables, pre) scrolls inside its own
+// box instead of stretching the page, and the two breakpoints only adjust
+// spacing — a phone, a Tab S11 Ultra and a desktop all see the same markup.
+const gvmCSS = `*,*::before,*::after{box-sizing:border-box}
+body{font-family:system-ui,sans-serif;margin:0;background:#1a1a1a;color:#e0e0e0}
+nav{background:#111;padding:0.5rem 1rem;display:flex;gap:0.5rem 1rem;align-items:center;flex-wrap:wrap}
+nav a{color:#7ec8e3;text-decoration:none;padding:0.4rem 0}
+nav span{overflow-wrap:anywhere}
 nav form{margin-left:auto}
-main{max-width:960px;margin:2rem auto;padding:0 1rem}
-h1{margin-top:0}
+main{max-width:960px;margin:1rem auto;padding:0 1rem}
+h1{margin-top:0;overflow-wrap:anywhere}
+.table-wrap{overflow-x:auto}
 table{width:100%;border-collapse:collapse}
-th,td{padding:0.5rem 1rem;border-bottom:1px solid #333;text-align:left}
+th,td{padding:0.5rem;border-bottom:1px solid #333;text-align:left}
 a{color:#7ec8e3}
-label{display:block;margin:0.5rem 0}
-input{background:#111;color:#e0e0e0;border:1px solid #555;padding:0.3rem;border-radius:3px}
-button{background:#333;color:#e0e0e0;border:1px solid #555;padding:0.3rem 0.8rem;cursor:pointer;border-radius:3px}
-.flash{background:#2a2a1a;border:1px solid #665;padding:0.5rem 1rem;border-radius:4px}
-#console{background:#111;color:#e0e0e0;font-family:monospace;font-size:0.9rem;height:60vh;overflow-y:auto;padding:0.5rem;white-space:pre-wrap}
+label{display:block;margin:0.8rem 0}
+input{background:#111;color:#e0e0e0;border:1px solid #555;padding:0.5rem;border-radius:3px;font-size:1rem;max-width:100%}
+label input{display:block;width:100%;max-width:24rem;margin-top:0.3rem}
+button{background:#333;color:#e0e0e0;border:1px solid #555;padding:0.5rem 1rem;cursor:pointer;border-radius:3px;font-size:1rem}
+.actions{display:flex;gap:0.5rem;flex-wrap:wrap;margin:1rem 0}
+.actions form{margin:0}
+.flash{background:#2a2a1a;border:1px solid #665;padding:0.5rem 1rem;border-radius:4px;overflow-wrap:anywhere}
+#console{background:#111;color:#e0e0e0;font-family:monospace;font-size:0.9rem;height:60vh;height:60dvh;overflow-y:auto;padding:0.5rem;white-space:pre-wrap;overflow-wrap:anywhere}
 #console-state{color:#9a9;margin:0.2rem 0}
 .console-send{display:flex;gap:0.5rem;margin-top:0.5rem}
-.console-send input{flex:1;font-family:monospace}
-pre{background:#111;padding:1rem;border-radius:4px;overflow-x:auto}
+.console-send input{flex:1;min-width:0;font-family:monospace}
+pre{background:#111;padding:1rem;border-radius:4px;overflow-x:auto;max-width:100%}
+code{overflow-wrap:anywhere}
+@media (pointer:coarse){button{min-height:44px}input{min-height:44px}}
+@media (min-width:700px){main{margin:2rem auto}th,td{padding:0.5rem 1rem}}
+@media (max-width:640px){thead{display:none}table,tbody,tr,td{display:block}tr{border-bottom:1px solid #333;padding:0.5rem 0}td{padding:0.1rem 0;border-bottom:0}td:first-child{font-weight:600}}
 `
 
 // consoleJS attaches an EventSource to #console. The stream URL comes from

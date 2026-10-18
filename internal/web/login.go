@@ -67,6 +67,7 @@ func (s *Server) bootstrapIfEmpty(w http.ResponseWriter, r *http.Request) bool {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">`)
+	fmt.Fprint(w, `<meta name="viewport" content="width=device-width, initial-scale=1">`)
 	fmt.Fprint(w, `<title>gvm — set up the first account</title>`)
 	fmt.Fprint(w, `<link rel="stylesheet" href="/static/gvm.css">`)
 	fmt.Fprint(w, `</head><body><main><h1>No accounts yet</h1>`)
@@ -229,6 +230,7 @@ func renderLoginPage(w http.ResponseWriter, status int, next, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	fmt.Fprint(w, `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">`)
+	fmt.Fprint(w, `<meta name="viewport" content="width=device-width, initial-scale=1">`)
 	fmt.Fprint(w, `<title>gvm — sign in</title>`)
 	fmt.Fprint(w, `<link rel="stylesheet" href="/static/gvm.css">`)
 	fmt.Fprint(w, `</head><body><main><h1>Sign in</h1>`)
@@ -247,6 +249,7 @@ func renderTOTPPage(w http.ResponseWriter, status int, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	fmt.Fprint(w, `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">`)
+	fmt.Fprint(w, `<meta name="viewport" content="width=device-width, initial-scale=1">`)
 	fmt.Fprint(w, `<title>gvm — verification code</title>`)
 	fmt.Fprint(w, `<link rel="stylesheet" href="/static/gvm.css">`)
 	fmt.Fprint(w, `</head><body><main><h1>Verification code</h1>`)

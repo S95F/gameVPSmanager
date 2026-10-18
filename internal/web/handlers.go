@@ -555,6 +555,7 @@ func notImplementedMessage(verb, name string) string {
 func pageHead(w http.ResponseWriter, title string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">`)
+	fmt.Fprint(w, `<meta name="viewport" content="width=device-width, initial-scale=1">`)
 	fmt.Fprintf(w, `<title>%s</title>`, htmlEscape(title))
 	fmt.Fprint(w, `<link rel="stylesheet" href="/static/gvm.css">`)
 	fmt.Fprint(w, `</head><body>`)
@@ -574,7 +575,9 @@ func renderInstanceListPage(w http.ResponseWriter, sess *auth.Session, flash str
 	if len(instances) == 0 {
 		fmt.Fprint(w, `<p>No instances found.</p>`)
 	} else {
-		fmt.Fprint(w, `<table><thead><tr><th>Name</th><th>Game</th><th>Status</th><th></th></tr></thead><tbody>`)
+		// The wrapper scrolls sideways on narrow screens instead of letting a
+		// long name or status sentence squeeze the whole table off the page.
+		fmt.Fprint(w, `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Game</th><th>Status</th><th></th></tr></thead><tbody>`)
 		for _, inst := range instances {
 			fmt.Fprintf(w, `<tr><td><a href="/i/%s">%s</a></td><td>%s</td><td>%s</td>`,
 				htmlEscape(inst.Name), htmlEscape(inst.Name),
@@ -582,7 +585,7 @@ func renderInstanceListPage(w http.ResponseWriter, sess *auth.Session, flash str
 			fmt.Fprintf(w, `<td><a href="/i/%s/console">console</a></td></tr>`,
 				htmlEscape(inst.Name))
 		}
-		fmt.Fprint(w, `</tbody></table>`)
+		fmt.Fprint(w, `</tbody></table></div>`)
 	}
 	fmt.Fprint(w, `</main></body></html>`)
 }
@@ -599,10 +602,12 @@ func renderInstanceDetailPage(w http.ResponseWriter, sess *auth.Session, flash s
 	// The lifecycle buttons render only when a gvmd client is wired: a button
 	// that cannot act must not render (U3, web-dashboard-2).
 	if canAct {
+		fmt.Fprint(w, `<div class="actions">`)
 		for _, verb := range []string{"start", "stop", "restart"} {
 			fmt.Fprintf(w, `<form method="post" action="/i/%s/%s">`, htmlEscape(inst.Name), verb)
 			fmt.Fprintf(w, `<button type="submit">%s</button></form> `, verb)
 		}
+		fmt.Fprint(w, `</div>`)
 	}
 	fmt.Fprint(w, `</main></body></html>`)
 }
