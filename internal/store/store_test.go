@@ -10,8 +10,8 @@ import (
 
 // TestSchemaVersion confirms the constant matches the number of migration files.
 func TestSchemaVersion(t *testing.T) {
-	if store.SchemaVersion != 11 {
-		t.Errorf("SchemaVersion = %d, want 11", store.SchemaVersion)
+	if store.SchemaVersion != 12 {
+		t.Errorf("SchemaVersion = %d, want 12", store.SchemaVersion)
 	}
 }
 
@@ -33,6 +33,7 @@ func TestMigrationFilesEmbedded(t *testing.T) {
 		"migrations/0009_secrets_audit.sql",
 		"migrations/0010_grants.sql",
 		"migrations/0011_role_owner.sql",
+		"migrations/0012_user_invites.sql",
 	}
 	// Access migrations through the exported test helper.
 	got := store.MigrationFiles()

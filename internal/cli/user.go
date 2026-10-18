@@ -173,16 +173,119 @@ func runUserCreate(ctx context.Context, env *Env, args []string) error {
 	return nil
 }
 
-func runUserInvite(_ context.Context, env *Env, args []string) error {
+func runUserInvite(ctx context.Context, env *Env, args []string) error {
 	fs := flag.NewFlagSet("user invite", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
+	instName := fs.String("instance", "", "grant this instance alongside the invite")
+	role := fs.String("role", "viewer", "the instance grant's role: viewer|operator")
+	ttl := fs.Duration("ttl", 24*time.Hour, "how long the invite URL stays redeemable")
+	dsn := fs.String("dsn", "", "postgres DSN (default: unix socket peer auth, gvm_ops)")
 	if err := fs.Parse(args); err != nil {
 		return flagErr(err)
 	}
-	// The invite URL needs the enrolment page, which is not in this build; an
-	// invite that cannot be redeemed must not be printed (U3).
-	return avail.New("invites arrive with the dashboard's enrolment page; " +
-		"until then create admins with `gvm user create` and grant instances with `gvm user grant`")
+	if fs.NArg() < 1 {
+		return usageErr(&userError{Msg: "invite needs an email",
+			Hint: "e.g. gvm user invite alice@example.com --instance pz1 --role operator"})
+	}
+	email := fs.Arg(0)
+	switch *role {
+	case "viewer", "operator":
+	default:
+		// An invited account has a viewer ceiling unless granted more, and a
+		// grant above operator is admin's irreversible set — root-CLI only.
+		return usageErr(&userError{Msg: fmt.Sprintf("%q is not an invite role", *role),
+			Hint: "viewer or operator; admin and owner accounts are created with `gvm user create`"})
+	}
+
+	// The instance's spec is loaded BEFORE anything is written, so a typo'd
+	// name creates no half-invited account.
+	var instUID, instGame, instSpec string
+	if *instName != "" {
+		paths := instance.PathsFor(*instName)
+		inst, diags, err := spec.LoadInstance(paths.Spec)
+		if err != nil {
+			return fmt.Errorf("user invite: no instance %q on this host: %w", *instName, err)
+		}
+		if diags.HasErrors() {
+			return fmt.Errorf("user invite: %s does not validate:\n%s", paths.Spec, diags.String())
+		}
+		instUID, instGame, instSpec = string(inst.Metadata.UID), inst.Spec.Game, paths.Spec
+	}
+
+	pc, err := userPool(ctx, env, *dsn)
+	if err != nil {
+		return err
+	}
+	defer pc.close()
+
+	// The account, if it does not exist yet: a viewer with no factors, which
+	// can do nothing until the invite is redeemed.
+	if _, err := opsq.GetUserID(ctx, pc.pool, email); err != nil {
+		if !strings.Contains(err.Error(), "no user") {
+			return err
+		}
+		id, err := identity.UUIDv7String()
+		if err != nil {
+			return err
+		}
+		if err := opsq.CreateUser(ctx, pc.pool, id, email, email, "", "viewer"); err != nil {
+			return fmt.Errorf("user invite: %w", err)
+		}
+	}
+	if *instName != "" {
+		if err := opsq.UpsertInstance(ctx, pc.pool, instUID, *instName, instGame, instSpec); err != nil {
+			return err
+		}
+		if err := opsq.SetGrant(ctx, pc.pool, email, *instName, *role); err != nil {
+			return fmt.Errorf("user invite: %w", err)
+		}
+	}
+
+	url, err := mintInvite(ctx, env, pc, email, *ttl)
+	if err != nil {
+		return fmt.Errorf("user invite: %w", err)
+	}
+	fmt.Fprintf(env.Stdout, "invited %s", email)
+	if *instName != "" {
+		fmt.Fprintf(env.Stdout, " (%s on %s)", *role, *instName)
+	}
+	fmt.Fprintf(env.Stdout, " — single use, valid %s:\n\n  %s\n\n", ttl.String(), url)
+	fmt.Fprintln(env.Stdout, "send it over a channel you trust; whoever opens it becomes this account")
+	return nil
+}
+
+// mintInvite revokes any older invites, mints a fresh single-use token and
+// returns the URL to hand over. The plaintext is printed once, never stored.
+func mintInvite(ctx context.Context, env *Env, pc poolCloser, email string, ttl time.Duration) (string, error) {
+	if err := opsq.RevokeInvites(ctx, pc.pool, email); err != nil {
+		return "", err
+	}
+	parts, err := identity.NewInviteToken()
+	if err != nil {
+		return "", err
+	}
+	id, err := identity.UUIDv7String()
+	if err != nil {
+		return "", err
+	}
+	if err := opsq.CreateInvite(ctx, pc.pool, id, email, parts.SHA256, ttl); err != nil {
+		return "", err
+	}
+	return enrolBase(env) + "/enrol?token=" + parts.Plaintext, nil
+}
+
+// enrolBase is the dashboard's public origin from edge.site, or a bare path
+// with a note when the host config does not name one.
+func enrolBase(env *Env) string {
+	data, err := os.ReadFile("/etc/gvm/gvm.yaml")
+	if err != nil {
+		return "https://<your-dashboard>"
+	}
+	host, diags := spec.LoadHost("/etc/gvm/gvm.yaml", data)
+	if diags.HasErrors() || host.Spec.Edge.Site == "" {
+		return "https://<your-dashboard>"
+	}
+	return "https://" + host.Spec.Edge.Site
 }
 
 func runUserList(ctx context.Context, env *Env, args []string) error {
@@ -444,7 +547,14 @@ func runUserReset(ctx context.Context, env *Env, args []string) error {
 		fmt.Fprint(env.Stdout, ", TOTP cleared")
 	}
 	fmt.Fprintln(env.Stdout)
-	fmt.Fprintln(env.Stdout, "re-enrolment needs the enrolment page (a later release); for an owner or admin, `gvm user create` a fresh account instead")
+
+	// A fresh invite, so the user re-enrols their own factors — root never
+	// chooses a friend's password (item 1).
+	url, err := mintInvite(ctx, env, pc, fs.Arg(0), 24*time.Hour)
+	if err != nil {
+		return fmt.Errorf("user reset: factors cleared, but minting the fresh invite failed: %w", err)
+	}
+	fmt.Fprintf(env.Stdout, "fresh invite — single use, valid 24h:\n\n  %s\n", url)
 	return nil
 }
 

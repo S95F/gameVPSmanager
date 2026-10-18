@@ -32,6 +32,10 @@ var browserRoutes = []browserRoute{
 	{method: "POST", pattern: "/login", public: true, handler: (*Server).handleLoginSubmit},
 	{method: "GET", pattern: "/login/totp", public: true, handler: (*Server).handleTOTPForm},
 	{method: "POST", pattern: "/login/totp", public: true, handler: (*Server).handleTOTPSubmit},
+	// Enrolment is reached by a single-use invite URL: anonymous by nature,
+	// authenticated by the token itself (web-dashboard-6).
+	{method: "GET", pattern: "/enrol", public: true, handler: (*Server).handleEnrolForm},
+	{method: "POST", pattern: "/enrol", public: true, handler: (*Server).handleEnrolSubmit},
 	{method: "GET", pattern: "/static/{file}", public: true, handler: (*Server).handleStatic},
 
 	// ── Session required ────────────────────────────────────────────────────
@@ -40,6 +44,10 @@ var browserRoutes = []browserRoute{
 	{method: "GET", pattern: "/instances", handler: (*Server).handleInstanceList},
 	{method: "GET", pattern: "/i/{name}", handler: (*Server).handleInstanceDetail},
 	{method: "GET", pattern: "/i/{name}/console", handler: (*Server).handleConsoleView},
+	// The send box: an ordinary form POST, so CSRF, RBAC and the audit path
+	// apply through exactly the same middleware as every other mutation —
+	// never a WebSocket (§16.5, §16.6).
+	{method: "POST", pattern: "/i/{name}/console", handler: (*Server).handleConsoleSend},
 	{method: "GET", pattern: "/stream/i/{name}/console", sse: true, handler: (*Server).handleConsoleStream},
 
 	// Form POSTs are answered with 303 and a flash; nothing dispatches in

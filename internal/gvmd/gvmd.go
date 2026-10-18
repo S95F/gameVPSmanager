@@ -52,13 +52,18 @@ const (
 	// VerbVerifyTOTP checks a login code. TOTP secrets are readable only by
 	// gvm_ops (D-27), so the web tier must ask this daemon (rule 9).
 	VerbVerifyTOTP Verb = "auth.verify_totp"
+
+	// VerbEnroll redeems a single-use invite: it verifies the token, seals
+	// the TOTP secret with the master key (which the web tier does not hold)
+	// and writes the whole enrolment in one transaction.
+	VerbEnroll Verb = "auth.enroll"
 )
 
 // Verbs returns the closed set, for the test that holds handlers to it.
 func Verbs() []Verb {
 	return []Verb{
 		VerbStatus, VerbStart, VerbStop, VerbRestart,
-		VerbConsoleSend, VerbBackupNow, VerbVerifyTOTP,
+		VerbConsoleSend, VerbBackupNow, VerbVerifyTOTP, VerbEnroll,
 	}
 }
 
@@ -84,6 +89,14 @@ type Request struct {
 	// Email and Code are auth.verify_totp's inputs.
 	Email string `json:"email,omitempty"`
 	Code  string `json:"code,omitempty"`
+
+	// auth.enroll's inputs: the single-use invite token, the already-hashed
+	// password (the plaintext never crosses this socket) and the TOTP secret
+	// to seal. The web tier verified one code against the secret before
+	// asking, so a mistyped authenticator never consumes an invite.
+	Invite       string `json:"invite,omitempty"`
+	PasswordHash string `json:"password_hash,omitempty"`
+	TOTPSecret   string `json:"totp_secret,omitempty"`
 }
 
 // Response is one answer.
@@ -109,15 +122,16 @@ type Response struct {
 
 // Machine-readable response codes. The web tier maps them onto its envelope.
 const (
-	CodeUnknownVerb  = "unknown_verb"
-	CodeBadRequest   = "bad_request"
-	CodeUnauthorized = "unauthorized"
-	CodeNotFound     = "not_found"
-	CodeLeaseHeld    = "lease_held" // 409 at the web tier, with the lease line
-	CodeTOTPInvalid  = "totp_invalid"
-	CodeNoTOTP       = "totp_not_enrolled"
-	CodeDegraded     = "degraded" // Postgres unreachable or schema behind
-	CodeInternal     = "internal"
+	CodeUnknownVerb   = "unknown_verb"
+	CodeBadRequest    = "bad_request"
+	CodeUnauthorized  = "unauthorized"
+	CodeNotFound      = "not_found"
+	CodeLeaseHeld     = "lease_held" // 409 at the web tier, with the lease line
+	CodeTOTPInvalid   = "totp_invalid"
+	CodeNoTOTP        = "totp_not_enrolled"
+	CodeInviteInvalid = "invite_invalid"
+	CodeDegraded      = "degraded" // Postgres unreachable or schema behind
+	CodeInternal      = "internal"
 )
 
 // newOpID returns a 16-hex-char correlation id for acknowledged dispatches.

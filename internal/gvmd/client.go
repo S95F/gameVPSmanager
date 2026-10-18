@@ -130,3 +130,10 @@ func (c *Client) VerifyTOTP(ctx context.Context, email, code string) error {
 	_, err := c.call(ctx, Request{Verb: VerbVerifyTOTP, Email: email, Code: code})
 	return err
 }
+
+// Enroll redeems an invite with an already-hashed password and the TOTP
+// secret to seal.
+func (c *Client) Enroll(ctx context.Context, invite, passwordHash, totpSecret string) error {
+	_, err := c.call(ctx, Request{Verb: VerbEnroll, Invite: invite, PasswordHash: passwordHash, TOTPSecret: totpSecret})
+	return err
+}

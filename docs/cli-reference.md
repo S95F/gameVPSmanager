@@ -122,7 +122,7 @@ gvm adopt discover --unit zomboid
 
 ### gvm user
 
-manage dashboard users and roles _(partial: `gvm user invite` is not in this build; create, grant, reset, sessions and the rest work)_
+manage dashboard users, invites and roles
 
 Subcommands:
 
@@ -188,6 +188,14 @@ Subcommands:
 ### gvm host
 
 install gvm on this host (host init)
+
+### gvm edge
+
+plan and apply the reverse-proxy config
+
+### gvm ca
+
+export the internal CA certificate (ca export)
 
 ### gvm firewall
 

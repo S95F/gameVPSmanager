@@ -268,6 +268,53 @@ func (s *Store) RevokeSession(ctx context.Context, sessionID string) error {
 	return webq.RevokeSession(ctx, pool, sessionID)
 }
 
+// LookupInvite validates an enrolment token for the form, read-only.
+func (s *Store) LookupInvite(ctx context.Context, token string) (web.InviteInfo, error) {
+	pool, ok := s.pool()
+	if !ok {
+		return web.InviteInfo{}, web.ErrIdentityUnavailable
+	}
+	row, err := webq.GetInviteBySHA(ctx, pool, identity.HashToken(token))
+	if err != nil {
+		if errors.Is(err, webq.ErrNotFound) {
+			return web.InviteInfo{}, web.ErrInviteInvalid
+		}
+		return web.InviteInfo{}, fmt.Errorf("%w: %v", web.ErrIdentityUnavailable, err)
+	}
+	if row.Used || time.Now().After(row.ExpiresAt) {
+		return web.InviteInfo{}, web.ErrInviteInvalid
+	}
+	return web.InviteInfo{Email: row.Email}, nil
+}
+
+// Enroll verifies the code against the shown secret (pure, no store), hashes
+// the password, and asks gvmd to redeem the invite — the one write path for a
+// self-enrolled account (the web tier holds no master key to seal with).
+func (s *Store) Enroll(ctx context.Context, token, password, totpSecret, code string) error {
+	if _, err := identity.VerifyTOTP(totpSecret, code, 0); err != nil {
+		return web.ErrTOTPInvalid
+	}
+	hash, err := identity.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	err = s.gvmd.Enroll(ctx, token, hash, totpSecret)
+	if err == nil {
+		return nil
+	}
+	var remote *gvmd.RemoteError
+	switch {
+	case errors.As(err, &remote) && remote.Code == gvmd.CodeInviteInvalid:
+		return web.ErrInviteInvalid
+	case errors.As(err, &remote) && remote.Code == gvmd.CodeDegraded:
+		return web.ErrIdentityUnavailable
+	case errors.Is(err, gvmd.ErrGatewayDown):
+		return web.ErrIdentityUnavailable
+	default:
+		return err
+	}
+}
+
 // ── web.Authorizer ───────────────────────────────────────────────────────────
 
 // EffectiveRole resolves the §15.2 effective role for one instance.

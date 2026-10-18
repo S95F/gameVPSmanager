@@ -29,6 +29,10 @@ func (e *ErrLeaseHeld) Error() string { return "lease held: " + e.Line }
 // ErrTOTPNotEnrolled is returned by VerifyTOTP for an account with no secret.
 var ErrTOTPNotEnrolled = errors.New("gvmd: totp not enrolled")
 
+// ErrInviteInvalid covers every way a presented invite can be dead: unknown,
+// used, expired, or its user disabled. One error, one sentence on the page.
+var ErrInviteInvalid = errors.New("gvmd: invite is not valid")
+
 // ErrDegraded is returned when Postgres is unreachable or the schema is
 // behind the binary; auth verbs are refused while it holds (rule 8).
 var ErrDegraded = errors.New("gvmd: datastore unavailable")
@@ -54,6 +58,9 @@ type Backend struct {
 	// VerifyTOTP checks a code for an email: ErrTOTPNotEnrolled,
 	// identity.ErrInvalidTOTP, ErrDegraded or nil.
 	VerifyTOTP func(ctx context.Context, email, code string) error
+
+	// Enroll redeems an invite: ErrInviteInvalid, ErrDegraded or nil.
+	Enroll func(ctx context.Context, invite, passwordHash, totpSecret string) error
 }
 
 func (b Backend) validate() error {
@@ -78,6 +85,9 @@ func (b Backend) validate() error {
 	}
 	if b.VerifyTOTP == nil {
 		missing = append(missing, "VerifyTOTP")
+	}
+	if b.Enroll == nil {
+		missing = append(missing, "Enroll")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("gvmd: backend is missing %s", strings.Join(missing, ", "))

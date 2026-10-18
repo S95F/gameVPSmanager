@@ -14,13 +14,18 @@ import (
 )
 
 // browserMutations and apiMutations walk the route tables so a new mutation
-// route cannot dodge these tests.
+// route cannot dodge these tests. The console send box is a mutation too, but
+// it has its own validation surface, tested in console_test.go.
 func browserMutations() []browserRoute {
 	var out []browserRoute
 	for _, rt := range browserRoutes {
-		if rt.method == "POST" && strings.HasPrefix(rt.pattern, "/i/") {
-			out = append(out, rt)
+		if rt.method != "POST" || !strings.HasPrefix(rt.pattern, "/i/") {
+			continue
 		}
+		if strings.HasSuffix(rt.pattern, "/console") {
+			continue
+		}
+		out = append(out, rt)
 	}
 	return out
 }

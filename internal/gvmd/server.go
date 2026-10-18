@@ -144,6 +144,7 @@ var handlers = map[Verb]handler{
 	VerbConsoleSend: (*Server).doConsoleSend,
 	VerbBackupNow:   (*Server).doBackupNow,
 	VerbVerifyTOTP:  (*Server).doVerifyTOTP,
+	VerbEnroll:      (*Server).doEnroll,
 }
 
 func (s *Server) dispatch(ctx context.Context, req Request) Response {
@@ -171,7 +172,10 @@ func validateFields(req Request) (Response, bool) {
 	if (req.Email != "" || req.Code != "") && req.Verb != VerbVerifyTOTP {
 		return bad("email/code")
 	}
-	if req.Instance != "" && req.Verb == VerbVerifyTOTP {
+	if (req.Invite != "" || req.PasswordHash != "" || req.TOTPSecret != "") && req.Verb != VerbEnroll {
+		return bad("invite/password_hash/totp_secret")
+	}
+	if req.Instance != "" && (req.Verb == VerbVerifyTOTP || req.Verb == VerbEnroll) {
 		return bad("instance")
 	}
 	return Response{}, true
@@ -275,6 +279,24 @@ func (s *Server) doVerifyTOTP(ctx context.Context, req Request) Response {
 		return Response{OK: false, Code: CodeTOTPInvalid, Error: "the code is not valid"}
 	case errors.Is(err, ErrTOTPNotEnrolled):
 		return Response{OK: false, Code: CodeNoTOTP, Error: "the account has no authenticator enrolled"}
+	default:
+		return errorResponse(err)
+	}
+}
+
+func (s *Server) doEnroll(ctx context.Context, req Request) Response {
+	if req.Invite == "" || req.PasswordHash == "" || req.TOTPSecret == "" {
+		return Response{OK: false, Code: CodeBadRequest,
+			Error: "auth.enroll needs invite, password_hash and totp_secret"}
+	}
+	err := s.backend.Enroll(ctx, req.Invite, req.PasswordHash, req.TOTPSecret)
+	switch {
+	case err == nil:
+		s.log.Info("gvmd: enrolment redeemed")
+		return Response{OK: true}
+	case errors.Is(err, ErrInviteInvalid):
+		return Response{OK: false, Code: CodeInviteInvalid,
+			Error: "the invite is no longer valid; ask the operator for a fresh one"}
 	default:
 		return errorResponse(err)
 	}

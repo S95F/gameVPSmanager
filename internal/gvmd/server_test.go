@@ -21,6 +21,7 @@ type recorder struct {
 	// failures
 	leaseHeld  bool
 	totpErr    error
+	enrollErr  error
 	statusErr  error
 	lifecycErr error
 }
@@ -51,6 +52,10 @@ func (r *recorder) backend() Backend {
 		VerifyTOTP: func(_ context.Context, email, code string) error {
 			r.calls = append(r.calls, "totp "+email)
 			return r.totpErr
+		},
+		Enroll: func(_ context.Context, invite, hash, secret string) error {
+			r.calls = append(r.calls, "enroll "+invite)
+			return r.enrollErr
 		},
 	}
 }
@@ -190,6 +195,34 @@ func TestDispatchVerifyTOTP(t *testing.T) {
 				t.Errorf("%+v, want code %s", resp, tc.code)
 			}
 		})
+	}
+}
+
+func TestDispatchEnroll(t *testing.T) {
+	r := &recorder{}
+	s := newTestServer(t, r)
+
+	resp := s.dispatch(context.Background(), Request{
+		Verb: VerbEnroll, Invite: "gvmi_x", PasswordHash: "$argon2id$...", TOTPSecret: "SECRET",
+	})
+	if !resp.OK || len(r.calls) != 1 {
+		t.Fatalf("enroll: %+v calls=%v", resp, r.calls)
+	}
+
+	// A dead invite answers its own code, and a partial request is refused
+	// before the backend sees it.
+	r = &recorder{enrollErr: ErrInviteInvalid}
+	s = newTestServer(t, r)
+	resp = s.dispatch(context.Background(), Request{
+		Verb: VerbEnroll, Invite: "gvmi_x", PasswordHash: "h", TOTPSecret: "s",
+	})
+	if resp.OK || resp.Code != CodeInviteInvalid {
+		t.Errorf("dead invite: %+v, want invite_invalid", resp)
+	}
+	r.calls = nil
+	resp = s.dispatch(context.Background(), Request{Verb: VerbEnroll, Invite: "gvmi_x"})
+	if resp.OK || resp.Code != CodeBadRequest || len(r.calls) != 0 {
+		t.Errorf("partial enroll: %+v calls=%v, want bad_request before the backend", resp, r.calls)
 	}
 }
 

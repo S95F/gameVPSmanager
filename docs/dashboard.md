@@ -3,13 +3,21 @@
 You were given a dashboard account so you can look after game servers without
 SSH. This page covers what works today.
 
+## Getting an account
+
+The operator sends you a single-use invite link. Open it, choose your own
+password (at least 12 characters), add the shown secret to your authenticator
+app, and prove one code. Nobody else ever knows your password or your
+authenticator secret — if either is lost, the operator resets the account and
+sends a fresh link.
+
 ## Signing in
 
 1. Open the dashboard address your operator gave you.
 2. Enter your email and password, then the 6-digit code from your
    authenticator app. There is no way around the code: no authenticator, no
    session. If you lost it, the operator resets it from the host
-   (`sudo gvm user reset you@example.com --totp`).
+   (`sudo gvm user reset you@example.com --totp`) and you enrol again.
 3. Five wrong passwords lock the account for fifteen minutes. The lock clears
    itself; a reset is only needed for a lost factor.
 
@@ -43,9 +51,17 @@ release, by design: the actions with no undo stay with the operator.
 
 ## The console
 
-The console page exists, but live streaming is not wired in this build — the
-page says so. Watching and typing into the console from the browser arrives
-in a later release; until then the operator has it over SSH.
+The console page streams the server's output live, with the last 200 lines
+replayed when you open it. A dropped connection resumes itself where it left
+off; when some lines are gone for good it says "— N lines skipped —" rather
+than pretending nothing happened. A stopped server shows its state above the
+pane instead of a dead feed.
+
+With the operator role you also get a send box. It takes one command at a
+time, and it refuses `quit`, `stop`, `shutdown` and `exit` outright: **use
+the Stop button** — that path saves the world first, and a typed `quit` does
+not. Everything you send is recorded with your name in the server's own
+console log.
 
 ## When the dashboard is down
 

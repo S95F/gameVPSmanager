@@ -64,6 +64,26 @@ func (s *stubIdentity) RevokeSession(_ context.Context, id string) error {
 	return nil
 }
 
+// invite is the one token the stub accepts; enrolments record their inputs.
+func (s *stubIdentity) LookupInvite(_ context.Context, token string) (InviteInfo, error) {
+	if token == "gvmi_good" {
+		return InviteInfo{Email: "friend@example.com"}, nil
+	}
+	return InviteInfo{}, ErrInviteInvalid
+}
+
+func (s *stubIdentity) Enroll(_ context.Context, token, password, totpSecret, code string) error {
+	if token != "gvmi_good" {
+		return ErrInviteInvalid
+	}
+	if code != s.code {
+		return ErrTOTPInvalid
+	}
+	s.enrolled = true
+	s.sessions = append(s.sessions, "enrolled:"+password)
+	return nil
+}
+
 func loginServer(t *testing.T, id *stubIdentity) http.Handler {
 	t.Helper()
 	s, _ := newTestServer(t, func(c *Config) {

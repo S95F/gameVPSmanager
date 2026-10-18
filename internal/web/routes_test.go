@@ -97,6 +97,14 @@ func (d *recordingDispatcher) Restart(_ context.Context, name, actor string) (st
 	return d.dispatch("restart", name, actor)
 }
 
+func (d *recordingDispatcher) ConsoleSend(_ context.Context, name, line, actor string) error {
+	if d.err != nil {
+		return d.err
+	}
+	d.calls = append(d.calls, "send "+name+" "+line+" by "+actor)
+	return nil
+}
+
 // newTestServer builds a Server on the standard stubs; mutate overrides cfg.
 func newTestServer(t *testing.T, mutate func(*Config)) (*Server, *recordingSessions) {
 	t.Helper()

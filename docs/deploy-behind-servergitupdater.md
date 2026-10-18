@@ -7,11 +7,10 @@ a systemd unit for the binary, and writes a Caddy site snippet to
 port. gvm's web tier is designed so that pipeline can serve the dashboard
 without either tool fighting the other.
 
-> **Status:** `gvm web` and `gvm gvmd` run in this build (Phase 48 — see
-> [admin-guide.md](admin-guide.md) for the full setup: Postgres, `sudo gvm
-> host init --dashboard`, `gvm db migrate`, `gvm user create`). `gvm edge
-> apply` is still to come, which is exactly why the two shapes below — where
-> something else owns Caddy — are the supported deployments today.
+> **Status:** `gvm web`, `gvm gvmd` and `gvm edge plan`/`apply` all run in
+> this build (Phase 48 — see [admin-guide.md](admin-guide.md) for the full
+> setup). The two shapes below — where serverGitUpdater or the operator owns
+> Caddy — stay first-class: in both, gvm never touches `caddy.service`.
 
 ## The shape
 

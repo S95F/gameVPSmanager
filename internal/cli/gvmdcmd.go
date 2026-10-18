@@ -23,6 +23,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/S95F/gameVPSmanager/internal/audit"
 	"github.com/S95F/gameVPSmanager/internal/gvmd"
 	"github.com/S95F/gameVPSmanager/internal/hostops"
@@ -154,7 +156,51 @@ func (b *gvmdBackend) backend() gvmd.Backend {
 		ConsoleSend: b.consoleSend,
 		BackupNow:   b.backupNow,
 		VerifyTOTP:  b.verifyTOTP,
+		Enroll:      b.enroll,
 	}
+}
+
+// opsPool returns the ready pool with a compatible schema, or ErrDegraded —
+// gvmd never migrates (rule 8).
+func (b *gvmdBackend) opsPool(ctx context.Context) (*pgxpool.Pool, error) {
+	select {
+	case <-b.store.Ready():
+	default:
+		return nil, gvmd.ErrDegraded
+	}
+	pool := b.store.Pool()
+	if err := store.NewMigrator(pool).AssertCompatible(ctx); err != nil {
+		return nil, fmt.Errorf("%w: %v", gvmd.ErrDegraded, err)
+	}
+	return pool, nil
+}
+
+// enroll redeems an invite: seal the secret for the invite's user, then
+// consume the invite and write the enrolment in one transaction.
+func (b *gvmdBackend) enroll(ctx context.Context, invite, passwordHash, totpSecret string) error {
+	pool, err := b.opsPool(ctx)
+	if err != nil {
+		return err
+	}
+	sha := identity.HashToken(invite)
+	userID, err := opsq.GetInviteUserID(ctx, pool, sha)
+	if err != nil {
+		if errors.Is(err, opsq.ErrInviteInvalid) {
+			return gvmd.ErrInviteInvalid
+		}
+		return fmt.Errorf("%w: %v", gvmd.ErrDegraded, err)
+	}
+	sealed, err := b.box.SealTOTP(userID, totpSecret)
+	if err != nil {
+		return fmt.Errorf("gvmd: seal totp: %w", err)
+	}
+	if err := opsq.ConsumeInviteEnroll(ctx, pool, sha, passwordHash, sealed, 1); err != nil {
+		if errors.Is(err, opsq.ErrInviteInvalid) {
+			return gvmd.ErrInviteInvalid
+		}
+		return fmt.Errorf("%w: %v", gvmd.ErrDegraded, err)
+	}
+	return nil
 }
 
 // statuses is `gvm list`'s sweep: the observing Reconciler, which cannot
@@ -228,14 +274,9 @@ func (b *gvmdBackend) backupNow(ctx context.Context, instanceName string) error 
 // last_totp_step. Postgres down or a schema behind the binary answers
 // degraded: gvmd never migrates (rule 8).
 func (b *gvmdBackend) verifyTOTP(ctx context.Context, email, code string) error {
-	select {
-	case <-b.store.Ready():
-	default:
-		return gvmd.ErrDegraded
-	}
-	pool := b.store.Pool()
-	if err := store.NewMigrator(pool).AssertCompatible(ctx); err != nil {
-		return fmt.Errorf("%w: %v", gvmd.ErrDegraded, err)
+	pool, err := b.opsPool(ctx)
+	if err != nil {
+		return err
 	}
 
 	row, err := opsq.GetTOTP(ctx, pool, email)

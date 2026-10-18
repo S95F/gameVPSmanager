@@ -38,7 +38,15 @@ var (
 	// ErrIdentityUnavailable is Postgres or the gvmd gateway being down; the
 	// visitor sees the single degraded template.
 	ErrIdentityUnavailable = errors.New("web: identity backend unavailable")
+	// ErrInviteInvalid covers unknown, used and expired invites alike: the
+	// page shows one sentence and never says which.
+	ErrInviteInvalid = errors.New("web: the invite is not valid")
 )
+
+// InviteInfo is what the enrolment form shows before anything is typed.
+type InviteInfo struct {
+	Email string
+}
 
 // Identity is the login engine's backend.
 type Identity interface {
@@ -55,6 +63,13 @@ type Identity interface {
 	CreateSession(ctx context.Context, userID, ip, userAgent string) (string, error)
 	// RevokeSession revokes one session (logout).
 	RevokeSession(ctx context.Context, sessionID string) error
+
+	// LookupInvite validates an enrolment token for the form (read-only).
+	LookupInvite(ctx context.Context, token string) (InviteInfo, error)
+	// Enroll redeems the invite: the code is verified against totpSecret
+	// first, then the enrolment is written through gvmd in one transaction
+	// (the web tier cannot seal the secret; it holds no master key).
+	Enroll(ctx context.Context, token, password, totpSecret, code string) error
 }
 
 // Authorizer resolves a user's effective role for one instance: the greater

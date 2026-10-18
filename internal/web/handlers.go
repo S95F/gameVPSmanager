@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/auth"
 	"github.com/S95F/gameVPSmanager/internal/authz"
+	consolepkg "github.com/S95F/gameVPSmanager/internal/console"
 	"github.com/S95F/gameVPSmanager/internal/webapi"
 )
 
@@ -150,7 +152,7 @@ func (s *Server) handleConsoleView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, _ := auth.FromContext(r.Context())
-	renderConsolePage(w, sess, name, s.cfg.Hub != nil)
+	renderConsolePage(w, sess, name, s.cfg.Console != nil, s.cfg.Dispatcher != nil)
 }
 
 // ── Lifecycle mutations, shared plumbing ─────────────────────────────────────
@@ -315,10 +317,17 @@ func (s *Server) handleAPIInstanceStatus(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, inst)
 }
 
-// handleConsoleStream streams the ring for the named instance as SSE. It
-// serves both the browser route (/stream/i/{name}/console) and its API twin
+// consoleBacklog is §16.6's replay on a fresh attach.
+const consoleBacklog = 200
+
+// handleConsoleStream streams one instance's live console as SSE. It serves
+// both the browser route (/stream/i/{name}/console) and its API twin
 // (/api/v1/stream/instances/{name}/console); each mux has already
 // authenticated by its own path.
+//
+// Reconnects resume: EventSource replays its Last-Event-ID, which is the last
+// line's sequence; a gap the ring has already dropped renders as "— N lines
+// skipped —", never silently (§16.6).
 //
 // Content-Type is text/event-stream, which is why these routes live under
 // the reserved /stream/ prefixes: Caddy's stream matcher flushes them
@@ -334,40 +343,149 @@ func (s *Server) handleConsoleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer sse.Done()
 
-	// If no hub is configured, send one comment and close.
-	if s.cfg.Hub == nil {
-		_ = sse.WriteComment("no hub configured")
+	if s.cfg.Console == nil {
+		_ = sse.WriteComment("console streaming is not wired in this build")
 		return
 	}
 
-	ch, subID := s.cfg.Hub.Subscribe(name)
-	defer s.cfg.Hub.Unsubscribe(name, subID)
+	// Resume after the last line the browser saw, or replay the backlog.
+	var from uint64
+	backlog := consoleBacklog
+	if last := r.Header.Get("Last-Event-ID"); last != "" {
+		if n, err := strconv.ParseUint(last, 10, 64); err == nil {
+			from = n + 1
+			backlog = 0
+		}
+	}
 
-	ctx := r.Context()
+	// The hello frame carries what the pane needs before the first line:
+	// the instance and its plain-language state (§16.6 hello{state,...}).
+	state := ""
+	if s.cfg.InstanceQuerier != nil {
+		if inst, err := s.cfg.InstanceQuerier.GetInstance(r.Context(), name); err == nil {
+			state = inst.Status
+		}
+	}
+	helloData, _ := json.Marshal(map[string]any{"instance": name, "state": state, "from": from})
+	_ = sse.WriteEvent("hello", string(helloData))
+
+	// The keepalive goroutine must stop when THIS handler returns, not when
+	// the request context eventually dies.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 	// Keepalive goroutine: sends ": keepalive" every 15s so proxies don't
 	// kill idle SSE connections.
 	go sse.RunKeepalive(ctx, sseKeepaliveInterval)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case batch, ok := <-ch:
-			if !ok {
-				_ = sse.WriteEvent("close", `{"reason":"ring closed"}`)
-				return
-			}
-			if batch.Dropped > 0 {
-				_ = sse.WriteEvent("lagged", fmt.Sprintf(`{"dropped":%d}`, batch.Dropped))
-			}
-			for _, line := range batch.Lines {
+
+	expected := from
+	err := s.cfg.Console.Stream(ctx, name, from, backlog, func(ev consolepkg.Event) {
+		switch ev.Ev {
+		case consolepkg.EvLines:
+			for _, line := range ev.Lines {
+				if expected != 0 && line.Seq > expected {
+					_ = sse.WriteEvent("gap", fmt.Sprintf(`{"skipped":%d}`, line.Seq-expected))
+				}
+				expected = line.Seq + 1
 				data, jerr := json.Marshal(line)
 				if jerr != nil {
 					continue
 				}
 				_ = sse.WriteEventWithID("line", string(data), fmt.Sprintf("%d", line.Seq))
 			}
+		case consolepkg.EvLagged, consolepkg.EvTruncated:
+			_ = sse.WriteEvent("gap", fmt.Sprintf(`{"skipped":%d,"resume_from":%d}`, ev.Dropped, ev.ResumeFrom))
+			if ev.ResumeFrom > 0 {
+				expected = ev.ResumeFrom
+			}
+		case consolepkg.EvShutdown:
+			_ = sse.WriteEvent("shutdown", fmt.Sprintf(`{"phase":%q}`, ev.Channel))
+		}
+	})
+	switch {
+	case err == nil || ctx.Err() != nil:
+		return
+	case errors.Is(err, ErrConsoleDown):
+		// A stopped server is a state, not an error: the banner says so and
+		// EventSource's own reconnect keeps watching for it to come back.
+		_ = sse.WriteEvent("stopped", string(mustJSON(map[string]string{"state": state})))
+	default:
+		_ = sse.WriteEvent("close", string(mustJSON(map[string]string{"reason": "stream error"})))
+	}
+}
+
+// mustJSON marshals values this file builds itself; a failure is a
+// programming error and renders as null rather than panicking mid-stream.
+func mustJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return []byte("null")
+	}
+	return b
+}
+
+// ── The console send box (§16.6) ──────────────────────────────────────────────
+
+// consoleStopWords are refused outright: stopping is the Stop button's job,
+// because that path walks the save ladder. The manifest's own ladder words are
+// a later addition; these four cover every bash-suite game shipped today.
+var consoleStopWords = map[string]bool{
+	"quit": true, "stop": true, "shutdown": true, "exit": true,
+}
+
+// handleConsoleSend is the browser form POST for one console line.
+func (s *Server) handleConsoleSend(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	back := "/i/" + url.PathEscape(name) + "/console"
+
+	if s.cfg.Dispatcher == nil {
+		setFlash(w, "Typing into the console is not wired in this build; on the host run: sudo gvm console "+name)
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
+
+	// console:write is operator and above (§15.2).
+	role, err := s.effectiveRole(r, name)
+	if err != nil {
+		webapi.ServeDegraded(w, r)
+		return
+	}
+	if err := authz.Check(role, authz.PermInstanceConsole); err != nil {
+		http.Error(w, "your role may not type into this console", http.StatusForbidden)
+		return
+	}
+
+	line := strings.TrimRight(r.PostFormValue("line"), "\r\n")
+	switch {
+	case strings.TrimSpace(line) == "":
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	case len(line) > consolepkg.MaxSendLine:
+		setFlash(w, fmt.Sprintf("Not sent — one line of at most %d bytes.", consolepkg.MaxSendLine))
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	case strings.ContainsAny(line, "\r\n"):
+		setFlash(w, "Not sent — one line at a time.")
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
+	// The ladder words are refused, not forwarded: a typed `quit` skips the
+	// save ladder, and "the world saved" must never depend on which box an
+	// operator clicked from (§16.6).
+	first := strings.ToLower(strings.Fields(strings.TrimSpace(line))[0])
+	if consoleStopWords[strings.Trim(first, "/")] {
+		setFlash(w, "Not sent — use the Stop button: it saves the world first.")
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
+
+	if err := s.cfg.Dispatcher.ConsoleSend(r.Context(), name, line, actorLabel(r)); err != nil {
+		if errors.Is(err, ErrControlUnavailable) {
+			setFlash(w, "Not sent — the control daemon is not reachable. Your game servers are unaffected.")
+		} else {
+			setFlash(w, "Not sent — "+err.Error())
 		}
 	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // API lifecycle mutations: 202 with the operation id only after gvmd has
@@ -489,21 +607,29 @@ func renderInstanceDetailPage(w http.ResponseWriter, sess *auth.Session, flash s
 	fmt.Fprint(w, `</main></body></html>`)
 }
 
-func renderConsolePage(w http.ResponseWriter, sess *auth.Session, name string, live bool) {
+func renderConsolePage(w http.ResponseWriter, sess *auth.Session, name string, live, canSend bool) {
 	pageHead(w, "gvm — console: "+name)
 	fmt.Fprint(w, renderNav(sess))
 	fmt.Fprintf(w, `<main><h1>Console: %s</h1>`, htmlEscape(name))
 	if !live {
-		// No hub, no stream: say so instead of rendering a pane that looks
+		// No streamer, no pane: say so instead of rendering one that looks
 		// broken (U3). The CLI path always works.
 		fmt.Fprintf(w, `<p class="flash">The live console stream is not wired in this build; on the host run: sudo gvm console %s</p>`,
 			htmlEscape(name))
 		fmt.Fprint(w, `</main></body></html>`)
 		return
 	}
+	fmt.Fprintf(w, `<p id="console-state"></p>`)
 	// console.js reads the stream URL from the data attribute; no inline JS.
 	fmt.Fprintf(w, `<div id="console" data-stream="/stream/i/%s/console"></div>`,
 		htmlEscape(name))
+	if canSend {
+		// The send box POSTs like every other mutation — same CSRF, same
+		// RBAC, same audit path through gvmd — never a WebSocket (§16.5).
+		fmt.Fprintf(w, `<form method="post" action="/i/%s/console" class="console-send">`, htmlEscape(name))
+		fmt.Fprintf(w, `<input type="text" name="line" maxlength="%d" placeholder="server command" autocomplete="off">`, consolepkg.MaxSendLine)
+		fmt.Fprint(w, `<button type="submit">Send</button></form>`)
+	}
 	fmt.Fprint(w, `<script src="/static/console.js"></script>`)
 	fmt.Fprint(w, `</main></body></html>`)
 }

@@ -25,6 +25,8 @@ func TestEveryHelpPathExitsZero(t *testing.T) {
 		"db":      {"migrate", "status", "version", "replay-spool", "check-grants"},
 		"adopt":   {"discover", "cutover", "rollback", "finalize"},
 		"host":    {"init"},
+		"edge":    {"plan", "apply"},
+		"ca":      {"export"},
 	}
 
 	check := func(t *testing.T, args ...string) {

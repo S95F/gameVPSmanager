@@ -41,8 +41,9 @@ success.
 | `gvm content sync` | **partial** — `--dry-run` decides; applying mod changes is not in this build |
 | `gvm restore` | **partial** — `--list` works; restoring a world is not in this build |
 | `gvm adopt discover` · `adopt finalize` | **works**; `adopt cutover` and `rollback` are not in this build |
-| `gvm user` · `token` | **works** — dashboard accounts (password + TOTP) and API tokens from the root CLI; `user invite` lands with the enrolment page |
+| `gvm user` · `token` | **works** — accounts (password + TOTP), single-use invites with self-enrolment, grants, and API tokens |
 | `gvm gvmd` · `gvm web` | **works** — the privileged verb gateway and the dashboard service (installed by `host init --dashboard`) |
+| `gvm edge plan` · `edge apply` · `ca export` | **works** — render, validate, swap and reload the host's own Caddy config, with rollback |
 | `gvm install` · `update` · `rebuild` | **not built** — installing, updating and rebuilding game files land later |
 | `gvm firewall` | **not built** — gvm does not manage the firewall in this build |
 | `gvm secret` · `audit` | **not built** — the secret store and audit reader land later |

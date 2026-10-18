@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/auth"
-	"github.com/S95F/gameVPSmanager/internal/console"
+	consolepkg "github.com/S95F/gameVPSmanager/internal/console"
 	"github.com/S95F/gameVPSmanager/internal/webapi"
 )
 
@@ -51,17 +51,34 @@ type InstanceDetail struct {
 	Port   int    `json:"port,omitempty"`
 }
 
-// Dispatcher is the gvmd client behind start/stop/restart. A dispatch returns
-// only after gvmd acknowledged it, with the operation id for the audit trail;
-// a held instance returns *LeaseHeldError. With no Dispatcher wired the
-// handlers answer 501 before consulting anything — a 2xx without a real
-// dispatch is fake success (U3), and TestMutationsNeedDispatchAndRole holds
-// both sides of that.
+// Dispatcher is the gvmd client behind the mutations. A lifecycle dispatch
+// returns only after gvmd acknowledged it, with the operation id for the
+// audit trail; a held instance returns *LeaseHeldError. ConsoleSend writes
+// one validated line through gvmd's console.send verb. With no Dispatcher
+// wired the handlers answer 501 before consulting anything — a 2xx without a
+// real dispatch is fake success (U3).
 type Dispatcher interface {
 	Start(ctx context.Context, name, actor string) (opID string, err error)
 	Stop(ctx context.Context, name, actor string) (opID string, err error)
 	Restart(ctx context.Context, name, actor string) (opID string, err error)
+	ConsoleSend(ctx context.Context, name, line, actor string) error
 }
+
+// ConsoleStreamer is the live console feed: it attaches to one instance's
+// console (gvm-web sits directly on the data plane, D-09), replays a backlog
+// or resumes from a sequence, and follows until ctx ends.
+type ConsoleStreamer interface {
+	// Stream calls emit per console event. from > 0 resumes after that
+	// sequence (Last-Event-ID); otherwise backlog lines are replayed (§16.6).
+	// It returns an error wrapping ErrConsoleDown when the instance's console
+	// socket is not answering — a stopped server, not a failure.
+	Stream(ctx context.Context, instance string, from uint64, backlog int, emit func(consolepkg.Event)) error
+}
+
+// ErrConsoleDown means the instance's console socket is not answering: the
+// server is stopped (or the runner is gone), which the page shows as a
+// banner, never as an error.
+var ErrConsoleDown = errors.New("web: the console socket is not answering")
 
 // LeaseHeldError is a refusal because a job holds the instance; Line is the
 // holder's one-line description, rendered verbatim (409 on the API).
@@ -106,9 +123,9 @@ type Config struct {
 	// dropped and the first login "succeeds" but never sticks (§16.2).
 	InsecureCookies bool
 
-	// Hub multiplexes Ring subscriptions to SSE connections.
-	// When nil the console SSE endpoints send one comment and close.
-	Hub *console.Hub
+	// Console is the live console feed. When nil the console page says the
+	// stream is not wired and the SSE endpoints send one comment and close.
+	Console ConsoleStreamer
 
 	// TrustedOrigins are extra Origins accepted by the browser mux's
 	// cross-origin protection — required behind a foreign proxy that does not
@@ -122,6 +139,7 @@ type Server struct {
 	sessions *auth.Middleware
 	bearer   *auth.BearerMiddleware
 	pending  *pendingStore
+	enrol    *enrolSecrets
 }
 
 // New creates a Server from cfg. It errs on a malformed trusted origin rather
@@ -137,6 +155,7 @@ func New(cfg Config) (*Server, error) {
 		sessions: auth.NewMiddleware(cfg.SessionQuerier),
 		bearer:   auth.NewBearer(cfg.TokenQuerier),
 		pending:  newPendingStore(),
+		enrol:    newEnrolSecrets(),
 	}, nil
 }
 

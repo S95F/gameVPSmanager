@@ -85,6 +85,7 @@ func runWeb(ctx context.Context, env *Env, args []string) error {
 		Authorizer:      ws,
 		InstanceQuerier: webstore.Instances{Client: client},
 		Dispatcher:      webstore.Dispatcher{Client: client},
+		Console:         webstore.Console{},
 		TrustedOrigins:  host.Spec.Edge.TrustedOrigins,
 		InsecureCookies: *dev,
 	})

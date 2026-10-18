@@ -35,17 +35,36 @@ label{display:block;margin:0.5rem 0}
 input{background:#111;color:#e0e0e0;border:1px solid #555;padding:0.3rem;border-radius:3px}
 button{background:#333;color:#e0e0e0;border:1px solid #555;padding:0.3rem 0.8rem;cursor:pointer;border-radius:3px}
 .flash{background:#2a2a1a;border:1px solid #665;padding:0.5rem 1rem;border-radius:4px}
-#console{background:#111;color:#e0e0e0;font-family:monospace;font-size:0.9rem;height:70vh;overflow-y:auto;padding:0.5rem;white-space:pre-wrap}
+#console{background:#111;color:#e0e0e0;font-family:monospace;font-size:0.9rem;height:60vh;overflow-y:auto;padding:0.5rem;white-space:pre-wrap}
+#console-state{color:#9a9;margin:0.2rem 0}
+.console-send{display:flex;gap:0.5rem;margin-top:0.5rem}
+.console-send input{flex:1;font-family:monospace}
+pre{background:#111;padding:1rem;border-radius:4px;overflow-x:auto}
 `
 
 // consoleJS attaches an EventSource to #console. The stream URL comes from
 // the data-stream attribute, so this file carries no per-instance state.
-// EventSource reconnects itself with Last-Event-ID (§16.5).
+// EventSource reconnects itself with Last-Event-ID, which the server reads as
+// the resume cursor; a gap the ring has dropped renders as "— N lines
+// skipped —" (§16.6).
 const consoleJS = `(function () {
 	'use strict';
 	var el = document.getElementById('console');
+	var state = document.getElementById('console-state');
 	if (!el || !el.dataset.stream) { return; }
+
+	function note(text) {
+		el.textContent += '— ' + text + ' —\n';
+		el.scrollTop = el.scrollHeight;
+	}
+
 	var src = new EventSource(el.dataset.stream);
+	src.addEventListener('hello', function (e) {
+		try {
+			var d = JSON.parse(e.data);
+			if (state && d.state) { state.textContent = d.state; }
+		} catch (ex) { /* skip malformed frame */ }
+	});
 	src.addEventListener('line', function (e) {
 		try {
 			var d = JSON.parse(e.data);
@@ -53,10 +72,20 @@ const consoleJS = `(function () {
 		} catch (ex) { /* skip malformed frame */ }
 		el.scrollTop = el.scrollHeight;
 	});
-	src.addEventListener('lagged', function (e) {
-		el.textContent += '\n[stream lagged; some lines were dropped]\n';
+	src.addEventListener('gap', function (e) {
+		var n = 0;
+		try { n = JSON.parse(e.data).skipped || 0; } catch (ex) {}
+		note(n + ' lines skipped');
 	});
+	src.addEventListener('stopped', function (e) {
+		var text = 'server stopped';
+		try {
+			var d = JSON.parse(e.data);
+			if (d.state) { text = d.state; }
+		} catch (ex) {}
+		if (state) { state.textContent = text; }
+	});
+	src.addEventListener('shutdown', function () { note('shutting down'); });
 	src.addEventListener('close', function () { src.close(); });
-	src.onerror = function () { el.textContent += '\n[connection lost]\n'; };
 })();
 `

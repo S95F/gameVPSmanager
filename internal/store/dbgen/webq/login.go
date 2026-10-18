@@ -112,6 +112,31 @@ func CountRecentIPFailures(ctx context.Context, pool *pgxpool.Pool, ip string, w
 	return n, nil
 }
 
+// ── Invites (read-only for the web tier; gvmd writes the enrolment) ──────────
+
+// InviteRow is what the enrolment page needs to render its form.
+type InviteRow struct {
+	Email     string
+	ExpiresAt time.Time
+	Used      bool
+}
+
+// GetInviteBySHA resolves a presented invite token's hash for the form.
+func GetInviteBySHA(ctx context.Context, pool *pgxpool.Pool, sha []byte) (InviteRow, error) {
+	var r InviteRow
+	err := pool.QueryRow(ctx, `
+		SELECT u.email, i.expires_at, i.used_at IS NOT NULL
+		  FROM user_invites i JOIN users u ON u.id = i.user_id
+		 WHERE i.token_sha256 = $1`, sha).Scan(&r.Email, &r.ExpiresAt, &r.Used)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return InviteRow{}, ErrNotFound
+	}
+	if err != nil {
+		return InviteRow{}, fmt.Errorf("webq: get invite: %w", err)
+	}
+	return r, nil
+}
+
 // ── API tokens ───────────────────────────────────────────────────────────────
 
 // APITokenRow is the bearer-auth lookup result: the token joined with the two

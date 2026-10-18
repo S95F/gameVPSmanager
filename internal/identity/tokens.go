@@ -43,6 +43,23 @@ func HashToken(plaintext string) []byte {
 	return sum[:]
 }
 
+// NewInviteToken generates a single-use enrolment invite token. Same shape as
+// an API token, its own prefix, so a pasted one can never be mistaken for a
+// bearer credential (and vice versa).
+func NewInviteToken() (*TokenParts, error) {
+	b := make([]byte, tokenRandBytes)
+	if _, err := rand.Read(b); err != nil {
+		return nil, fmt.Errorf("identity: generate invite token: %w", err)
+	}
+	plain := "gvmi_" + base64.RawURLEncoding.EncodeToString(b)
+	sum := sha256.Sum256([]byte(plain))
+	return &TokenParts{
+		Plaintext: plain,
+		SHA256:    sum[:],
+		Prefix:    plain[:8],
+	}, nil
+}
+
 // NewSessionID generates a random session ID.
 func NewSessionID() (string, error) {
 	b := make([]byte, sessionIDBytes)
