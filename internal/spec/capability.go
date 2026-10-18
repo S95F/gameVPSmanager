@@ -451,19 +451,16 @@ func (d *deriver) configEditState() {
 		d.set(s)
 		return
 	}
+	// The game HAS an editable config, so the capability is supported — but the
+	// dashboard's settings editor is not in this build, so a dashboard that
+	// rendered this as a working Config button would be lying. It is reported
+	// unavailable with the manual route until the Settings tab lands (Phase 49),
+	// so the button renders disabled with the right explanation rather than
+	// enabled over an editor that is not there (game-catalog-config-8).
 	s.Supported = true
-	s.Available = true
-	for _, cf := range d.m.Spec.Configs {
-		if cf.Owner != OwnerServer {
-			continue
-		}
-		if d.l.State != StateInactive && d.l.State != "" {
-			s.Available = false
-			s.Reason = fmt.Sprintf("%s rewrites %s when it stops; stop the server to edit it",
-				d.game(), cf.Name)
-		}
-		break
-	}
+	s.Available = false
+	s.Reason = "the dashboard settings editor is not available in this build; " +
+		"edit /etc/gvm/instances/<n>.yaml, then sudo gvm apply <n>"
 	d.set(s)
 }
 
@@ -487,7 +484,7 @@ func (d *deriver) lifecycleStates() {
 	} else {
 		reb.Available = d.managedInstall()
 		if !reb.Available {
-			reb.Reason = "adopted instance; run `gvm instance promote` first"
+			reb.Reason = "adopted instance; taking over its files is not available in this build"
 		}
 	}
 	d.set(reb)

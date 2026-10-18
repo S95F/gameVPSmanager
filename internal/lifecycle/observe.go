@@ -491,19 +491,30 @@ func (o *Observer) readLease(f Files, name string, obs *Observation) {
 		}
 		return
 	}
-	l, err := ParseLease(strings.NewReader(string(raw)))
+	// Liveness is read with the version-independent reader so that a lease a
+	// newer gvm wrote -- after an upgrade bumped LeaseProto -- is classified
+	// live or stale, not reported unreadable and then cleared out from under a
+	// running job (U17, the N-1 skew rule). "Unreadable" is reserved for a
+	// document that will not decode as JSON at all.
+	live, err := ParseLeaseLiveness(strings.NewReader(string(raw)))
 	if err != nil {
 		obs.LeaseUnreadable = true
 		obs.Problems = append(obs.Problems, Problem{Source: "lease", Path: p, Detail: err.Error()})
 		return
 	}
-	obs.Lease = l
+	// Prefer the strict, typed lease when this build understands it -- it
+	// carries the validated Kind and the Reason an operator reads -- and fall
+	// back to the liveness view for a lease from a future version.
+	obs.Lease = live.Lease()
+	if l, perr := ParseLease(strings.NewReader(string(raw))); perr == nil {
+		obs.Lease = l
+	}
 
 	alive := Unknown
-	if o.Alive != nil && l.PID > 0 {
-		alive = o.Alive(l.PID)
+	if o.Alive != nil && live.PID > 0 {
+		alive = o.Alive(live.PID)
 	}
-	obs.LeaseState = l.Classify(obs.Now, o.BootID, alive)
+	obs.LeaseState = live.Classify(obs.Now, o.BootID, alive)
 }
 
 // ParseDropInHeader reads the provenance block of a generated drop-in.

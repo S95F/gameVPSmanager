@@ -29,7 +29,7 @@ Wants=network-online.target
 Type=oneshot
 User=root
 Slice=gvm-jobs.slice
-ExecStart=/usr/local/bin/gvm job run %i
+ExecStart=/usr/bin/gvm job run %i
 
 # The template's four hours, kept: a deep verification of the newest preserve
 # archive on every instance of a full box is legitimately slow, and this is the

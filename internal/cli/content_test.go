@@ -116,6 +116,88 @@ func newContentFixture(t *testing.T) *contentFixture {
 	return f
 }
 
+// TestFirstContentAddKeepsTopComment: the first `gvm content add` on a freshly
+// created instance has no content block to edit, which used to trigger a full
+// re-marshal that discarded every hand-written comment while reporting success
+// (content-mods-4). The block is now GROWN inside the parsed document, so a
+// top-of-file comment survives the first add.
+func TestFirstContentAddKeepsTopComment(t *testing.T) {
+	h := newTestHost(t)
+	seedInstance(t, h, "pz-main", "projectzomboid", "--var", "public_name=Test")
+	// Roots do not exist yet; a missing one is recorded, not fatal, for an edit.
+	h.HostEnv.ContentRoot = func(abs string) (fs.FS, error) {
+		return nil, &fs.PathError{Op: "open", Path: abs, Err: fs.ErrNotExist}
+	}
+
+	p := h.HostEnv.paths("pz-main").Spec
+	raw, err := h.FS.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const note = "operator notes: load order is hand-tuned; do not reorder"
+	h.FS.put(p, append([]byte("# "+note+"\n"), raw...), 0o640)
+
+	code, _, errb := runWith(t, h, "", "content", "add", "pz-main", "3374983339")
+	if code != 0 {
+		t.Fatalf("content add exit %d: %s", code, errb)
+	}
+
+	got, err := h.FS.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), note) {
+		t.Errorf("the top comment did not survive the first content add:\n%s", got)
+	}
+	if !strings.Contains(string(got), "3374983339") {
+		t.Errorf("the added item is missing after the first add:\n%s", got)
+	}
+}
+
+// TestContentAddValidatesIdsBeforeWriting is Phase 43 item 1: `add` normalises
+// a Workshop URL to its item id and refuses an activation id / display name
+// before anything is written, instead of failing at the next sync with a 404.
+func TestContentAddValidatesIdsBeforeWriting(t *testing.T) {
+	setup := func(t *testing.T) *testHost {
+		h := newTestHost(t)
+		seedInstance(t, h, "pz-main", "projectzomboid", "--var", "public_name=Test")
+		h.HostEnv.ContentRoot = func(abs string) (fs.FS, error) {
+			return nil, &fs.PathError{Op: "open", Path: abs, Err: fs.ErrNotExist}
+		}
+		return h
+	}
+
+	// A Workshop URL is stored as its numeric id.
+	h := setup(t)
+	code, _, errb := runWith(t, h, "", "content", "add", "pz-main",
+		"https://steamcommunity.com/sharedfiles/filedetails/?id=2392709985")
+	if code != 0 {
+		t.Fatalf("add by URL: exit %d\n%s", code, errb)
+	}
+	got, err := h.FS.ReadFile(h.HostEnv.paths("pz-main").Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "2392709985") {
+		t.Errorf("the Workshop URL was not normalised to its id:\n%s", got)
+	}
+
+	// An activation id / display name is refused as a usage error, and nothing
+	// is written.
+	h = setup(t)
+	before := len(h.FS.writes)
+	code, _, errb = runWith(t, h, "", "content", "add", "pz-main", "ThatDamnLibrary")
+	if code != exitUsage {
+		t.Fatalf("add of an activation id: exit %d, want %d (usage)\n%s", code, exitUsage, errb)
+	}
+	if !strings.Contains(errb, "gvm content why") {
+		t.Errorf("the refusal does not point at `gvm content why`:\n%s", errb)
+	}
+	if len(h.FS.writes) != before {
+		t.Errorf("a refused add wrote to the instance file: %v", h.FS.writes[before:])
+	}
+}
+
 // writeLock lays down the recorded intent. It is built through the same
 // structs the sync path writes, so a field renamed in internal/content breaks
 // this fixture rather than silently producing a lock the CLI reads as empty.
@@ -251,8 +333,8 @@ func TestContentDiffIsThreeWay(t *testing.T) {
 	if !strings.Contains(out, "impact: download_cycle") {
 		t.Errorf("the impact line is wrong; one item is declared and not on disk:\n%s", out)
 	}
-	if !strings.Contains(out, "apply:  gvm content sync pz-main") {
-		t.Errorf("the apply line is missing:\n%s", out)
+	if !strings.Contains(out, "applying mod changes is not available in this build") {
+		t.Errorf("the diff does not say applying is unavailable in this build:\n%s", out)
 	}
 }
 

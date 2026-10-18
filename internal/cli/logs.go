@@ -1,7 +1,7 @@
 // `gvm logs` — the console log and the shutdown record, which are the two
 // files an operator actually wants at 2am.
 //
-// The console does NOT go to journald (section 11.3): journald's default rate
+// The console does NOT go to journald: journald's default rate
 // limit would put holes in exactly the post-mortem you need, so the runner
 // writes /var/log/gvm/<name>/console.log itself and rotates it. This command is
 // therefore a file reader, not a journal client, and `journalctl -u gvm@<name>`
@@ -57,7 +57,7 @@ func parseLogsArgs(env *Env, args []string) (logsOptions, error) {
 	fs.BoolVar(&opt.Shutdown, "shutdown", false, "print shutdown.jsonl instead of the console log")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return logsOptions{}, flagErr(err)
 	}

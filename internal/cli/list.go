@@ -77,14 +77,31 @@ func runList(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
-	sts := lifecycle.Statuses(rep)
+	all := lifecycle.Statuses(rep)
+	var probs []lifecycle.Status
 	if opt.Problems {
-		sts = onlyProblems(sts)
+		probs = onlyProblems(all)
 	}
-	if opt.JSON {
-		return writeJSON(env.Stdout, sts)
+	switch {
+	case opt.JSON && opt.Problems:
+		if err := writeJSON(env.Stdout, probs); err != nil {
+			return err
+		}
+	case opt.JSON:
+		if err := writeJSON(env.Stdout, all); err != nil {
+			return err
+		}
+	case opt.Problems:
+		printProblems(env.Stdout, all, probs, rep)
+	default:
+		printList(env.Stdout, all, rep)
 	}
-	printList(env.Stdout, sts, rep)
+	// `list --problems` that found any exits 4 (checked and found something), so
+	// a monitoring script can act on "something is unhealthy" by exit code (U8).
+	// A plain `list` always exits 0.
+	if opt.Problems && len(probs) > 0 {
+		return checked(fmt.Errorf("%d instance(s) need attention", len(probs)))
+	}
 	return nil
 }
 
@@ -99,6 +116,32 @@ func onlyProblems(sts []lifecycle.Status) []lifecycle.Status {
 		}
 	}
 	return out
+}
+
+// printProblems is `gvm list --problems`: only the instances that need a
+// person, or — when none do — a single line that says so and still accounts for
+// the host, so a clean result is a positive statement rather than a blank.
+func printProblems(w io.Writer, all, probs []lifecycle.Status, rep lifecycle.SweepReport) {
+	if len(probs) == 0 {
+		// "no problems" and "no instances" read the same as a blank; this says
+		// which, and how many servers were actually checked (day2-ops-14).
+		sum := lifecycle.Summarise(all)
+		fmt.Fprintf(w, "\nnothing needs attention (%s, %d running)\n",
+			plural(len(all), "instance"), sum.Running)
+	} else {
+		fmt.Fprintln(w)
+		for _, s := range probs {
+			fmt.Fprintf(w, "  %s\n", s.Line())
+		}
+		// The summary is of the WHOLE host, not just the problem rows: an
+		// operator wants "2 of 6 need attention", not a count of a list they can
+		// already see.
+		fmt.Fprintf(w, "\n  %s\n", lifecycle.Summarise(all))
+		fmt.Fprint(w, "  → gvm status <name> for details; gvm doctor for host checks\n")
+	}
+	for _, p := range rep.Problems {
+		fmt.Fprintf(w, "  ! %s: %s\n", p.Source, strings.TrimSpace(p.Detail))
+	}
 }
 
 func printList(w io.Writer, sts []lifecycle.Status, rep lifecycle.SweepReport) {

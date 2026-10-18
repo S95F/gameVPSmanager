@@ -644,8 +644,8 @@ func TestMaterializeRefusesVerbatimWithNothingToPreserve(t *testing.T) {
 	if !errors.Is(err, content.ErrInvalidLock) {
 		t.Fatalf("error = %v, want content.ErrInvalidLock", err)
 	}
-	if !strings.Contains(err.Error(), "gvm content import") {
-		t.Errorf("the refusal does not name the way out: %v", err)
+	if !strings.Contains(err.Error(), "not available in this build") {
+		t.Errorf("the refusal does not say recording the live list is unavailable: %v", err)
 	}
 }
 

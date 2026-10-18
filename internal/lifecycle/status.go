@@ -247,14 +247,22 @@ func severityMark(s Severity) string {
 }
 
 // Summary is the one line that follows a `gvm list`.
+//
+// Busy and Stopped are split because "it is in the middle of something" and "it
+// is deliberately off" are different answers to "why is it not running": a box
+// with three servers starting is not a box with three servers an operator
+// turned off, and a summary that collapsed the two would read the same for both.
 type Summary struct {
 	Total    int `json:"total"`
 	Running  int `json:"running"`
+	Busy     int `json:"busy"`
 	Stopped  int `json:"stopped"`
 	Problems int `json:"problems"`
 }
 
-// Summarise counts a set of statuses.
+// Summarise counts a set of statuses into the four buckets `gvm list` reports.
+// Every status lands in exactly one: running, needs-a-person (SevProblem),
+// in-flight (Transitional), or otherwise not running (stopped, declared).
 func Summarise(ss []Status) Summary {
 	var s Summary
 	s.Total = len(ss)
@@ -264,6 +272,8 @@ func Summarise(ss []Status) Summary {
 			s.Running++
 		case st.Phase.Severity() == SevProblem:
 			s.Problems++
+		case st.Phase.Transitional():
+			s.Busy++
 		default:
 			s.Stopped++
 		}
@@ -272,8 +282,8 @@ func Summarise(ss []Status) Summary {
 }
 
 func (s Summary) String() string {
-	return fmt.Sprintf("%d instances, %d running, %d stopped, %d needing attention",
-		s.Total, s.Running, s.Stopped, s.Problems)
+	return fmt.Sprintf("%d running, %d busy, %d stopped, %d needing attention",
+		s.Running, s.Busy, s.Stopped, s.Problems)
 }
 
 // Statuses projects a whole sweep, sorted by name.

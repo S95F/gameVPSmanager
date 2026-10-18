@@ -1,8 +1,8 @@
 // `gvm job` — the verb systemd invokes, and the one place a job is assembled.
 //
-// `gvm-job@.service` runs `gvm job run %i` and nothing else (section 7.5), so
+// `gvm-job@.service` runs `gvm job run %i` and nothing else, so
 // this file is the whole of what a nightly is: resolve the slug into an
-// instance, a job name and a kind (D-13), assemble the environment, hand it to
+// instance, a job name and a kind, assemble the environment, hand it to
 // internal/jobs and print what came back. Every operator verb that drives a
 // job -- `gvm backup`, `gvm update`, `gvm rebuild`, `gvm restore` -- arrives at
 // the same assembly through buildJobEnv, because a second assembly would be a
@@ -61,7 +61,7 @@ var jobSubs = []struct {
 func runJob(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		jobUsage(env.Stderr)
-		return errors.New("name a subcommand")
+		return usageErr(errors.New("name a subcommand"))
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -74,7 +74,7 @@ func runJob(ctx context.Context, env *Env, args []string) error {
 		}
 	}
 	jobUsage(env.Stderr)
-	return fmt.Errorf("unknown subcommand %q", args[0])
+	return usageErr(fmt.Errorf("unknown subcommand %q", args[0]))
 }
 
 func jobUsage(w io.Writer) {
@@ -86,7 +86,7 @@ func jobUsage(w io.Writer) {
 	_ = tw.Flush()
 	fmt.Fprintf(w, "\n  A slug is \"<instance>_<job>\" and an EMPTY instance part is how a\n"+
 		"  host-level job is spelt: %s. Neither half may contain '_',\n"+
-		"  so there is exactly one reading of exactly one separator (D-45).\n",
+		"  so there is exactly one reading of exactly one separator.\n",
 		strings.Join(hostSlugs(), ", "))
 }
 
@@ -126,28 +126,54 @@ type jobOptions struct {
 }
 
 // bind puts the shared flags on one subcommand's flag set.
+//
+// The scheduling flags — --trigger, --lease-for, --on-failure — are NOT here.
+// They are the unit's knobs, not an operator's: a nightly's trigger is "timer"
+// because the timer ran it, and an operator typing `gvm backup pz-main` is a
+// CLI trigger whatever they pass. So those three live on `gvm job run` alone
+// (bindSchedule), hidden even there, and the operator verbs default them
+// through trigger()/leaseFor()/policy() without ever showing a flag that only
+// invites a wrong value in the audit ledger.
 func (o *jobOptions) bind(fs *flag.FlagSet, defTrigger jobs.Trigger) {
+	o.Trigger = string(defTrigger)
+	fs.StringVar(&o.Reason, "reason", "", "why, recorded in the audit row and the lease")
+	fs.DurationVar(&o.Budget, "budget", 0,
+		"bound a shutdown ladder this job runs (default: the instance's shutdown.budget)")
+	fs.BoolVar(&o.JSON, "json", false, "print the run record as JSON")
+	fs.StringVar(&o.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
+}
+
+// bindSchedule adds the unit-facing scheduling flags. Only `gvm job run` calls
+// it — every job unit runs `gvm job run %i` and needs to say which trigger and
+// lease the schedule implies — and even there they are hidden from --help
+// (flagUsage lists them in the hidden set) so a human is not nudged to record
+// a run as something it was not.
+func (o *jobOptions) bindSchedule(fs *flag.FlagSet, defTrigger jobs.Trigger) {
 	fs.StringVar(&o.Trigger, "trigger", string(defTrigger),
 		"what caused this run, as the ledger records it: "+strings.Join(triggerNames(), " | "))
 	fs.StringVar(&o.Policy, "on-failure", "",
 		"override the kind's failure policy: fail | start_anyway | warn")
-	fs.StringVar(&o.Reason, "reason", "", "why, recorded in the audit row and the lease")
-	fs.DurationVar(&o.Budget, "budget", 0,
-		"bound a shutdown ladder this job runs (default: the instance's shutdown.budget)")
 	fs.DurationVar(&o.Lease, "lease-for", jobs.DefaultLeaseFor,
 		"the lease's self-expiry backstop")
-	fs.BoolVar(&o.JSON, "json", false, "print the run record as JSON")
-	fs.StringVar(&o.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 }
 
 // bindConfirm adds section 16.4's flags. Only the destructive verbs call it:
 // a `--confirm` on `gvm backup` would suggest there was something to confirm.
 func (o *jobOptions) bindConfirm(fs *flag.FlagSet) {
 	fs.StringVar(&o.Confirm, "confirm", "",
-		"the instance name, typed, as the destructive-action contract requires (section 16.4)")
+		"the instance name, typed, as the destructive-action contract requires")
 	fs.BoolVar(&o.Yes, "yes", false,
 		"automation: assert that a human already decided. Refused over the API, which must "+
 			"carry the typed name instead")
+}
+
+// timerTriggerAtTerminal reports whether a `--trigger timer` should be refused.
+// It is a pure function so the decision is tested without faking a terminal: a
+// timer trigger means systemd ran the job, so it is wrong only when a human is
+// at a terminal (a TTY) and not under a unit; a script (no TTY) and a real unit
+// run (INVOCATION_ID set) are both fine.
+func timerTriggerAtTerminal(trigger string, underUnit, isTTY bool) bool {
+	return trigger == string(jobs.TriggerTimer) && !underUnit && isTTY
 }
 
 func triggerNames() []string {
@@ -219,14 +245,32 @@ func runJobRun(ctx context.Context, env *Env, args []string) error {
 	fs.Usage = func() {
 		fmt.Fprint(env.Stderr, "Usage: gvm job run <instance>_<job>\n\n"+
 			"Resolves the slug through /etc/gvm/jobs/<slug>.json and runs it.\n\n")
-		fs.PrintDefaults()
+		// The scheduling flags are the unit's, not the operator's: hide them.
+		flagUsage(env.Stderr, fs, "trigger", "lease-for", "on-failure")
 	}
-	// A unit-invoked run is a timer run until something says otherwise.
-	opt.bind(fs, jobs.TriggerTimer)
+	// The default trigger is derived from how the run was invoked: systemd sets
+	// INVOCATION_ID for every unit, so a run under a unit is a timer run and an
+	// interactive run is a CLI run. This is what makes the audit ledger answer
+	// "was anybody watching" correctly without the operator setting a flag.
+	underUnit := env.Getenv("INVOCATION_ID") != ""
+	defTrigger := jobs.TriggerCLI
+	if underUnit {
+		defTrigger = jobs.TriggerTimer
+	}
+	opt.bind(fs, defTrigger)
+	opt.bindSchedule(fs, defTrigger)
 	opt.bindConfirm(fs)
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return flagErr(err)
+	}
+	// A human at a terminal who types --trigger timer would write a row that
+	// claims systemd ran this. Refuse it: the run would succeed but lie to the
+	// one question the ledger exists to answer. A script (no TTY) may still pass
+	// it, and a real unit run is exactly when it is right.
+	if timerTriggerAtTerminal(opt.Trigger, underUnit, stdoutIsTerminal(env)) {
+		return usageErr(errors.New("--trigger timer says systemd ran this job; at a terminal, " +
+			"drop the flag — the run records as cli"))
 	}
 	if len(pos) != 1 {
 		fs.Usage()
@@ -281,6 +325,23 @@ func runOneJob(ctx context.Context, env *Env, verb string, opt jobOptions,
 	} else {
 		fmt.Fprint(env.Stdout, "\n"+jr.Report())
 		printJobTail(env.Stdout, jr)
+	}
+
+	// `gvm job run` inside a systemd unit keeps a UNIT contract, not the
+	// operator exit-code table (rule 6). The guard and every gvm-job@ unit run
+	// `gvm job run %i` as a oneshot: under the table a routine skip (which would
+	// be "nothing to report") or a degraded pass would leave the oneshot FAILED
+	// and could fire OnFailure=. So when INVOCATION_ID is set, ok/skipped/
+	// degraded/cancelled exit 0 and only a genuine failure exits 1. An unwired
+	// kind never produced a jr and its avail error still exits 3 through Main.
+	if verb == "job" && env.Getenv("INVOCATION_ID") != "" {
+		if jr.State == jobs.StateFailed {
+			if runErr == nil {
+				runErr = fmt.Errorf("the job failed")
+			}
+			return runErr
+		}
+		return nil
 	}
 	return runErr
 }
@@ -337,7 +398,7 @@ func buildJobEnv(ctx context.Context, env *Env, h *HostEnv, res jobs.Resolved,
 	}
 	if err := instance.ValidateJobName(res.Slug.Job); err != nil {
 		return nil, fmt.Errorf("%w (the job action is %q; a job NAME may not contain '_' "+
-			"because the slug separator is one -- D-45)", err, res.Action)
+			"because the slug separator is one)", err, res.Action)
 	}
 
 	jenv := &jobs.Env{
@@ -539,12 +600,21 @@ func jobRows(h *HostEnv, only string) ([]jobRow, error) {
 	add := func(r jobRow, kind lifecycle.JobKind) {
 		r.Kind = string(kind)
 		if runner, err := jobs.Lookup(kind); err == nil {
-			r.Runnable, r.Stops = true, runner.Stops
+			r.Stops = runner.Stops
 			if r.Policy == "" {
 				r.Policy = string(runner.Policy)
 			}
+		}
+		// Whether a timer would actually DO anything is engineWired's call, not
+		// jobs.Lookup's: the update, content_sync and rebuild kinds all have a
+		// runner registered, but their engine (the provider context, the
+		// content apply adapter) is not in this build, so a nightly that fires
+		// one fails every night. engineWired is the one predicate that knows,
+		// and it is the same answer `gvm apply` and the run itself give.
+		if ok, why := engineWired(kind, nil, nil); ok {
+			r.Runnable = true
 		} else {
-			r.Why = err.Error()
+			r.Why = "cannot run in this build: " + why
 		}
 		out = append(out, r)
 	}

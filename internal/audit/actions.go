@@ -28,6 +28,7 @@ type Action string
 const (
 	InstanceStop    Action = "instance.stop"
 	InstanceStart   Action = "instance.start"
+	InstanceRestart Action = "instance.restart"
 	InstanceRebuild Action = "instance.rebuild"
 	InstanceApply   Action = "instance.apply"
 
@@ -46,6 +47,7 @@ const (
 
 	BackupCreate  Action = "backup.create"
 	BackupRestore Action = "backup.restore"
+	BackupDelete  Action = "backup.delete"
 
 	FirewallApply Action = "firewall.apply"
 	JobRun        Action = "job.run"
@@ -103,6 +105,15 @@ var allowedParams = map[Action]Spec{
 	},
 	InstanceStart: {
 		Params:   []string{"reason", "ready_after_sec"},
+		Instance: true,
+	},
+	// instance.restart is its own action, not instance.start: a row that says
+	// "started" for a restart hides that the server went down and back up, which
+	// is exactly what an operator reading the trail after a blip needs to see.
+	// The hostops restart carries the operator's reason and nothing a start does
+	// not.
+	InstanceRestart: {
+		Params:   []string{"reason"},
 		Instance: true,
 	},
 	// archive_path/sha/bytes are required on success because "archive before
@@ -188,6 +199,15 @@ var allowedParams = map[Action]Spec{
 	BackupRestore: {
 		Params:   []string{"path", "sha256", "target"},
 		Required: []string{"path", "sha256"},
+		Instance: true,
+	},
+	// backup.delete is the one explicit removal of an archive, including a
+	// preserve one that no retention path may touch. path/sha256/bytes identify
+	// exactly which bytes were removed, so the row answers "what did I delete"
+	// as precisely as backup.create answered "what did I write".
+	BackupDelete: {
+		Params:   []string{"path", "sha256", "bytes"},
+		Required: []string{"path", "sha256", "bytes"},
 		Instance: true,
 	},
 	// ssh_port is required because section 17.5's promise -- a computed rule

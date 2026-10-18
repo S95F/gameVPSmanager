@@ -253,7 +253,7 @@ func Acquire(path string, h lifecycle.Holder, o LockOptions) (*Lock, error) {
 // another.
 func (l *Lock) writeHolder() error {
 	body := l.holder.Line() + "\n" +
-		"# gvm job lock. The line above is pid:unit:kind:started_at (D-30).\n" +
+		"# gvm job-lock file. The line above is pid:unit:kind:started_at (D-30).\n" +
 		"# It is advisory (flock); deleting this file does not release anything.\n"
 	if err := l.f.Truncate(0); err != nil {
 		return fmt.Errorf("%w: %s: %w", ErrLock, l.path, err)

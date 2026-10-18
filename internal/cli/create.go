@@ -7,17 +7,16 @@
 // is what makes the file reviewable before anything on the box changes.
 //
 // The two decisions it does make are the ones that cannot be made later.
-// metadata.uid is a UUIDv7 generated once and never again (D-25) — grants hang
+// metadata.uid is a UUIDv7 generated once and never again — grants hang
 // off it, so a second identity for the same server is a silent loss of every
 // permission row. And the port set is MATERIALISED rather than recomputed
-// (section 6.7): a number written into a file is stable, greppable and immune
+//: a number written into a file is stable, greppable and immune
 // to an allocator change moving a live server on the next apply.
 
 package cli
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -103,13 +102,20 @@ func (p portPins) Set(s string) error {
 func parseCreateArgs(env *Env, args []string) (createOptions, error) {
 	opt := createOptions{Vars: map[string]string{}, Enabled: true}
 
+	var dryAlias, noEnabled bool
 	fs := flag.NewFlagSet("gvm create", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	fs.Usage = func() {
 		fmt.Fprint(env.Stderr, "Usage: gvm create <instance> --game <game-id> [--var KEY=VALUE]...\n\n"+
 			"Writes /etc/gvm/instances/<instance>.yaml and nothing else.\n"+
 			"Run `gvm apply <instance>` next to put it on the host.\n\n")
-		fs.PrintDefaults()
+		// --user and --dry are hidden: --user only ever names the managed
+		// account (any other value is redirected to `gvm adopt`), and --dry is
+		// the alias of --dry-run kept for muscle memory.
+		flagUsage(env.Stderr, fs, "user", "dry")
+		printExamples(env.Stderr,
+			`sudo gvm create valheim-1 --game valheim --var public_name="Friends"`,
+			`sudo gvm create pz-main --game projectzomboid --pin-port game=16261`)
 	}
 	fs.StringVar(&opt.Game, "game", "", "game id from `gvm game list` (required)")
 	fs.Var(keyValues{vals: opt.Vars, order: &opt.VarOrder}, "var", "set a manifest variable, KEY=VALUE (repeatable)")
@@ -119,14 +125,22 @@ func parseCreateArgs(env *Env, args []string) (createOptions, error) {
 	fs.StringVar(&opt.Paths.Data, "data", "", "world/save directory (default: /srv/gvm/<instance>/data)")
 	fs.StringVar(&opt.Paths.Home, "home", "", "the GAME's HOME (default: /srv/gvm/<instance>)")
 	fs.BoolVar(&opt.Enabled, "enabled", true, "start at boot")
+	fs.BoolVar(&noEnabled, "no-enabled", false, "do not start at boot (the off switch for --enabled)")
 	fs.BoolVar(&opt.Unapproved, "unapproved-override", false,
 		"use an /etc/gvm/games override that has no recorded sha256 approval")
 	fs.BoolVar(&opt.DryRun, "dry-run", false, "print the YAML that would be written and write nothing")
+	fs.BoolVar(&dryAlias, "dry", false, "alias for --dry-run")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return createOptions{}, flagErr(err)
+	}
+	// --dry is --dry-run; --no-enabled is the off switch for --enabled. Fold
+	// the aliases into the one option each downstream code reads.
+	opt.DryRun = opt.DryRun || dryAlias
+	if noEnabled {
+		opt.Enabled = false
 	}
 	name, err := oneInstance(pos)
 	if err != nil {
@@ -136,7 +150,10 @@ func parseCreateArgs(env *Env, args []string) (createOptions, error) {
 	opt.Name = name
 	if opt.Game == "" {
 		fs.Usage()
-		return createOptions{}, errors.New("--game is required; `gvm game list` shows what this box can run")
+		return createOptions{}, usageErr(&userError{
+			Msg:  "--game is required",
+			Hint: "`gvm game list` shows what this box can run",
+		})
 	}
 	if !spec.ValidGameID(opt.Game) {
 		return createOptions{}, fmt.Errorf("%q is not a game id", opt.Game)
@@ -313,6 +330,14 @@ func recommendedJobs(m *spec.Manifest) map[string]spec.Job {
 		if action == "" {
 			action = name
 		}
+		// A game with mods cannot run an `update` in this build — the mod
+		// engine is not here — and its nightly exists for the restart that
+		// clears heap pressure (Project Zomboid), so write it as a ladder
+		// restart rather than a nightly that would fail every night. Phase 44/45
+		// restore the update action. A content-free game keeps `update`.
+		if action == "update" && moddedUpdateUnavailable(m) {
+			action = "restart"
+		}
 		out[name] = spec.Job{
 			Schedule:        "*-*-* " + rj.At + ":00",
 			Action:          action,
@@ -321,6 +346,15 @@ func recommendedJobs(m *spec.Manifest) map[string]spec.Job {
 		}
 	}
 	return out
+}
+
+// moddedUpdateUnavailable reports whether a manifest's `update` nightly cannot
+// run in this build because the game declares mods and the mod engine is not
+// here. It keys on a non-empty content block (Project Zomboid, the Minecraft
+// manifests), not on the engine wiring, so a content-free game's update
+// nightly is left intact for the install engine to run.
+func moddedUpdateUnavailable(m *spec.Manifest) bool {
+	return len(m.Spec.Content) > 0
 }
 
 // backupKeep is the retention an instance is created with.
@@ -404,6 +438,38 @@ func createExec(ctx context.Context, env *Env, h *HostEnv, t Transport, opt crea
 	}
 	if diags.HasErrors() {
 		return fmt.Errorf("%s does not validate:\n%s", opt.Game, diags.Errors())
+	}
+	if gameIsTemplate(m) {
+		return refused(&userError{
+			Msg:  opt.Game + " is a template, not a game to create directly",
+			Hint: "copy it to /etc/gvm/games/" + opt.Game + ".yaml and change metadata.id first",
+		})
+	}
+	// The EULA gate (D-22): a game behind a licence agreement is not created
+	// until the operator accepts it themselves, by setting the manifest's
+	// acceptance var true. gvm never accepts it for them, and no hook does.
+	if l := m.Spec.Legal; l != nil && l.EULA != nil && opt.Vars[l.EULA.Var] != "true" {
+		msg := "this game requires accepting its EULA before it can be created"
+		if l.EULA.Prompt != "" {
+			msg = l.EULA.Prompt
+		}
+		hint := "then add --var " + l.EULA.Var + "=true"
+		if l.EULA.URL != "" {
+			hint = "read " + l.EULA.URL + ", " + hint
+		}
+		return refused(&userError{Msg: msg, Hint: hint})
+	}
+
+	// The allocation below reads reserved_ports from /etc/gvm/gvm.yaml, so a
+	// create cannot proceed on a config it cannot trust: a typo'd key is
+	// silently ignored by YAML and would hand out a port the operator meant to
+	// reserve. Refuse until the file is fixed (read-only commands only warn).
+	if _, cfgDiags := hostConfig(h); cfgDiags.HasErrors() {
+		bad := cfgDiags.Errors()[0]
+		return refused(&userError{
+			Msg:  "/etc/gvm/gvm.yaml does not validate, so port allocation cannot be trusted",
+			Hint: "fix it, then retry: " + strings.TrimSpace(bad.Msg),
+		})
 	}
 
 	occ, notes, err := buildOccupancy(ctx, h, opt.Name)
@@ -506,6 +572,21 @@ func printCreated(w io.Writer, inst *spec.Instance, m *spec.Manifest, occ *ports
 	}
 	for _, n := range notes {
 		fmt.Fprintf(w, "           %s\n", n)
+	}
+
+	// Say plainly when a recommended `update` nightly was written as a restart,
+	// so the operator is not surprised that the nightly does not update.
+	if moddedUpdateUnavailable(m) {
+		for name, rj := range m.Spec.Jobs {
+			action := rj.Action
+			if action == "" {
+				action = name
+			}
+			if action == "update" {
+				fmt.Fprintf(w, "  nightly   %s: restart through the ladder (updating a game with "+
+					"mods needs the mod engine, which this build does not have)\n", name)
+			}
+		}
 	}
 
 	if refs, err := spec.ScanManifestRefs(m); err == nil && len(refs.Secrets) > 0 {

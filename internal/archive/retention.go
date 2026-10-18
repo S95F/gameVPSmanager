@@ -103,6 +103,13 @@ func Prune(ctx context.Context, dir string, p Policy, after *Ref) (*PruneResult,
 		case e.Class == ClassPreserve:
 			res.Preserved = append(res.Preserved, e.File)
 			res.PreservedBytes += e.Bytes
+		case e.Instance != "" && after.Instance != "" && e.Instance != after.Instance:
+			// A shared backup.dir can hold several instances' archives. Retention
+			// for one instance must never reclaim another's: the fresh archive
+			// names whose history this prune is extending, and an archive from a
+			// different instance is simply not this run's to delete
+			// (offsite-backup-dr-2).
+			res.Unmanaged = append(res.Unmanaged, e.File)
 		case e.Legacy || e.Class != ClassRoutine:
 			// Not ours. backup.sh's tarballs, a file somebody scp'd in, an
 			// archive whose class did not parse. Deleting somebody else's
@@ -269,4 +276,26 @@ func DeleteArchive(path string) error {
 		}
 	}
 	return os.Remove(path)
+}
+
+// ForceDeleteArchive removes an archive and its preserve sidecar regardless of
+// class. It is the one deliberate, operator-gated bypass of the never-prune
+// rule DeleteArchive enforces: `gvm backup delete` reaches it only after the
+// operator has typed the instance name, so the invariant "a preserve archive is
+// removed only by explicit human action" is kept intact — the human is typing a
+// name to gvm instead of reaching for rm, which is strictly safer because gvm
+// can still refuse to remove the last verified copy of a live world.
+//
+// It is idempotent: a missing archive and a missing sidecar are both success,
+// so a delete interrupted after the tarball went but before the pin did
+// completes cleanly on a second run rather than erroring on the half it already
+// finished.
+func ForceDeleteArchive(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err := os.Remove(PreserveSidecarPath(path)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }

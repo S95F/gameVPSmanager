@@ -88,7 +88,7 @@ var decls = map[Verb]Decl{
 		Summary: "run the shutdown ladder and hold the instance down",
 	},
 	VerbRestart: {
-		Verb: VerbRestart, Host: hostops.VerbUnitRestart, Audit: audit.InstanceStart,
+		Verb: VerbRestart, Host: hostops.VerbUnitRestart, Audit: audit.InstanceRestart,
 		Hold: HoldClear, Wants: PhaseRunning,
 		Summary: "restart the instance as one systemd job",
 	},
@@ -201,9 +201,12 @@ func Allowed(v Verb, o Observation, ver Verdict) error {
 	case RulePinMismatch:
 		// The runner compares the pin itself and exits 64 (D-17). Refusing
 		// here is the same refusal, one step earlier, with a hint instead of
-		// a unit stuck in "restart prevented".
+		// a unit stuck in "restart prevented". Never a command that moves the
+		// pin: restoring a hand-edited pin is the fix, and moving to a newer
+		// manifest revision is not available in this build.
 		return no("the pinned manifest does not match what the instance records",
-			"gvm manifest upgrade "+o.Name+" --dry", false)
+			"if the pin was edited by hand, restore it, then: sudo gvm apply "+o.Name+
+				" --diff; moving to a newer manifest revision is not available in this build", false)
 	case RulePinMissing:
 		return no(manifestLockPath(o.Name)+" is missing", "gvm apply "+o.Name, false)
 	case RuleNeverApplied:
@@ -217,9 +220,10 @@ func Allowed(v Verb, o Observation, ver Verdict) error {
 	if o.Installed == No {
 		// Overridable: the sentinel is the manifest's claim about the install,
 		// and an operator who knows the claim is wrong (a renamed binary after
-		// an engine update) should be able to try anyway.
+		// an engine update) should be able to try anyway. Not pointed back at
+		// `gvm install`, which is not available in this build.
 		return no("the provider's install sentinel is not on disk",
-			"gvm install "+o.Name, true)
+			"game files are not installed, and installing them is not available in this build", true)
 	}
 	return nil
 }

@@ -285,6 +285,40 @@ func TestObserveClassifiesTheLeaseWhereTheEvidenceIs(t *testing.T) {
 	}
 }
 
+// TestObserveDoesNotCallAFutureLeaseUnreadable is the observer side of the N-1
+// skew rule (U17). Before it, a lease a newer gvm wrote -- a proto this build
+// had never seen -- failed ParseLease, so the instance was reported "failed"
+// and the printed fix was `gvm job clear`, which deletes the lease of a job
+// that is still running. Now the observer classifies it from the frozen holder
+// fields: the instance reads LIVE, and job clear's own LeaseLive guard protects
+// it.
+func TestObserveDoesNotCallAFutureLeaseUnreadable(t *testing.T) {
+	const boot = "5f1c0b3e-7a24-4b8e-9c31-2d8e6a4f0b17"
+	future := `{"proto":2,"instance":"valheim-1","kind":"update",` +
+		`"unit":"gvm-job@valheim-1_nightly.service","pid":900,"boot_id":"` + boot + `",` +
+		`"started_at":"2026-09-04T18:55:00Z"}`
+
+	f, _ := fullHost(t)
+	f.put(LeasePath("valheim-1"), future)
+	o := &Observer{
+		FS: f, BootID: boot, Alive: aliveFunc(900),
+		Now: func() time.Time { return at("2026-09-04T19:00:00Z") },
+	}
+	obs, err := o.Observe(context.Background(), "valheim-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs.LeaseUnreadable {
+		t.Error("a future-proto lease was called unreadable; its holder fields are perfectly readable")
+	}
+	if obs.LeaseState != LeaseLive {
+		t.Fatalf("LeaseState = %s, want live: the holder (pid 900, this boot) is alive", obs.LeaseState)
+	}
+	if obs.Lease == nil || obs.Lease.PID != 900 {
+		t.Fatalf("the holder was not carried through for display: %+v", obs.Lease)
+	}
+}
+
 // TestListReadsEtcAndNothingElse.
 //
 // The sibling files in /etc/gvm/instances are the trap: a `.lock.json`, a

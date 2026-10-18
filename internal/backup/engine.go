@@ -787,9 +787,15 @@ func (e *Engine) dropClone() {
 		return
 	}
 	if err := e.cfg.FS.RemoveAll(p); err != nil {
-		e.note("the snapshot clone %s could not be removed (%v); the next run's startup sweep "+
-			"will take it", p, err)
-		return
+		// A read-only btrfs subvolume clone needs the subvolume-destroy ioctl,
+		// not RemoveAll. Try it before giving up, so the clone is actually
+		// reclaimed now rather than left for a sweep that (before this) could
+		// not remove it either (offsite-backup-dr-10).
+		if derr := destroyBtrfsSubvolume(p); derr != nil {
+			e.note("the snapshot clone %s could not be removed (%v; subvolume destroy: %v)",
+				p, err, derr)
+			return
+		}
 	}
 	e.mu.Lock()
 	e.snapRes.ClonePath = ""

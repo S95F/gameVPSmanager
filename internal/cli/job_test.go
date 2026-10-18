@@ -185,7 +185,7 @@ func jobHost(t *testing.T) (*testHost, *fakeJobSuper, *fakeJobLocker) {
 // end to end, with only the host faked.
 //
 // jobs.Sweep, lifecycle.Reconciler and the whole engine are real here. On a box
-// with no instances the correct answer is `skipped` and NOT `ok` (D-43): a
+// with no instances the correct answer is `skipped` and NOT `ok`: a
 // `guard` run that actually recovered something has to be findable in a month
 // of five-minute rows.
 func TestTheGuardJobRunsThroughTheRealSweep(t *testing.T) {
@@ -563,6 +563,47 @@ func TestJobListAnswersWhatThisBoxRunsAndWhatItCannot(t *testing.T) {
 	}
 }
 
+// TestJobListPZNightlyIsARunnableRestart: Project Zomboid's recommended nightly
+// is declared as an `update`, but a game with mods cannot run an update in this
+// build, and PZ's nightly exists for the restart that clears heap pressure. So
+// create writes it as a `restart`, and `gvm job list` shows a runnable restart
+// row — not an `update` row that fires nightly against a kind nothing runs
+// (cli-ergonomics-1). Phase 44 restores the update action.
+func TestJobListPZNightlyIsARunnableRestart(t *testing.T) {
+	h, _, _ := jobHost(t)
+	seedJobbableInstance(t, h, "pz-main")
+
+	code, out, errb := runWith(t, h, "", "job", "list", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errb)
+	}
+	var rows []jobRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	for _, r := range rows {
+		if r.Kind == "update" {
+			t.Errorf("pz-main still has an update row; its nightly should be a restart: %+v", r)
+		}
+	}
+	var sawNightly bool
+	for _, r := range rows {
+		if r.Job != "nightly" {
+			continue
+		}
+		sawNightly = true
+		if r.Kind != "restart" {
+			t.Errorf("pz-main nightly kind = %q, want restart", r.Kind)
+		}
+		if !r.Runnable {
+			t.Errorf("pz-main's restart nightly should be runnable: %+v", r)
+		}
+	}
+	if !sawNightly {
+		t.Fatalf("no nightly row for pz-main; rows = %s", out)
+	}
+}
+
 // TestJobClearRefusesALiveLease.
 //
 // A live lease is a running job. Removing it lets `gvm start` race an update
@@ -608,6 +649,33 @@ func TestJobClearRefusesALiveLease(t *testing.T) {
 	}
 }
 
+// TestJobClearRefusesAFutureProtoLiveLease is the N-1 skew rule (U17) proven
+// end to end. A lease a newer gvm wrote carries a proto this build has never
+// seen. Before the skew rule, ParseLease refused it, the observer called the
+// instance "failed/unreadable", and the printed fix -- `gvm job clear` -- then
+// removed it, deleting the lease of a job that was still running. Now the
+// holder fields classify it LIVE, so the same command refuses.
+func TestJobClearRefusesAFutureProtoLiveLease(t *testing.T) {
+	h, _, _ := jobHost(t)
+	seedJobbableInstance(t, h, "pz-main")
+
+	future := `{"proto":2,"instance":"pz-main","kind":"update",` +
+		`"unit":"gvm-job@pz-main_nightly.service","pid":4242,"boot_id":"` + h.HostEnv.BootID + `",` +
+		`"started_at":"` + testTime.UTC().Format(time.RFC3339Nano) + `"}`
+	h.FS.put("/var/lib/gvm/instances/pz-main/lease.json", []byte(future), 0o640)
+
+	code, _, errb := runWith(t, h, "", "job", "clear", "pz-main")
+	if code == 0 {
+		t.Fatal("cleared a live lease a newer gvm wrote; following that advice deletes a running job's lease")
+	}
+	if !strings.Contains(errb, "LIVE lease") {
+		t.Errorf("stderr = %q; a future-proto live lease must be refused as live, not reported unreadable", errb)
+	}
+	if _, err := h.FS.ReadFile(clean("/var/lib/gvm/instances/pz-main/lease.json")); err != nil {
+		t.Error("the refusal removed the future-proto lease anyway")
+	}
+}
+
 // TestNoLeaseIsNotAnError: `gvm job clear` on a healthy instance is a no-op
 // that says so, because an operator reaching for it is already worried.
 func TestNoLeaseIsNotAnError(t *testing.T) {
@@ -638,7 +706,7 @@ func TestAJobRunRecordsAnAuditSpan(t *testing.T) {
 		}
 		found = true
 		if e.Params["kind"] != "guard" {
-			t.Errorf("job.run params = %v; kind is required (section 14.8)", e.Params)
+			t.Errorf("job.run params = %v; kind is required", e.Params)
 		}
 	}
 	if !found {
@@ -650,24 +718,46 @@ func TestAJobRunRecordsAnAuditSpan(t *testing.T) {
 //
 // Section 14.4 records the trigger because the same failure means different
 // things from different ones: a nightly `update` that fails at 05:03 has
-// nobody watching. `gvm job run` is the unit's ExecStart, so it is a timer run
-// until a flag says otherwise; `gvm backup pz-main` is somebody at a keyboard.
+// nobody watching. `gvm job run` is the unit's ExecStart, so UNDER A UNIT
+// (systemd sets INVOCATION_ID) it is a timer run; typed at a keyboard it is a
+// cli run, and so is every operator verb like `gvm backup`.
 func TestTheTriggerIsTimerForAUnitInvokedRunAndCLIForAnOperatorVerb(t *testing.T) {
 	for _, tc := range []struct {
-		args []string
-		want jobs.Trigger
-		who  audit.ActorKind
+		args      []string
+		underUnit bool
+		want      jobs.Trigger
+		who       audit.ActorKind
 	}{
-		{args: []string{"job", "run", "_guard"}, want: jobs.TriggerTimer, who: audit.ActorTimer},
+		{args: []string{"job", "run", "_guard"}, underUnit: true, want: jobs.TriggerTimer, who: audit.ActorTimer},
+		{args: []string{"job", "run", "_guard"}, underUnit: false, want: jobs.TriggerCLI, who: audit.ActorRootCLI},
 		{args: []string{"backup", "verify"}, want: jobs.TriggerCLI, who: audit.ActorRootCLI},
 		{
-			args: []string{"job", "run", "_guard", "--trigger", "cli"},
+			args: []string{"job", "run", "_guard", "--trigger", "cli"}, underUnit: true,
 			want: jobs.TriggerCLI, who: audit.ActorRootCLI,
 		},
 	} {
-		t.Run(strings.Join(tc.args, "-"), func(t *testing.T) {
+		name := strings.Join(tc.args, "-")
+		if tc.underUnit {
+			name += "-under-unit"
+		}
+		t.Run(name, func(t *testing.T) {
 			h, _, _ := jobHost(t)
-			code, out, errb := runWith(t, h, "", append([]string{}, tc.args...)...)
+			getenv := func(string) string { return "" }
+			if tc.underUnit {
+				getenv = func(k string) string {
+					if k == "INVOCATION_ID" {
+						return "unit-abc"
+					}
+					return ""
+				}
+			}
+			var outb, errbuf strings.Builder
+			env := &Env{
+				Args: tc.args, Stdin: strings.NewReader(""), Stdout: &outb, Stderr: &errbuf,
+				Getenv: getenv, Geteuid: func() int { return 0 }, Host: h.HostEnv,
+			}
+			code := Main(context.Background(), env)
+			out, errb := outb.String(), errbuf.String()
 			if code != 0 {
 				t.Fatalf("exit %d: %s\n%s", code, errb, out)
 			}
@@ -899,7 +989,7 @@ func TestTheShippedHostTimersRunWhatTheyInvoke(t *testing.T) {
 				t.Fatalf("took %d lock(s): %v", n, lock.paths)
 			}
 			if strings.Contains(clean(lock.paths[0]), "/run/gvm/") {
-				t.Errorf("lock %q is in an instance's runtime directory (D-13)", lock.paths[0])
+				t.Errorf("lock %q is in an instance's runtime directory", lock.paths[0])
 			}
 			if super.stops != 0 {
 				t.Errorf("%s stopped something %d time(s)", slug, super.stops)

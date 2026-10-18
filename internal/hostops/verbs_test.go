@@ -160,6 +160,22 @@ func TestEveryMutatingVerbIsAuditable(t *testing.T) {
 	}
 }
 
+// TestARestartIsAuditedAsARestartNotAStart is Phase 37 item 6. A restart takes
+// the server down and back up; a row that said "started" would hide the gap an
+// operator reading the trail after a blip is trying to account for.
+func TestARestartIsAuditedAsARestartNotAStart(t *testing.T) {
+	for _, d := range Declarations() {
+		if d.Verb == VerbUnitRestart {
+			if d.Audit != audit.InstanceRestart {
+				t.Errorf("VerbUnitRestart is audited as %q, want %q (a restart is not a start)",
+					d.Audit, audit.InstanceRestart)
+			}
+			return
+		}
+	}
+	t.Fatal("VerbUnitRestart has no declaration")
+}
+
 func TestVerbNamesAreWellFormed(t *testing.T) {
 	for _, d := range Declarations() {
 		if err := validVerbName(d.Verb); err != nil {

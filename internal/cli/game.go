@@ -7,7 +7,7 @@
 // can run at all, and hooks says what a manifest is allowed to name.
 //
 // Everything here reads. Publishing an override is owner-only and gated on a
-// recorded sha256 approval (D-19), and lives with the privileged verbs.
+// recorded sha256 approval, and lives with the privileged verbs.
 
 package cli
 
@@ -24,6 +24,7 @@ import (
 
 	"github.com/S95F/gameVPSmanager/games"
 	"github.com/S95F/gameVPSmanager/internal/gamecfg"
+	"github.com/S95F/gameVPSmanager/internal/hook"
 	"github.com/S95F/gameVPSmanager/internal/spec"
 )
 
@@ -36,6 +37,7 @@ var gameSubs = []struct {
 }{
 	{"validate", "<file.yaml|game-id>...", "check a manifest against the schema, the closed template grammar and the registries", runGameValidate},
 	{"list", "", "list every game this box can run, and where each one comes from", runGameList},
+	{"show", "<game-id> [--yaml]", "show a game's settings, ports, vars and a ready-to-paste create line", runGameShow},
 	{"which", "<game-id>", "show which layer a game id resolves to, and the layers it shadows", runGameWhich},
 	{"hooks", "", "list the hook and validator registries a manifest may name", runGameHooks},
 }
@@ -43,7 +45,7 @@ var gameSubs = []struct {
 func runGame(_ context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		gameUsage(env.Stderr)
-		return errors.New("name a subcommand")
+		return usageErr(errors.New("name a subcommand"))
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -56,7 +58,7 @@ func runGame(_ context.Context, env *Env, args []string) error {
 		}
 	}
 	gameUsage(env.Stderr)
-	return fmt.Errorf("unknown subcommand %q", args[0])
+	return usageErr(fmt.Errorf("unknown subcommand %q", args[0]))
 }
 
 func gameUsage(w io.Writer) {
@@ -73,10 +75,25 @@ func gameUsage(w io.Writer) {
 // emptied — which is the box an operator most needs answers about.
 func gameCatalog() *spec.Catalog { return spec.SystemCatalog(games.FS) }
 
+// gameIsTemplate reports whether a manifest is a starting point to copy, not a
+// game to create directly. It is marked by the `template` tag (generic-steam),
+// so `gvm game list` hides it unless --all and `gvm create` refuses it.
+func gameIsTemplate(m *spec.Manifest) bool {
+	if m == nil {
+		return false
+	}
+	for _, t := range m.Metadata.Tags {
+		if t == "template" {
+			return true
+		}
+	}
+	return false
+}
+
 // overrideAuth turns the flag into an authorizer. Denying is the default
 // because a manifest is argv plus env plus destruction globs: an unapproved
 // override in /etc/gvm/games is skipped with a warning, never silently used
-// (D-19).
+// .
 func overrideAuth(unapproved bool) spec.OverrideAuthorizer {
 	if unapproved {
 		return spec.RootCLIAuthorizer{}
@@ -98,13 +115,21 @@ func gameFlags(env *Env, name, args string) (*flag.FlagSet, *bool) {
 
 func runGameValidate(env *Env, args []string) error {
 	fs, unapproved := gameFlags(env, "validate", "<file.yaml|game-id>...")
-	if err := fs.Parse(args); err != nil {
+	asJSON := fs.Bool("json", false, "print the findings as JSON (one object per target)")
+	// parseInterspersed, not fs.Parse: an operator writes `validate mygame.yaml
+	// --json`, and stdlib flag stops at the first positional, so --json after the
+	// target would be read as a second target ("invalid game id").
+	targets, err := parseInterspersed(fs, args)
+	if err != nil {
 		return flagErr(err)
 	}
-	targets := fs.Args()
 	if len(targets) == 0 {
 		fs.Usage()
 		return errors.New("name a manifest file or a game id")
+	}
+
+	if *asJSON {
+		return validateJSON(env, targets, *unapproved)
 	}
 
 	bad := 0
@@ -119,6 +144,81 @@ func runGameValidate(env *Env, args []string) error {
 		if !ok {
 			bad++
 		}
+	}
+	if bad > 0 {
+		return fmt.Errorf("%d of %d manifests have errors", bad, len(targets))
+	}
+	return nil
+}
+
+// validateResult is one target's findings in `gvm game validate --json`. It is
+// the same verdict the text output reaches, in a shape a CI step or an authoring
+// tool can read: ok is false when the manifest could not be read or carries any
+// error, and the diags carry their own severity so a consumer can show warnings
+// without failing on them.
+type validateResult struct {
+	Target    string             `json:"target"`
+	Ref       string             `json:"ref,omitempty"`
+	OK        bool               `json:"ok"`
+	Errors    int                `json:"errors"`
+	Warnings  int                `json:"warnings"`
+	ReadError string             `json:"read_error,omitempty"`
+	Diags     []validateDiagJSON `json:"diags,omitempty"`
+}
+
+type validateDiagJSON struct {
+	Severity string `json:"severity"`
+	Path     string `json:"path,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	Col      int    `json:"col,omitempty"`
+	Message  string `json:"message"`
+}
+
+func validateJSON(env *Env, targets []string, unapproved bool) error {
+	out := make([]validateResult, 0, len(targets))
+	bad := 0
+	for _, t := range targets {
+		res := validateResult{Target: t, OK: true}
+		ref, raw, readErr := readManifestTarget(t, unapproved)
+		if readErr != nil {
+			res.OK, res.ReadError = false, readErr.Error()
+			bad++
+			out = append(out, res)
+			continue
+		}
+		res.Ref = ref
+
+		m, diags, parseErr := spec.ValidateBytes(ref, raw)
+		if parseErr == nil {
+			// The same per-codec key check the text path merges in, so --json and
+			// the human output reach an identical verdict (a bad codec key is an
+			// error in both).
+			if ix, ixErr := spec.IndexBytes(ref, raw); ixErr == nil {
+				diags = append(diags, codecKeyDiags(m, ix, diags)...)
+			}
+		}
+		for _, d := range diags {
+			sev := "error"
+			if d.Sev == spec.SevWarning {
+				sev = "warning"
+			} else {
+				res.Errors++
+			}
+			if d.Sev == spec.SevWarning {
+				res.Warnings++
+			}
+			res.Diags = append(res.Diags, validateDiagJSON{
+				Severity: sev, Path: d.Path, Line: d.Line, Col: d.Col, Message: d.Msg,
+			})
+		}
+		if parseErr != nil || diags.HasErrors() {
+			res.OK = false
+			bad++
+		}
+		out = append(out, res)
+	}
+	if err := writeJSON(env.Stdout, out); err != nil {
+		return err
 	}
 	if bad > 0 {
 		return fmt.Errorf("%d of %d manifests have errors", bad, len(targets))
@@ -321,8 +421,16 @@ func checkLines(m *spec.Manifest, ix *spec.NodeIndex, diags spec.Diags) []string
 	out = append(out, mark(!failed("spec.config_files", "spec.content"), files))
 
 	if hooks := allHooks(s.Hooks); len(hooks) > 0 {
-		out = append(out, mark(!failed("spec.hooks"), fmt.Sprintf("%s %s (%s)",
-			plural(len(hooks), "hook"), resolves(len(hooks)), strings.Join(hooks, ", "))))
+		if failed("spec.hooks") {
+			out = append(out, mark(false, fmt.Sprintf("%s %s (%s)",
+				plural(len(hooks), "hook"), resolves(len(hooks)), strings.Join(hooks, ", "))))
+		} else {
+			// Resolve against the closed registry, but this build does not RUN
+			// hooks (that lands with config_files), so the line is a note, not a
+			// tick an operator would read as "these will fire".
+			out = append(out, fmt.Sprintf("! %s %s but this build does not run them (%s)",
+				plural(len(hooks), "hook"), resolves(len(hooks)), strings.Join(hooks, ", ")))
+		}
 	}
 	if n := len(s.Validators); n > 0 {
 		out = append(out, mark(!failed("spec.validators"), fmt.Sprintf("%s %s (%s)",
@@ -464,6 +572,8 @@ func plural(n int, noun string) string {
 
 func runGameList(env *Env, args []string) error {
 	fs, unapproved := gameFlags(env, "list", "")
+	asJSON := fs.Bool("json", false, "print the catalog as JSON")
+	all := fs.Bool("all", false, "include template manifests (hidden by default)")
 	if err := fs.Parse(args); err != nil {
 		return flagErr(err)
 	}
@@ -476,9 +586,45 @@ func runGameList(env *Env, args []string) error {
 	ids, listErr := cat.List()
 	auth := overrideAuth(*unapproved)
 
+	if *asJSON {
+		games := make([]map[string]any, 0, len(ids))
+		broken := 0
+		for _, id := range ids {
+			cands, _, err := cat.Resolve(id, auth)
+			if err != nil {
+				broken++
+				games = append(games, map[string]any{"id": id, "unreadable": err.Error()})
+				continue
+			}
+			for _, c := range cands {
+				if !c.Winner {
+					continue
+				}
+				if gameIsTemplate(c.Manifest) && !*all {
+					continue
+				}
+				games = append(games, map[string]any{
+					"id": id, "name": c.Manifest.Metadata.Name,
+					"revision": c.Revision, "ref": c.Ref,
+					"proton": isProtonTitle(c.Manifest),
+				})
+			}
+		}
+		if err := writeJSON(env.Stdout, map[string]any{"games": games, "broken": broken}); err != nil {
+			return err
+		}
+		if listErr != nil {
+			return listErr
+		}
+		if broken > 0 {
+			return fmt.Errorf("%s could not be read", plural(broken, "manifest"))
+		}
+		return nil
+	}
+
 	fmt.Fprintln(env.Stdout)
 	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
-	broken := 0
+	broken, shown, hidden := 0, 0, 0
 	for _, id := range ids {
 		cands, _, err := cat.Resolve(id, auth)
 		if err != nil {
@@ -492,12 +638,26 @@ func runGameList(env *Env, args []string) error {
 			if !c.Winner {
 				continue
 			}
+			if gameIsTemplate(c.Manifest) && !*all {
+				hidden++
+				continue
+			}
+			shown++
+			note := shadowNote(cands)
+			if isProtonTitle(c.Manifest) {
+				// A Proton title needs the operator to supply Proton, so it is
+				// worth flagging in the listing, not only in `game show`.
+				note += "  · Proton (install it yourself: gvm help proton)"
+			}
 			fmt.Fprintf(tw, "  %s\t%s\trevision %d\t%s%s\n",
-				id, c.Manifest.Metadata.Name, c.Revision, c.Ref, shadowNote(cands))
+				id, c.Manifest.Metadata.Name, c.Revision, c.Ref, note)
 		}
 	}
 	_ = tw.Flush()
-	fmt.Fprintf(env.Stdout, "\n  %s\n", plural(len(ids), "game"))
+	fmt.Fprintf(env.Stdout, "\n  %s\n", plural(shown, "game"))
+	if hidden > 0 {
+		fmt.Fprintf(env.Stdout, "  %s hidden; --all shows them\n", plural(hidden, "template"))
+	}
 
 	if listErr != nil {
 		return listErr
@@ -517,6 +677,7 @@ func shadowNote(cands []spec.Candidate) string {
 
 func runGameWhich(env *Env, args []string) error {
 	fs, unapproved := gameFlags(env, "which", "<game-id>")
+	asJSON := fs.Bool("json", false, "print the candidate resolution as JSON")
 	if err := fs.Parse(args); err != nil {
 		return flagErr(err)
 	}
@@ -527,6 +688,25 @@ func runGameWhich(env *Env, args []string) error {
 	id := fs.Arg(0)
 
 	cands, diags, err := gameCatalog().Resolve(id, overrideAuth(*unapproved))
+
+	if *asJSON {
+		out := make([]map[string]any, 0, len(cands))
+		for _, c := range cands {
+			row := map[string]any{"ref": c.Ref, "revision": c.Revision, "winner": c.Winner, "sha256": c.SHA256}
+			if c.Err != nil {
+				row["error"] = c.Err.Error()
+			}
+			if c.Skipped != "" {
+				row["skipped"] = c.Skipped
+			}
+			out = append(out, row)
+		}
+		if werr := writeJSON(env.Stdout, map[string]any{"id": id, "candidates": out}); werr != nil {
+			return werr
+		}
+		return err
+	}
+
 	w := env.Stdout
 	fmt.Fprintln(w)
 	for _, c := range cands {
@@ -569,15 +749,11 @@ func runGameHooks(env *Env, args []string) error {
 
 	w := env.Stdout
 	fmt.Fprint(w, "\n  Hooks — the closed registry spec.hooks may name\n")
-	hooks := spec.HookNames()
-	names := make([]string, 0, len(hooks))
-	for n := range hooks {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	fmt.Fprint(w, "  (registered and documented; this build does not RUN hooks — that lands with\n"+
+		"  config_files)\n")
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	for _, n := range names {
-		fmt.Fprintf(tw, "    %s\t%s\n", n, supportLabel(hooks[n]))
+	for _, h := range hook.All() {
+		fmt.Fprintf(tw, "    %s\t%s\tregistered — not run by this build\n", h.Name(), h.Doc())
 	}
 	_ = tw.Flush()
 
@@ -590,29 +766,16 @@ func runGameHooks(env *Env, args []string) error {
 	_ = tw.Flush()
 
 	fmt.Fprint(w, "\n  A name outside these lists is a load-time error, which is what keeps\n"+
-		"  `hooks: [something.clever]` from being a plugin system (D-21).\n")
+		"  `hooks: [something.clever]` from being a plugin system.\n")
 	return nil
 }
 
-// supportLabel deliberately does not name a release. A manifest that says
-// "planned for v1.1" in three places will eventually say three different
-// things; the one promise gvm makes here is that the name is real and the
-// behaviour is not there yet.
-func supportLabel(s spec.Support) string {
-	switch s {
-	case spec.SupportImplemented:
-		return "ready"
-	case spec.SupportPlanned:
-		return "planned — loads and validates, the capability renders unavailable"
-	}
-	return "unknown"
-}
-
-// flagErr swallows the error -h produces, since the usage it printed IS the
-// answer to what was asked.
+// flagErr turns the error -h produces into errHelpShown, so the command stops
+// (the FlagSet already printed usage) and Main exits 0 rather than continuing
+// into the command body with a zero-valued options struct (U7).
 func flagErr(err error) error {
 	if errors.Is(err, flag.ErrHelp) {
-		return nil
+		return errHelpShown
 	}
 	return err
 }

@@ -126,8 +126,8 @@ func (p *Pipeline) Repair(ctx context.Context, req RepairRequest) (*RepairReport
 	}
 	if !p.cfg.ManagedInstall {
 		return rep, fmt.Errorf("%w: %s is adopted, so gvm never runs `validate` against files "+
-			"that predate it; `gvm instance promote %s` is what changes that",
-			ErrAdopted, p.cfg.Instance, p.cfg.Instance)
+			"that predate it; taking over an adopted install is not available in this build",
+			ErrAdopted, p.cfg.Instance)
 	}
 
 	// 1. Name what is at risk. This happens first, before the archive and

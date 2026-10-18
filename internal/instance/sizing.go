@@ -96,9 +96,14 @@ func CheckResources(m *spec.Manifest, vars spec.VarValues, have spec.Resources) 
 		return fmt.Errorf("%w: memory_max %q: %w", ErrResources, have.MemoryMax, err)
 	}
 	if haveMax < want.MaxBytes {
-		return fmt.Errorf("%w: memory_max is %s but this game needs %s "+
-			"(heap plus native_headroom).\n\n    %s",
-			ErrResources, have.MemoryMax, want.Max, oomSentence)
+		s := m.Spec.Sizing
+		detail := "heap plus native_headroom"
+		if s.Model == "heap_plus_headroom" && s.HeapVar != "" {
+			detail = fmt.Sprintf("heap %s=%s + native_headroom %s", s.HeapVar, vars[s.HeapVar], s.NativeHeadroom)
+		}
+		return fmt.Errorf("%w: memory_max is %s but this game needs %s (%s); "+
+			"raise spec.resources.memory_max to %s.\n\n    %s",
+			ErrResources, have.MemoryMax, want.Max, detail, want.Max, oomSentence)
 	}
 	haveHigh, err := spec.ParseBytes(have.MemoryHigh)
 	if err != nil {

@@ -80,20 +80,26 @@ func (r Rule) String() string {
 	return strings.TrimSpace(b.String())
 }
 
-// UFWSpec returns the ufw command-line spec for adding this rule.
-func (r Rule) UFWSpec() string {
-	var parts []string
-	switch r.Verb {
+// verbWord is the ufw keyword for a verb.
+func verbWord(v Verb) string {
+	switch v {
 	case VerbLimit:
-		parts = append(parts, "limit")
+		return "limit"
 	case VerbDeny:
-		parts = append(parts, "deny")
+		return "deny"
 	case VerbReject:
-		parts = append(parts, "reject")
+		return "reject"
 	default:
-		parts = append(parts, "allow")
+		return "allow"
 	}
+}
 
+// UFWSpec returns the ufw command-line spec for adding this rule, as a single
+// string for display. The comment is shown shell-quoted the way an operator
+// would type it; the EXECUTED form is UFWArgs, which passes it as a bare argv
+// element instead.
+func (r Rule) UFWSpec() string {
+	parts := []string{verbWord(r.Verb)}
 	if r.From != "" {
 		parts = append(parts, "from", r.From, "to", "any")
 	}
@@ -111,6 +117,43 @@ func (r Rule) UFWSpec() string {
 		parts = append(parts, "comment", "'"+r.Comment+"'")
 	}
 	return strings.Join(parts, " ")
+}
+
+// UFWArgs returns the ufw command-line arguments for this rule as a proper argv
+// slice, in the canonical `<verb> [proto P] [from X] to any [port N]
+// [comment TAG]` form.
+//
+// The comment and its gvm tag are TWO separate elements, never a single
+// shell-quoted string. gvm execs ufw directly with no shell, so a tag passed as
+// "'gvm:v1:game'" would be stored by ufw with the quotes as part of the
+// comment, and a value containing a space would split into extra arguments.
+// Passing it as a bare element is the fix: the tag is set verbatim, and the
+// tag-matching that orphan detection and tag-owned deletes depend on keeps
+// working.
+//
+// includeComment is false for a delete: ufw matches a delete by the rule spec
+// alone, and a comment in the spec would make the delete miss.
+func (r Rule) UFWArgs(includeComment bool) []string {
+	args := make([]string, 0, 10)
+	args = append(args, verbWord(r.Verb))
+	if r.Proto != "" && r.Proto != ProtoBoth {
+		args = append(args, "proto", string(r.Proto))
+	}
+	if r.From != "" {
+		args = append(args, "from", r.From)
+	}
+	args = append(args, "to", "any")
+	if r.Port > 0 {
+		portStr := strconv.Itoa(r.Port)
+		if r.PortEnd > r.Port {
+			portStr += ":" + strconv.Itoa(r.PortEnd)
+		}
+		args = append(args, "port", portStr)
+	}
+	if includeComment && r.Comment != "" {
+		args = append(args, "comment", r.Comment)
+	}
+	return args
 }
 
 // RuleSet is an ordered list of rules.

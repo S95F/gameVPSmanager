@@ -9,7 +9,7 @@ import (
 
 const (
 	tokenRandBytes    = 32 // 256-bit raw token
-	recoveryCodeBytes = 16 // 128-bit recovery code
+	recoveryCodeBytes = 10 // 80-bit recovery code (RecoveryCodeBits), 16 Crockford chars
 	sessionIDBytes    = 32 // 256-bit session ID
 )
 
@@ -52,15 +52,19 @@ func NewSessionID() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// NewRecoveryCode generates a single-use recovery code (base64url).
+// NewRecoveryCode generates a single-use recovery code as grouped Crockford
+// base32 (admin-security-14). The plaintext is what gvm shows the operator,
+// dashed for reading; the hash is of the NORMALIZED form, so a verifier hashes
+// NormalizeRecoveryCode(typed) and a code typed in any case, with or without
+// the dashes, still matches.
 func NewRecoveryCode() (plaintext string, sha256hash []byte, err error) {
 	b := make([]byte, recoveryCodeBytes)
 	if _, err = rand.Read(b); err != nil {
 		return "", nil, fmt.Errorf("identity: generate recovery code: %w", err)
 	}
-	plain := base64.RawURLEncoding.EncodeToString(b)
-	sum := sha256.Sum256([]byte(plain))
-	return plain, sum[:], nil
+	canonical := crockfordEncode(b)
+	sum := sha256.Sum256([]byte(canonical))
+	return groupRecoveryCode(canonical), sum[:], nil
 }
 
 // GenerateRecoveryCodes returns n recovery codes.

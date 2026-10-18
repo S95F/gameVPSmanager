@@ -323,7 +323,7 @@ func TestBuildProbes(t *testing.T) {
 		ring  *console.Ring
 		want  string
 	}{
-		{"unbuilt kind", spec.ReadyProbe{Kind: "a2s", Port: "game"}, f.Ring, "not built in this release"},
+		{"unbuilt kind", spec.ReadyProbe{Kind: "control_auth", Port: "game"}, f.Ring, "not built in this release"},
 		{"unknown port", spec.ReadyProbe{Kind: probe.KindTCP, Port: "rcon"}, f.Ring, "no port named"},
 		{"marker with no console", spec.ReadyProbe{Kind: probe.KindLogMarker, Pattern: "x"}, nil, "captures no console"},
 		{"bad pattern", spec.ReadyProbe{Kind: probe.KindLogMarker, Pattern: "("}, f.Ring, "error parsing regexp"},
@@ -332,6 +332,34 @@ func TestBuildProbes(t *testing.T) {
 			_, err := BuildProbes(spec.ReadinessSpec{Probes: []spec.ReadyProbe{tc.probe}}, tc.ring, addr)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want one mentioning %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestEveryImplementedProbeKindIsBuilt keeps spec's probe registry and the
+// runner's BuildProbes in step: a kind spec declares SupportImplemented must be
+// constructible here, or a manifest validate accepts would send READY=1 for a
+// readiness check that never ran.
+func TestEveryImplementedProbeKindIsBuilt(t *testing.T) {
+	f := console.NewFake(console.FakeOptions{PartialAfter: -1})
+	t.Cleanup(func() { _ = f.Close() })
+	addr := func(string) (string, error) { return "127.0.0.1:16261", nil }
+
+	kinds := spec.ImplementedProbeKinds()
+	if len(kinds) < 3 {
+		t.Fatalf("only %d implemented probe kinds; the registry read is wrong", len(kinds))
+	}
+	for _, kind := range kinds {
+		t.Run(kind, func(t *testing.T) {
+			got, err := BuildProbes(spec.ReadinessSpec{Probes: []spec.ReadyProbe{
+				{Kind: kind, Port: "game", Pattern: "ready", Timeout: spec.Duration(time.Second)},
+			}}, f.Ring, addr)
+			if err != nil {
+				t.Fatalf("spec declares %q implemented, but BuildProbes cannot build it: %v", kind, err)
+			}
+			if len(got) != 1 || got[0].Kind() != kind {
+				t.Fatalf("built %v for kind %q", got, kind)
 			}
 		})
 	}

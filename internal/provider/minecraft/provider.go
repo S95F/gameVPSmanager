@@ -90,7 +90,8 @@ func (p Provider) Plan(ctx context.Context, c *provider.Ctx, in provider.Intent)
 	if !c.ManagedInstall {
 		return provider.EmptyPlan(in,
 			fmt.Sprintf("%s is an adopted install (managed_install:false): gvm will not overwrite "+
-				"Minecraft files it did not place. Run `gvm instance promote %s` first.", c.Name, c.Name)), nil
+				"Minecraft files it did not place. Taking over an adopted install is not "+
+				"available in this build.", c.Name)), nil
 	}
 
 	resolver, err := resolverFor(p.http, mc)

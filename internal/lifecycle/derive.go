@@ -35,6 +35,7 @@ const (
 	RuleUnitMasked     Rule = "unit-masked"
 	RuleUnitNotFound   Rule = "unit-not-found"
 	RuleActivating     Rule = "activating"
+	RuleCrashLooping   Rule = "crash-looping"
 	RuleDeactivating   Rule = "deactivating"
 	RuleUnitFailed     Rule = "unit-failed"
 	RuleNoStatus       Rule = "no-status"
@@ -60,7 +61,7 @@ var rules = []Rule{
 	RuleNoSpec, RulePinMismatch, RuleSpecUnreadable, RuleLeaseStale, RuleLeaseUnknown,
 	RuleLeaseInstall, RuleLeaseUpdate, RuleBlockedContent, RuleNeverApplied,
 	RulePinMissing, RuleForeignDropIn, RuleUnitUnknown, RuleUnitMasked, RuleUnitNotFound,
-	RuleActivating, RuleDeactivating, RuleUnitFailed, RuleNoStatus, RuleStatusStale,
+	RuleActivating, RuleCrashLooping, RuleDeactivating, RuleUnitFailed, RuleNoStatus, RuleStatusStale,
 	RuleShuttingDown, RuleBooting, RuleRunnerFailed, RuleRunnerExited, RuleReady,
 	RuleNotInstalled, RuleHeld, RuleUncleanExit, RuleDisabled, RuleInactive,
 	RuleUnmodelled,
@@ -162,10 +163,12 @@ func deriveIdentity(o Observation) (Verdict, bool) {
 		return Verdict{
 			Phase: PhaseFailed, Rule: RulePinMismatch,
 			Reason: "the pinned manifest does not match what the instance records: " + o.Pin.Reason,
-			// --dry, because the operator has to see the argv and destroy-glob
-			// diff before a manifest that ships new arguments reaches a live
-			// world (D-17).
-			Hint: "gvm manifest upgrade " + o.Name + " --dry",
+			// Never "re-create the instance", and never a command that moves the
+			// pin: if the YAML pin was hand-edited, restoring it is the fix, and
+			// moving a live world to a newer manifest revision (which can ship
+			// new argv and destroy globs, D-17) is not available in this build.
+			Hint: "if the pin was edited by hand, restore it, then: sudo gvm apply " + o.Name +
+				" --diff. Moving an instance to a newer manifest revision is not available in this build",
 		}, true
 	}
 	return Verdict{}, false
@@ -282,6 +285,19 @@ func deriveUnit(o Observation) Verdict {
 
 	switch o.Unit.ActiveState {
 	case "activating":
+		// A unit systemd is auto-restarting, or re-activating after a previous
+		// automatic restart, is not simply "starting": it has crashed at least
+		// once and may be looping. Say so, as a problem, rather than showing a
+		// hopeful "starting" that never ends.
+		if o.Unit.SubState == "auto-restart" || o.Unit.NRestarts > 0 {
+			return Verdict{
+				Phase: PhaseDegraded, Rule: RuleCrashLooping,
+				Reason: fmt.Sprintf("restarted %s; last exit %d (%s)",
+					restartCount(o.Unit.NRestarts), o.Unit.ExecMainStatus,
+					exitMeaning(o.Unit.ExecMainStatus)),
+				Hint: "gvm logs " + o.Name + " --shutdown",
+			}
+		}
 		return Verdict{
 			Phase: PhaseStarting, Rule: RuleActivating,
 			Reason: startingReason(o),
@@ -370,17 +386,19 @@ func deriveInactive(o Observation) Verdict {
 		return Verdict{
 			Phase: PhaseProvisioning, Rule: RuleNotInstalled,
 			Reason: "applied, and the provider's install sentinel is not on disk",
-			Hint:   "gvm install " + o.Name,
+			// Not `gvm install`: installing game files is not available in this
+			// build, so pointing back at it would send the operator to a refusal.
+			Hint: "game files are not installed, and installing them is not available in this build",
 		}
 	}
 	if o.Hold {
 		return Verdict{
 			Phase: PhaseStopped, Rule: RuleHeld,
 			Reason: holdReason(o),
-			// Not `gvm start`: the operator already knows how to start it.
-			// What they may not know is that the hold is why the guard timer
-			// is leaving it alone, which is the useful half.
-			Hint: "gvm start " + o.Name + " (clears the hold)",
+			// The hold is why the guard timer is leaving it alone. A reboot
+			// clears it; the durable stop is enabled: false, not a start.
+			Hint: "a reboot clears it; for a durable stop set enabled: false in " +
+				specPath(o.Name) + " and run sudo gvm apply " + o.Name,
 		}
 	}
 	// systemd keeps Result from the last run. "success" is a clean exit; a
@@ -397,7 +415,7 @@ func deriveInactive(o Observation) Verdict {
 		return Verdict{
 			Phase: PhaseStopped, Rule: RuleDisabled,
 			Reason: "enabled: false in " + specPath(o.Name),
-			Hint:   "gvm enable " + o.Name,
+			Hint:   "set enabled: true in " + specPath(o.Name) + ", then: sudo gvm apply " + o.Name,
 		}
 	}
 	return Verdict{
@@ -409,11 +427,34 @@ func deriveInactive(o Observation) Verdict {
 
 // unitFailed turns systemd's failure into the exit-code table's sentence.
 func unitFailed(o Observation) Verdict {
+	// A unit that gave up after three failed boots (exit 79) gets the plain
+	// sentence rather than the generic "systemd reports … failed": this is the
+	// one an operator reads to know gvm stopped on purpose, with the last
+	// STATUS line the runner left if there is one.
+	if o.Unit.ExecMainStatus == runner.ExitBootLoop {
+		reason := "gave up after 3 failed boots"
+		if s := strings.TrimSpace(o.Unit.StatusText); s != "" {
+			reason += ": " + s
+		}
+		return Verdict{
+			Phase: PhaseFailed, Rule: RuleUnitFailed,
+			Reason: reason,
+			Hint:   exitHint(o),
+		}
+	}
 	return Verdict{
 		Phase: PhaseFailed, Rule: RuleUnitFailed,
 		Reason: "systemd reports " + unitName(o.Name) + " failed" + resultSuffix(o) + exitSuffix(o),
 		Hint:   exitHint(o),
 	}
+}
+
+// restartCount renders systemd's NRestarts as "N time(s)".
+func restartCount(n int) string {
+	if n == 1 {
+		return "1 time"
+	}
+	return fmt.Sprintf("%d times", n)
 }
 
 // exitHint maps section 7.8's exit codes to the command that addresses them.
@@ -437,9 +478,13 @@ func exitHint(o Observation) string {
 		// write-probe, which is what names the path (D-15).
 		return "gvm apply --diff " + o.Name
 	case runner.ExitTempFail:
-		// 75: an orphan from the previous run. It clears itself, so the hint
-		// is to look rather than to act.
+		// 75: an orphan from the previous run, or a readiness failure. It
+		// clears itself, so the hint is to look rather than to act.
 		return "gvm status " + o.Name
+	case runner.ExitBootLoop:
+		// 79: gave up after three failed boots. The shutdown record of the last
+		// attempt holds the STATUS line that says why.
+		return "gvm logs " + o.Name + " --shutdown"
 	}
 	return "gvm logs " + o.Name
 }
@@ -512,14 +557,33 @@ func exitMeaning(code int) string {
 		return "preflight failed"
 	case exitPortUnavailable:
 		return "port unavailable at bind time"
+	case runner.ExitBootDied:
+		return "the game exited before it was ready"
 	case runner.ExitSoftware:
 		return "the runner panicked"
 	case runner.ExitTempFail:
-		return "an orphaned game process from a previous run is still alive"
+		return "readiness failed (timeout, stall or marker), or an orphan from a previous run"
 	case runner.ExitConfig:
 		return "the sandbox blocks a required write"
+	case runner.ExitBootLoop:
+		return "gave up after 3 failed boots"
 	}
 	return "unclassified"
+}
+
+// RestartPreventExitStatus is the exit codes where a restart cannot help, so
+// systemd must not retry — the Go twin of gvm@.service's RestartPreventExitStatus=
+// directive. A packaging test asserts the two agree. Phase 28's NeedsOperator
+// and the role-exit test read it, so the set lives in one place.
+//
+// 69 (boot death) is NOT here: a single transient death should retry. 79 (boot
+// loop) IS: three failures in a row need a human.
+var RestartPreventExitStatus = []int{
+	runner.ExitUsage,    // 64
+	runner.ExitDataErr,  // 65
+	exitPortUnavailable, // 66
+	runner.ExitConfig,   // 78
+	runner.ExitBootLoop, // 79
 }
 
 func holdReason(o Observation) string {

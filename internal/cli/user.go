@@ -2,41 +2,30 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"flag"
-	"fmt"
+	"strings"
+
+	"github.com/S95F/gameVPSmanager/internal/avail"
 )
 
-// runUser dispatches gvm user subcommands.
-// All mutating operations require gvmd (privileged verb gateway).
+// userGroup is the `gvm user` subcommand table. All mutating operations
+// require gvmd (the privileged verb gateway).
+func userGroup() subGroup {
+	return subGroup{Verb: "user", Subs: []subcmd{
+		{Name: "list", Summary: "list dashboard users", Run: runUserList},
+		{Name: "create", Summary: "create a dashboard user", Run: runUserCreate,
+			Examples: []string{"gvm user create --email ops@example.com --role operator"}},
+		{Name: "show", Summary: "show one user", Run: runUserShow},
+		{Name: "set-role", Summary: "set a user's global role", Run: runUserSetRole},
+		{Name: "set-password", Summary: "set a user's password", Run: runUserSetPassword},
+		{Name: "disable", Summary: "disable a user", Run: runUserDisable},
+		{Name: "enable", Summary: "enable a user", Run: runUserEnable},
+		{Name: "reset-totp", Summary: "clear a user's TOTP enrolment", Run: runUserResetTOTP},
+	}}
+}
+
 func runUser(ctx context.Context, env *Env, args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintln(env.Stderr, "usage: gvm user <subcommand>")
-		fmt.Fprintln(env.Stderr, "subcommands: list, create, show, set-role, set-password, disable, enable, reset-totp")
-		return errors.New("user: subcommand required")
-	}
-	sub := args[0]
-	rest := args[1:]
-	switch sub {
-	case "list":
-		return runUserList(ctx, env, rest)
-	case "create":
-		return runUserCreate(ctx, env, rest)
-	case "show":
-		return runUserShow(ctx, env, rest)
-	case "set-role":
-		return runUserSetRole(ctx, env, rest)
-	case "set-password":
-		return runUserSetPassword(ctx, env, rest)
-	case "disable":
-		return runUserDisable(ctx, env, rest)
-	case "enable":
-		return runUserEnable(ctx, env, rest)
-	case "reset-totp":
-		return runUserResetTOTP(ctx, env, rest)
-	default:
-		return fmt.Errorf("user: unknown subcommand %q", sub)
-	}
+	return userGroup().dispatch(ctx, env, args)
 }
 
 func runUserList(_ context.Context, env *Env, args []string) error {
@@ -45,7 +34,7 @@ func runUserList(_ context.Context, env *Env, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return errRequiresDaemon("user list")
+	return errAdminUnbuilt("user list")
 }
 
 func runUserCreate(_ context.Context, env *Env, args []string) error {
@@ -57,10 +46,10 @@ func runUserCreate(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if *email == "" {
-		return fmt.Errorf("user create: --email is required")
+		return usageErr(&userError{Msg: "create needs --email", Hint: "the new user's email address"})
 	}
 	_ = role
-	return errRequiresDaemon("user create")
+	return errAdminUnbuilt("user create")
 }
 
 func runUserShow(_ context.Context, env *Env, args []string) error {
@@ -70,9 +59,9 @@ func runUserShow(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("user show: <email> required")
+		return usageErr(&userError{Msg: "show needs an email", Hint: "the user to show"})
 	}
-	return errRequiresDaemon("user show")
+	return errAdminUnbuilt("user show")
 }
 
 func runUserSetRole(_ context.Context, env *Env, args []string) error {
@@ -82,9 +71,9 @@ func runUserSetRole(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 2 {
-		return fmt.Errorf("user set-role: <email> <role> required")
+		return usageErr(&userError{Msg: "set-role needs <email> <role>", Hint: "the user, then viewer|operator|admin"})
 	}
-	return errRequiresDaemon("user set-role")
+	return errAdminUnbuilt("user set-role")
 }
 
 func runUserSetPassword(_ context.Context, env *Env, args []string) error {
@@ -94,9 +83,9 @@ func runUserSetPassword(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("user set-password: <email> required")
+		return usageErr(&userError{Msg: "set-password needs an email", Hint: "the user whose password to set"})
 	}
-	return errRequiresDaemon("user set-password")
+	return errAdminUnbuilt("user set-password")
 }
 
 func runUserDisable(_ context.Context, env *Env, args []string) error {
@@ -106,9 +95,9 @@ func runUserDisable(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("user disable: <email> required")
+		return usageErr(&userError{Msg: "disable needs an email", Hint: "the user to disable"})
 	}
-	return errRequiresDaemon("user disable")
+	return errAdminUnbuilt("user disable")
 }
 
 func runUserEnable(_ context.Context, env *Env, args []string) error {
@@ -118,9 +107,9 @@ func runUserEnable(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("user enable: <email> required")
+		return usageErr(&userError{Msg: "enable needs an email", Hint: "the user to enable"})
 	}
-	return errRequiresDaemon("user enable")
+	return errAdminUnbuilt("user enable")
 }
 
 func runUserResetTOTP(_ context.Context, env *Env, args []string) error {
@@ -130,14 +119,30 @@ func runUserResetTOTP(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("user reset-totp: <email> required")
+		return usageErr(&userError{Msg: "reset-totp needs an email", Hint: "the user whose TOTP enrolment to clear"})
 	}
-	return errRequiresDaemon("user reset-totp")
+	return errAdminUnbuilt("user reset-totp")
 }
 
-// errRequiresDaemon returns a clear error explaining that the operation needs
-// the gvmd privileged verb gateway. It is a distinct error so callers can check
-// for it in tests without matching a string.
-func errRequiresDaemon(op string) error {
-	return fmt.Errorf("%s: requires gvmd — ensure the daemon is running (`systemctl status gvmd`)", op)
+// errAdminUnbuilt is the refusal the admin groups share.
+//
+// The command is routed, so `--help` and argument validation already ran; what
+// is missing is the engine behind it — dashboard users, API tokens, the secret
+// store or the audit reader. It returns an avail error so Main prints the one
+// standard line and exits 3 (U8), and it NEVER names gvmd: an operator who does
+// not have the daemon must not be sent to debug a unit that was never shipped
+// (U10). The op prefix only chooses which sentence, so the reason is specific
+// without the caller repeating itself.
+func errAdminUnbuilt(op string) error {
+	switch {
+	case strings.HasPrefix(op, "user"):
+		return avail.New("dashboard users, roles and passwords arrive with the dashboard")
+	case strings.HasPrefix(op, "token"):
+		return avail.New("API tokens arrive with the dashboard")
+	case strings.HasPrefix(op, "secret"):
+		return avail.New("storing and reading instance secrets arrives in a later release")
+	case strings.HasPrefix(op, "audit"):
+		return avail.New("reading the audit log arrives with the audit spool reader")
+	}
+	return avail.New("that part of gvm is not in this build")
 }

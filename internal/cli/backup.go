@@ -9,7 +9,7 @@
 // what that costs.
 //
 // `verify` and `prune` take an OPTIONAL instance, because their kinds are
-// scoped `either` (section 13.3) and the same table is `gvm backup verify
+// scoped `either` and the same table is `gvm backup verify
 // pz-main` and the host-level nightly. A second implementation for the
 // host-wide sweep is how the two would come to disagree about what "verified"
 // means.
@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/archive"
+	"github.com/S95F/gameVPSmanager/internal/audit"
 	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/jobs"
 	"github.com/S95F/gameVPSmanager/internal/lifecycle"
@@ -48,9 +49,13 @@ var backupSubs = []struct {
 	run     func(context.Context, *Env, []string) error
 }{
 	{"", "<instance>", "freeze, snapshot, verify, then prune (the nightly)", runBackupNow},
+	// `run` is the explicit spelling of the nightly, reserved so a new verb
+	// never shadows it: `gvm backup run <instance>` == `gvm backup <instance>`.
+	{"run", "<instance>", "the nightly, by hand (same as `gvm backup <instance>`)", runBackupNow},
 	{"verify", "[<instance>] [--deep]", "read archives back: gzip, manifest, digests", runBackupVerify},
 	{"prune", "[<instance>]", "apply retention; preserve archives are never candidates", runBackupPrune},
 	{"list", "[<instance>]", "what this host has archived, from the index", runBackupList},
+	{"delete", "<archive> [--dry-run]", "remove one archive (type the instance name); the only way to remove a preserve archive", runBackupDelete},
 }
 
 func runBackup(ctx context.Context, env *Env, args []string) error {
@@ -97,7 +102,7 @@ func runBackupNow(ctx context.Context, env *Env, args []string) error {
 		fs.PrintDefaults()
 	}
 	opt.bind(fs, jobs.TriggerCLI)
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return flagErr(err)
 	}
@@ -176,10 +181,10 @@ func runBackupPrune(ctx context.Context, env *Env, args []string) error {
 func oneOrNoInstance(pos []string, flagName string) (string, error) {
 	switch {
 	case len(pos) > 1:
-		return "", fmt.Errorf("name one instance, not %d", len(pos))
+		return "", usageErr(fmt.Errorf("name one instance, not %d", len(pos)))
 	case len(pos) == 1 && flagName != "" && pos[0] != flagName:
-		return "", fmt.Errorf("two different instances named: %q and --instance %q",
-			pos[0], flagName)
+		return "", usageErr(fmt.Errorf("two different instances named: %q and --instance %q",
+			pos[0], flagName))
 	case len(pos) == 1:
 		return pos[0], instanceNameOK(pos[0])
 	case flagName != "":
@@ -310,6 +315,7 @@ type archiveRow struct {
 	VerifiedAt time.Time `json:"verified_at,omitzero"`
 	Legacy     bool      `json:"legacy,omitempty"`
 	Unreadable string    `json:"unreadable,omitempty"`
+	PinnedBy   string    `json:"pinned_by,omitempty"`
 }
 
 func archiveDirs(h *HostEnv, name, from string) ([]string, error) {
@@ -354,6 +360,7 @@ func archiveRows(h *HostEnv, dir string) ([]archiveRow, error) {
 			Dir: dir, File: e.File, Instance: e.Instance, Class: string(e.Class),
 			Reason: e.Reason, Bytes: e.Bytes, CreatedAt: e.CreatedAt,
 			VerifiedAt: e.VerifiedAt, Legacy: e.Legacy, Unreadable: e.Unreadable,
+			PinnedBy: e.PinnedBy,
 		})
 	}
 	return out, nil
@@ -363,7 +370,7 @@ func archiveRows(h *HostEnv, dir string) ([]archiveRow, error) {
 //
 // Every archive carries .gvm/manifest.json as its FIRST member precisely so
 // this costs one ~8 KB read rather than decompressing the whole thing
-// (section 13.1).
+// .
 func peekRows(h *HostEnv, dir string) ([]archiveRow, error) {
 	ents, err := h.files().ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -408,6 +415,12 @@ func printArchiveRows(w io.Writer, rows []archiveRow) {
 		if r.Legacy {
 			class = "legacy"
 		}
+		if r.PinnedBy != "" {
+			// A durable preserve pin from a sidecar, e.g. the archive that
+			// authorised a destroy. Named so the operator knows why it will
+			// never be pruned (cli-ergonomics-7).
+			class += " (pinned: " + r.PinnedBy + ")"
+		}
 		verified := "never"
 		if !r.VerifiedAt.IsZero() {
 			verified = r.VerifiedAt.UTC().Format("2006-01-02")
@@ -437,4 +450,211 @@ func printArchiveRows(w io.Writer, rows []archiveRow) {
 			fmt.Fprintf(w, "  UNREADABLE %s: %s\n", r.File, r.Unreadable)
 		}
 	}
+}
+
+// ----------------------------------------------------------------------
+// gvm backup delete
+
+// runBackupDelete is the one explicit way to remove an archive, preserve
+// archives included. Retention never removes a preserve archive and
+// archive.DeleteArchive refuses one, so without this verb reclaiming a
+// destroy-authorising or pre-rebuild archive means `rm` under /var/backups as
+// root -- which bypasses the index, the archive-first guard and any record that
+// it happened. This routes that same intent through a typed instance name, a
+// guard that will not let the last verified copy of a live world go, and a
+// backup.delete audit row (cli-ergonomics-7, offsite-backup-dr-12,
+// failure-recovery-12, rule 5).
+func runBackupDelete(ctx context.Context, env *Env, args []string) error {
+	var confirm, remote string
+	var dry bool
+	fs := flag.NewFlagSet("gvm backup delete", flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	fs.Usage = func() {
+		fmt.Fprint(env.Stderr, "Usage: gvm backup delete <archive> [--dry-run]\n\n"+
+			"Removes one archive after you type its instance's name. It is the only\n"+
+			"gvm path that will remove a `preserve` archive. It refuses the newest\n"+
+			"verified archive of an instance that still exists, so a live world\n"+
+			"always keeps at least one verified copy.\n\n")
+		flagUsage(env.Stderr, fs)
+	}
+	fs.StringVar(&confirm, "confirm", "", "type the instance name here instead of at the prompt")
+	fs.BoolVar(&dry, "dry-run", false, "show what would be removed, and remove nothing")
+	fs.StringVar(&remote, "remote", "", "dashboard URL to run this against instead of the local host")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return flagErr(err)
+	}
+	if len(pos) != 1 {
+		fs.Usage()
+		return usageErr(errors.New("name exactly one archive to delete"))
+	}
+
+	t, err := Resolve(env, "backup", remote)
+	if err != nil {
+		return err
+	}
+	if err := t.RequireLocal(); err != nil {
+		return err
+	}
+	h, err := env.host(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Resolve to the directory and basename, and read that directory's index --
+	// the index is what knows the archive's instance, class, pin and verified
+	// time, which are the facts every guard below is made of.
+	abs, err := filepath.Abs(pos[0])
+	if err != nil {
+		return err
+	}
+	dir, file := filepath.Split(abs)
+	dir = strings.TrimSuffix(dir, string(filepath.Separator))
+
+	e, ix, err := findArchiveEntry(ctx, h, dir, file)
+	if err != nil {
+		return err
+	}
+	if e.Instance == "" {
+		// A legacy tarball names no instance, so there is no name to type. The
+		// typed-name gate is the whole safety of this verb, and a gate with no
+		// subject is not one -- so refuse rather than invent a subject.
+		return refused(fmt.Errorf("%s carries no gvm manifest, so gvm cannot tell which instance it "+
+			"belongs to and there is no name to confirm against; remove it by hand if you mean to", file))
+	}
+	inst := e.Instance
+	exists := instanceExists(h, inst)
+
+	// Archive-first. The newest verified archive of a world that still exists is
+	// the copy a restore reaches for; removing it could leave a live instance
+	// with no verified copy at all, which is the loss the whole archive chain
+	// exists to prevent. An older archive, or any archive of an instance that is
+	// gone, is fair game once the name is typed.
+	if exists && newestVerified(ix, inst, file) {
+		return refused(fmt.Errorf("%s is the newest verified archive of %s, which still exists, so gvm "+
+			"will not remove the one copy a restore would use. Take a fresh backup first "+
+			"(gvm backup %s), then delete this one, or delete an older archive", file, inst, inst))
+	}
+
+	printDeletePreflight(env.Stdout, dir, e, exists, h.now())
+	if dry {
+		fmt.Fprintln(env.Stdout, "\n  nothing was removed (--dry-run).")
+		return nil
+	}
+	if err := (TypedConfirm{Subject: inst}).confirmFrom(env, confirm); err != nil {
+		return err
+	}
+
+	full := filepath.Join(dir, file)
+	ev := audit.Event{
+		Actor: actorFor(t), Action: audit.BackupDelete, Instance: inst,
+		Params: audit.Params{"path": full, "sha256": e.SHA256, "bytes": e.Bytes},
+	}
+	if err := h.audit().Do(ctx, ev, func(context.Context) (audit.Params, error) {
+		return nil, archive.ForceDeleteArchive(full)
+	}); err != nil {
+		return fmt.Errorf("removing %s: %w", file, err)
+	}
+
+	// Refresh the index so `gvm backup list` stops showing it at once, and so
+	// the "last copy" check below reads the directory as it is now.
+	ix2, _ := archive.Reindex(ctx, dir, archive.ReindexOptions{Now: h.Now})
+
+	fmt.Fprintf(env.Stdout, "\n  removed %s (%s)\n", full, spec.FormatBytes(e.Bytes))
+	if !exists && ix2 != nil && countInstanceArchives(ix2, inst) == 0 {
+		// The one delete that a fresh backup cannot undo: the instance is gone,
+		// and this was its last archive. Saying so is the point.
+		fmt.Fprintf(env.Stdout, "  this was the last copy of %s's world\n", inst)
+	}
+	return nil
+}
+
+// findArchiveEntry locates the archive's index entry, preferring the existing
+// index (no rescan, no write) and rebuilding it from the directory only when the
+// cache does not know the file -- a box restored from a USB stick, or one whose
+// archives were rsynced in, has tarballs and no index.
+func findArchiveEntry(ctx context.Context, h *HostEnv, dir, file string) (archive.Entry, *archive.Index, error) {
+	ix, err := archive.LoadIndex(dir)
+	if err != nil {
+		return archive.Entry{}, nil, fmt.Errorf("reading the archive index in %s: %w", dir, err)
+	}
+	if e, ok := ix.Find(file); ok {
+		return e, ix, nil
+	}
+	ix, err = archive.Reindex(ctx, dir, archive.ReindexOptions{Now: h.Now})
+	if err != nil {
+		return archive.Entry{}, nil, fmt.Errorf("reading the archive directory %s: %w", dir, err)
+	}
+	e, ok := ix.Find(file)
+	if !ok {
+		return archive.Entry{}, nil, usageErr(fmt.Errorf("%s is not in %s", file, dir))
+	}
+	return e, ix, nil
+}
+
+// instanceExists reports whether an instance's definition is still on the box.
+// It stats the YAML rather than parsing it: a spec present but unparsable is an
+// instance that still exists, and the archive-first guard must hold for it too.
+func instanceExists(h *HostEnv, name string) bool {
+	_, err := h.files().Stat(h.paths(name).Spec)
+	return err == nil
+}
+
+// newestVerified reports whether file is the newest VERIFIED archive of inst in
+// ix. Newest is by CreatedAt, and only archives this host has read back
+// (VerifiedAt set) count: an archive gvm has never verified is not yet a copy a
+// restore can be promised, so protecting it would refuse a delete on the
+// strength of bytes nobody has checked.
+func newestVerified(ix *archive.Index, inst, file string) bool {
+	newest := ""
+	var newestAt time.Time
+	for _, e := range ix.Entries {
+		if e.Instance != inst || e.VerifiedAt.IsZero() {
+			continue
+		}
+		if newest == "" || e.CreatedAt.After(newestAt) {
+			newest, newestAt = e.File, e.CreatedAt
+		}
+	}
+	return newest != "" && newest == file
+}
+
+func countInstanceArchives(ix *archive.Index, inst string) int {
+	n := 0
+	for _, e := range ix.Entries {
+		if e.Instance == inst {
+			n++
+		}
+	}
+	return n
+}
+
+func printDeletePreflight(w io.Writer, dir string, e archive.Entry, exists bool, now time.Time) {
+	fmt.Fprintf(w, "\ndelete %s\n", filepath.Join(dir, e.File))
+	fmt.Fprintf(w, "  instance  %s", e.Instance)
+	if !exists {
+		fmt.Fprint(w, " (no longer exists)")
+	}
+	fmt.Fprintln(w)
+	class := string(e.Class)
+	if e.PinnedBy != "" {
+		class += " (pinned: " + e.PinnedBy + ")"
+	}
+	fmt.Fprintf(w, "  class     %s\n", class)
+	if e.Reason != "" {
+		fmt.Fprintf(w, "  reason    %s\n", e.Reason)
+	}
+	if !e.CreatedAt.IsZero() {
+		taken := e.CreatedAt.UTC().Format("2006-01-02 15:04")
+		if !now.IsZero() {
+			days := int(now.Sub(e.CreatedAt).Hours() / 24)
+			fmt.Fprintf(w, "  taken     %s (%d days ago)\n", taken, days)
+		} else {
+			fmt.Fprintf(w, "  taken     %s\n", taken)
+		}
+	}
+	if !e.VerifiedAt.IsZero() {
+		fmt.Fprintf(w, "  verified  %s\n", e.VerifiedAt.UTC().Format("2006-01-02"))
+	}
+	fmt.Fprintf(w, "  size      %s\n", spec.FormatBytes(e.Bytes))
 }

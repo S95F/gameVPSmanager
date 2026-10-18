@@ -38,7 +38,7 @@ func TestTheProbeCommandCarriesExactlyTheSandboxTheDropInWillCarry(t *testing.T)
 		"--property=ProtectSystem=full",
 		"--property=NoNewPrivileges=yes",
 		"--property=ReadWritePaths=" + strings.Join(sb.Paths, " "),
-		"/usr/local/bin/gvm probe-write",
+		"/usr/bin/gvm probe-write",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("the probe command is missing %q:\n%s", want, joined)

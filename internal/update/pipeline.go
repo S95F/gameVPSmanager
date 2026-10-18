@@ -407,8 +407,8 @@ func (p *Pipeline) AppUpdate(ctx context.Context) error {
 			"and re-planning here would read the network with the world already down",
 			ErrOutOfOrder)
 	case !p.cfg.ManagedInstall:
-		return fmt.Errorf("%w: phase 5 does not exist for %s; `gvm instance promote %s` is "+
-			"what changes that", ErrAdopted, p.cfg.Instance, p.cfg.Instance)
+		return fmt.Errorf("%w: phase 5 does not exist for %s; taking over binary updates for an "+
+			"adopted instance is not available in this build", ErrAdopted, p.cfg.Instance)
 	case p.plan.Intent != provider.IntentUpdate:
 		return fmt.Errorf("%w: phase 5 was handed a %q plan; a routine update applies the "+
 			"`update` intent and nothing else (D-32)", ErrConfig, string(p.plan.Intent))

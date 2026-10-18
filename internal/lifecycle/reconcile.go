@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -248,7 +249,33 @@ func (r *Reconciler) mirror(ctx context.Context, ir InstanceReport, rep *SweepRe
 func (o Observation) DesiredRunningAndDown() bool {
 	return o.Enabled && !o.Hold && o.UnitChecked && !o.Unit.Running() &&
 		o.Unit.ActiveState != "activating" &&
+		!o.NeedsOperator() &&
 		o.DropIn.SpecSHA256 != ""
+}
+
+// NeedsOperator reports whether the unit's last failure is one no restart can
+// fix, so the guard must leave it down and say why rather than loop it: an exit
+// code in RestartPreventExitStatus (64/65/66/78/79), or systemd's own
+// start-limit-hit. It is the Go twin of gvm@.service's RestartPreventExitStatus
+// plus the one state systemd adds, and TestNeedsOperatorMatchesRestartPrevent
+// ExitStatus holds the two together.
+//
+// A unit that is currently active is never "needs operator": its
+// ExecMainStatus may be a stale code from a previous exec, and a server that is
+// up and serving does not need anybody.
+func (o Observation) NeedsOperator() bool {
+	if !o.UnitChecked || o.Unit.ActiveState == "active" {
+		return false
+	}
+	if o.Unit.Result == "start-limit-hit" {
+		return true
+	}
+	for _, code := range RestartPreventExitStatus {
+		if o.Unit.ExecMainStatus == code {
+			return true
+		}
+	}
+	return false
 }
 
 // Findings is the pure half of the sweep: what is worth saying about one
@@ -323,6 +350,22 @@ func Findings(o Observation, v Verdict) []Finding {
 		add(FindingNotRunning, SevProblem,
 			"enabled, not held, and the unit is "+o.Unit.ActiveState,
 			"gvm start "+o.Name)
+	}
+	// A unit that needs a human (exit 64/65/66/78/79 or start-limit-hit) gets a
+	// sentence saying so, with the exit's hint, so the operator knows the guard
+	// has deliberately left it down rather than missed it.
+	if o.NeedsOperator() {
+		add(FindingPhase, SevProblem,
+			"the guard will not restart this: "+v.Reason, v.Hint)
+	} else if v.Phase == PhaseRunning && o.Unit.NRestarts > 0 {
+		// A past restart on a server that is now ready is history, not a loop:
+		// systemd's NRestarts is cumulative until an explicit start/stop or
+		// reset-failed, so this is a Note that never counts as a problem.
+		add(FindingObservation, SevNotice,
+			fmt.Sprintf("restarted %s earlier and is now ready; last exit %d (%s)",
+				restartCount(o.Unit.NRestarts), o.Unit.ExecMainStatus,
+				exitMeaning(o.Unit.ExecMainStatus)),
+			"")
 	}
 	for _, p := range o.Problems {
 		add(FindingObservation, SevNotice, p.Source+": "+p.Detail, "")

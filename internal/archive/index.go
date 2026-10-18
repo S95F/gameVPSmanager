@@ -47,6 +47,14 @@ type Entry struct {
 	VerifiedAt time.Time `json:"verified_at,omitempty"`
 	Members    int       `json:"members,omitempty"`
 
+	// PinnedBy names the reason a <file>.preserve sidecar protects this archive
+	// (e.g. "destroy-authorised"). When it is set, Class is forced to preserve
+	// regardless of the tarball's own manifest, and the pin survives Reindex and
+	// a reused instance name — which flipping the index entry alone cannot,
+	// because Reindex re-reads Class from the manifest. Empty for an archive
+	// whose preserve class comes from its own manifest.
+	PinnedBy string `json:"pinned_by,omitempty"`
+
 	// Legacy marks an archive with no manifest -- a bash-suite tarball, or
 	// anything else somebody dropped in the directory. Retention leaves these
 	// alone entirely.
@@ -103,8 +111,18 @@ func LoadIndex(dir string) (*Index, error) {
 	if err := json.Unmarshal(b, &ix); err != nil {
 		return nil, fmt.Errorf("archive: parse %s: %w", IndexPath(dir), err)
 	}
-	if ix.Schema != SchemaVersion {
-		return nil, fmt.Errorf("%w: index schema %d, this build reads %d", ErrSchema, ix.Schema, SchemaVersion)
+	// The index is a cache rebuilt from the archives, so a schema that does not
+	// match is a rebuild (Reindex discards an ErrSchema prev and re-reads), not a
+	// dead end. An OLDER schema is read as-is and upgraded; only a NEWER one is
+	// refused, with the same install hint the manifest reader gives — the
+	// archives beside it are likely newer too, and a partial rebuild would hide
+	// that.
+	if ix.Schema > SchemaVersion {
+		return nil, fmt.Errorf("%w: the archive index uses schema %d and this gvm reads up to %d; "+
+			"install a newer gvm", ErrSchema, ix.Schema, SchemaVersion)
+	}
+	if ix.Schema < 1 {
+		return nil, fmt.Errorf("%w: index schema %d is not a valid version", ErrSchema, ix.Schema)
 	}
 	return &ix, nil
 }
@@ -216,6 +234,17 @@ func Reindex(ctx context.Context, dir string, o ReindexOptions) (*Index, error) 
 			} else {
 				e.SHA256 = sum
 			}
+		}
+		// A <file>.preserve sidecar forces preserve, over whatever the tarball's
+		// own manifest says. This is how a destroy-authorising ROUTINE archive
+		// is protected durably: rewriting the class inside the tarball would
+		// change its digest, and flipping the index entry would not survive this
+		// rescan, which re-reads Class from the manifest above. The sidecar is
+		// re-read on every Reindex, so the pin survives a prune, a reindex and a
+		// new instance created with the same name.
+		if pin, ok, perr := ReadPreservePin(full); perr == nil && ok {
+			e.Class = ClassPreserve
+			e.PinnedBy = pin.Reason
 		}
 		ix.Entries = append(ix.Entries, e)
 	}

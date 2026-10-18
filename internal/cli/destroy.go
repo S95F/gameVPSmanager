@@ -3,7 +3,7 @@
 // rebuild.sh made you type the server name before it deleted a world, and that
 // discipline is the one thing from the bash suite that must survive contact
 // with a web UI where a click is one pixel from a mistake. So the contract is
-// server-side and identical for every caller (section 16.4): the typed name is
+// server-side and identical for every caller: the typed name is
 // checked HERE, by the same TypedConfirm the API edge will use, not by the
 // interface that asked the question.
 //
@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/archive"
 	"github.com/S95F/gameVPSmanager/internal/hostops"
@@ -63,7 +64,7 @@ func parseDestroyArgs(env *Env, args []string) (destroyOptions, error) {
 	fs.BoolVar(&opt.Dry, "dry", false, "measure and report what would be removed, and remove nothing")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return destroyOptions{}, flagErr(err)
 	}
@@ -135,7 +136,8 @@ func runDestroy(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
-	printDestroyPreflight(env.Stdout, opt.Name, ref, pre)
+	ageWarn := destroyAgeWarning(ref, pre, h.now())
+	printDestroyPreflight(env.Stdout, opt.Name, ref, pre, ageWarn)
 	if opt.Dry {
 		fmt.Fprintln(env.Stdout, "\n  nothing was removed (--dry).")
 		return nil
@@ -153,9 +155,29 @@ func runDestroy(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 
+	// The age warning again, directly above the prompt: the one place an
+	// operator is certain to read it is the line before they type the name.
+	if ageWarn != "" {
+		fmt.Fprintf(env.Stderr, "\n  WARNING: %s\n", ageWarn)
+	}
 	if err := (TypedConfirm{Subject: opt.Name, ArchiveAck: true}).confirmFrom(env, opt.Confirm); err != nil {
 		return err
 	}
+
+	// The archive that authorised this destroy gets a durable preserve pin
+	// BEFORE the world is removed, so retention can never reclaim the one copy
+	// of what was just destroyed — even after a new instance is created with
+	// the same name into the same backup directory. The pin is a root-owned
+	// sidecar; Reindex and Prune both honour it (cli-ergonomics-7, rule 5).
+	if err := archive.WritePreservePin(ref.Path, archive.PreservePin{
+		Reason: "destroy-authorised", PinnedAt: h.now(), Instance: opt.Name,
+	}); err != nil {
+		return fmt.Errorf("pin the authorising archive before destroying the world: %w", err)
+	}
+	// Refresh the index so `gvm backup list` shows the pin at once rather than
+	// at the next backup. A reindex failure is not fatal: the sidecar is the
+	// source of truth and the next Reindex will pick it up regardless.
+	_, _ = archive.Reindex(ctx, filepath.Dir(ref.Path), archive.ReindexOptions{Now: h.Now})
 
 	res, err := archive.Destroy(ctx, ref, toArchiveTargets(targets))
 	if err != nil {
@@ -163,6 +185,8 @@ func runDestroy(ctx context.Context, env *Env, args []string) error {
 	}
 	fmt.Fprintf(env.Stdout, "\n  removed %d file(s), %d director(ies), %s\n",
 		res.Files, res.Dirs, spec.FormatBytes(res.Bytes))
+	fmt.Fprintf(env.Stdout, "  the authorising archive is preserved (pinned: destroy-authorised): %s\n",
+		ref.Path)
 
 	// The supervision comes down before the definition does.
 	//
@@ -229,7 +253,31 @@ func runDestroy(ctx context.Context, env *Env, args []string) error {
 		return fmt.Errorf("removing the %s: %w", hostops.FileInstanceSpec, err)
 	}
 	fmt.Fprintf(env.Stdout, "  the archive is still at %s\n", ref.Path)
+	printLeftInPlace(env.Stdout, opt.Name, paths)
 	return nil
+}
+
+// printLeftInPlace names what destroy did NOT remove, and why.
+//
+// destroy removes the install tree, the data tree and the control-plane files,
+// but it deliberately keeps the secrets, the service account, the recorded
+// state, the logs and the SteamCMD home — each because removing it is either
+// irreversible (secrets), risky (an account that may own files elsewhere) or
+// useful to keep (logs that explain what happened, a Steam cache that saves a
+// multi-GB re-download). The hazard gvm-self-upgrade-uninstall-7 names is that
+// it kept them SILENTLY, so an operator who thought "destroy" meant "gone"
+// found passwords and an account still on the box. This block says so.
+func printLeftInPlace(w io.Writer, name string, p instance.Paths) {
+	fmt.Fprintf(w, "\n  LEFT IN PLACE (kept on purpose; remove by hand if you are sure):\n")
+	for _, it := range []struct{ what, why string }{
+		{p.SecretsDir, "secrets (join, RCON and admin passwords) — removing them is not reversible"},
+		{instance.UserName(name), "the service account, in case it still owns files elsewhere on the box"},
+		{p.State, "recorded state (observed status, leases, port echo)"},
+		{p.Logs, "console and job logs, which say what this server did"},
+		{p.SteamHome, "the SteamCMD home (cached depots), which a re-create would otherwise re-download"},
+	} {
+		fmt.Fprintf(w, "    %-44s %s\n", it.what, it.why)
+	}
 }
 
 // confirmFrom takes the typed value from a flag or from the terminal, and
@@ -240,15 +288,22 @@ func runDestroy(ctx context.Context, env *Env, args []string) error {
 // scriptable route would be weaker than the interactive one, and the scriptable
 // route is the one an attacker gets to use.
 func (c TypedConfirm) confirmFrom(env *Env, typed string) error {
+	// A typed-name mismatch or a declined prompt is a REFUSAL (exit 5), not a
+	// failure: the operator was asked and did not confirm, which a script should
+	// tell apart from the action failing (U8). A terminal read error stays a
+	// failure (1) — that is the tool breaking, not the operator declining.
 	if typed != "" {
-		return c.Check(typed, true)
+		if err := c.Check(typed, true); err != nil {
+			return refused(err)
+		}
+		return nil
 	}
 	ok, err := c.Prompt(env.Stdin, env.Stdout)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return ErrNotConfirmed
+		return refused(ErrNotConfirmed)
 	}
 	return nil
 }
@@ -355,11 +410,44 @@ func toArchiveTargets(js []instance.Jailed) []archive.Target {
 	return out
 }
 
-func printDestroyPreflight(w io.Writer, name string, ref *archive.Ref, pre *instance.Preflight) {
+// destroyAgeWarning returns the "this archive predates recent play" line, or ""
+// when the archive is at least as new as everything in the destroy set. It
+// names the age in days so the operator sees how much would be lost, not just a
+// timestamp they have to subtract in their head (cli-ergonomics-7).
+func destroyAgeWarning(ref *archive.Ref, pre *instance.Preflight, now time.Time) string {
+	if ref == nil || pre == nil || pre.NewestMTime.IsZero() {
+		return ""
+	}
+	if !ref.CreatedAt.Before(pre.NewestMTime) {
+		return ""
+	}
+	days := int(now.Sub(ref.CreatedAt).Hours() / 24)
+	cls := string(ref.Class)
+	if ref.Reason != "" {
+		cls += " (reason " + ref.Reason + ")"
+	}
+	return fmt.Sprintf("taken %s (%d days ago), class %s — %d days of play are not in it",
+		ref.CreatedAt.UTC().Format("2006-01-02 15:04 UTC"), days, cls, days)
+}
+
+func printDestroyPreflight(w io.Writer, name string, ref *archive.Ref, pre *instance.Preflight, ageWarn string) {
 	fmt.Fprintf(w, "\ndestroy %s\n", name)
 	fmt.Fprintf(w, "  archive   %s\n", ref.Path)
-	fmt.Fprintf(w, "            %s, verified %s\n",
-		spec.FormatBytes(ref.Bytes), ref.VerifiedAt.UTC().Format("2006-01-02 15:04:05Z"))
+	// CreatedAt and Class, not VerifiedAt: when the archive was taken and what
+	// it is are what an operator needs to judge whether losing everything newer
+	// than it is acceptable. "verified just now" was reassuring about the wrong
+	// thing (cli-ergonomics-7).
+	created := ref.CreatedAt.UTC().Format("2006-01-02 15:04:05Z")
+	if ref.Reason != "" {
+		fmt.Fprintf(w, "            %s, taken %s, class %s (reason %s)\n",
+			spec.FormatBytes(ref.Bytes), created, ref.Class, ref.Reason)
+	} else {
+		fmt.Fprintf(w, "            %s, taken %s, class %s\n",
+			spec.FormatBytes(ref.Bytes), created, ref.Class)
+	}
+	if ageWarn != "" {
+		fmt.Fprintf(w, "  WARNING   %s\n", ageWarn)
+	}
 	fmt.Fprintf(w, "  removes   %d file(s), %d director(ies), %s\n",
 		pre.Files, pre.Dirs, spec.FormatBytes(pre.Bytes))
 	for _, t := range pre.Paths {

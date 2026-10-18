@@ -39,3 +39,10 @@ func Probe(worldPaths []string, snapDir string) (Capability, error) {
 func Clone(ctx context.Context, m Method, src, dst string) ([]string, error) {
 	return nil, platform.Unsupported("FICLONE and btrfs subvolume snapshots")
 }
+
+// destroyBtrfsSubvolume is Linux-only. On any other OS there are no btrfs
+// subvolumes to destroy, and the sweep's os.RemoveAll has already handled the
+// ordinary directories, so this is only ever reached on Linux in practice.
+func destroyBtrfsSubvolume(path string) error {
+	return platform.Unsupported("btrfs subvolume destroy")
+}

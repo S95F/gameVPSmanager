@@ -33,6 +33,7 @@ import (
 	"io/fs"
 
 	"github.com/S95F/gameVPSmanager/internal/content"
+	"github.com/S95F/gameVPSmanager/internal/content/curseforge"
 )
 
 func runContentBlocked(ctx context.Context, env *Env, args []string) error {
@@ -123,8 +124,8 @@ func printBlockedReport(w io.Writer, v *contentView, rep blockedReport) {
 			fmt.Fprintf(w, "      %s\n", f.URL)
 		}
 	}
-	fmt.Fprintf(w, "\n  Put them in /var/lib/gvm/downloads/mods, then:\n"+
-		"      gvm content resolve-blocked %s\n", v.Name)
+	fmt.Fprintf(w, "\n  Put them in %s, then re-run:\n"+
+		"      gvm content blocked %s\n", curseforge.DropBoxDir, v.Name)
 	if rep.State != "" {
 		fmt.Fprintf(w, "  state: %s\n", rep.State)
 	}

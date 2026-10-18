@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"strings"
 
 	"github.com/S95F/gameVPSmanager/internal/firewall"
 )
@@ -35,16 +34,25 @@ func (b Backend) Status(ctx context.Context) (firewall.RuleSet, bool, error) {
 func (b Backend) Apply(ctx context.Context, plan *firewall.Plan) error {
 	for _, step := range plan.Steps {
 		switch step.Kind {
-		case firewall.StepAdd, firewall.StepAdopt:
-			// For adoption: ufw re-adds the rule with the new comment.
-			args := strings.Fields(step.Rule.UFWSpec())
+		case firewall.StepAdd:
+			// The comment/tag goes in as a bare argv element via UFWArgs, not a
+			// shell-quoted field of UFWSpec: gvm execs ufw with no shell, so a
+			// quoted tag would be stored with its quotes.
+			args := step.Rule.UFWArgs(true)
 			if _, err := runUFW(ctx, args...); err != nil {
 				return fmt.Errorf("ufw add %v: %w", args, err)
 			}
+		case firewall.StepAdopt:
+			// Adoption re-tags a rule the operator wrote by hand, and it runs
+			// ONLY through `gvm firewall adopt-rules` after a typed confirmation
+			// (Phase 40 item 5), never from a plain apply. A stop, start or apply
+			// silently taking a foreign rule under management is exactly the
+			// surprise that contract exists to prevent, so Apply does nothing here.
 		case firewall.StepDelete:
 			// ufw delete requires the rule spec, not a line number, to avoid
-			// races with concurrent rule additions shifting indices.
-			args := append([]string{"delete"}, strings.Fields(step.Rule.UFWSpec())...)
+			// races with concurrent rule additions shifting indices. The spec
+			// carries no comment: ufw matches a delete on the spec alone.
+			args := append([]string{"delete"}, step.Rule.UFWArgs(false)...)
 			if _, err := runUFW(ctx, args...); err != nil {
 				return fmt.Errorf("ufw delete %v: %w", args, err)
 			}

@@ -40,6 +40,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/S95F/gameVPSmanager/internal/avail"
 	"github.com/S95F/gameVPSmanager/internal/content"
 	"github.com/S95F/gameVPSmanager/internal/content/steamworkshop"
 	"github.com/S95F/gameVPSmanager/internal/gamecfg"
@@ -56,7 +57,7 @@ var contentSubs = []struct {
 	run     func(context.Context, *Env, []string) error
 }{
 	{"list", "<instance>", "the declared list, what the lock records, and what is on disk", runContentList},
-	{"diff", "<instance>", "declared vs locked vs observed — the three-way view (section 12.9)", runContentDiff},
+	{"diff", "<instance>", "declared vs locked vs observed — the three-way view", runContentDiff},
 	{"why", "<instance> <activation-id>", "explain how one mod id came to be enabled, or why it is not", runContentWhy},
 	{"add", "<instance> <id>...", "declare items, at a chosen position", runContentAdd},
 	{"remove", "<instance> <id>...", "undeclare items", runContentRemove},
@@ -65,13 +66,13 @@ var contentSubs = []struct {
 	{"update", "<instance> [<id>...]", "report items whose internal ids have moved since the lock", runContentUpdate},
 	{"lock", "<instance>", "show, check or re-stamp the recorded intent", runContentLock},
 	{"collection", "sync <instance>", "reconcile the declared list against a Steam collection", runContentCollection},
-	{"blocked", "<instance>", "items awaiting a manual download (section 12.8)", runContentBlocked},
+	{"blocked", "<instance>", "items awaiting a manual download", runContentBlocked},
 }
 
 func runContent(ctx context.Context, env *Env, args []string) error {
 	if len(args) == 0 {
 		contentUsage(env.Stderr)
-		return errors.New("name a subcommand")
+		return usageErr(errors.New("name a subcommand"))
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -84,7 +85,7 @@ func runContent(ctx context.Context, env *Env, args []string) error {
 		}
 	}
 	contentUsage(env.Stderr)
-	return fmt.Errorf("unknown subcommand %q", args[0])
+	return usageErr(fmt.Errorf("unknown subcommand %q", args[0]))
 }
 
 func contentUsage(w io.Writer) {
@@ -248,6 +249,21 @@ func openContent(ctx context.Context, env *Env, opt *contentOptions, pos []strin
 		return nil, err
 	}
 	v.Schema = sc
+
+	// Minecraft mod management (Modrinth, CurseForge) is not in this build. The
+	// block compiles — a jar dropped in a root loads by presence — but gvm will
+	// not resolve, download or diff these sources yet, so every content verb on
+	// such an instance says so in one sentence rather than four schema errors or
+	// a half-working command (content-mods-3). The jars already on disk still
+	// load; gvm simply does not manage them.
+	if src := sc.Source; src == content.KindModrinth || src == content.KindCurseForge {
+		root := "the mods directory"
+		if len(roots) > 0 {
+			root = roots[0]
+		}
+		return nil, avail.New(fmt.Sprintf("Minecraft mod management is not in this build; "+
+			"jars under %s load as-is", root))
+	}
 
 	if err := v.openRoots(roots); err != nil {
 		return nil, err
@@ -417,7 +433,7 @@ func (v *contentView) sourceLock() (*content.SourceLock, string) {
 // configDoc parses one of the manifest's declared config files.
 //
 // By NAME, never by path: a content verb cannot address a file the manifest
-// does not declare, and the manifest is what is pinned per instance (D-17).
+// does not declare, and the manifest is what is pinned per instance.
 // The RCON password lives in the same ini as Mods=, which is why this is the
 // only reader and why it hands back a parsed document rather than bytes.
 func (v *contentView) configDoc(name string) (gamecfg.Doc, error) {
@@ -714,7 +730,8 @@ func afterListEdit(w io.Writer, v *contentView, refs []content.Ref) {
 	fmt.Fprintf(w, "  Nothing was applied: the server still loads what %s and its config say.\n",
 		v.Paths.ContentLock)
 	fmt.Fprintf(w, "    gvm content diff %s      what would change\n", v.Name)
-	fmt.Fprintf(w, "    gvm content sync %s      apply it\n", v.Name)
+	fmt.Fprintf(w, "  applying mod changes is not available in this build; "+
+		"gvm content sync %s --dry-run shows what it would do.\n", v.Name)
 }
 
 // ---------------------------------------------------------------------------
@@ -1113,7 +1130,6 @@ func runContentAdd(ctx context.Context, env *Env, args []string) error {
 	pin := fset.String("pin", "", "pin the item to this version (Modrinth/CurseForge; a Steam Workshop item has no per-version id)")
 	note := fset.String("note", "", "the documentation line this item carries in the list")
 	requires := fset.String("requires", "", "comma-separated acquisition ids this item must load after")
-	apply := fset.Bool("apply", false, "sync immediately after writing the list")
 	pos, err := parseInterspersed(fset, args)
 	if err != nil {
 		return flagErr(err)
@@ -1122,19 +1138,30 @@ func runContentAdd(ctx context.Context, env *Env, args []string) error {
 		fset.Usage()
 		return errors.New("name an instance and at least one acquisition id")
 	}
-	if *apply {
-		// Refused BEFORE anything is written, so nothing half-happens. See the
-		// file comment: the applying half of a sync is a job.
-		return errContentSyncIsAJob(pos[0])
-	}
+	// No `--apply`: editing the list changes intent only, and applying it is not
+	// available in this build, so a flag that pretended to is gone rather than
+	// accepted-and-refused (U3). afterListEdit says what the next step is.
 
 	v, err := openContent(ctx, env, opt, pos[:1])
 	if err != nil {
 		return err
 	}
+	// A Steam Workshop item has no per-version id, so `--pin` cannot mean
+	// anything for one; accepting it would record a pin gvm silently ignores.
+	if *pin != "" && v.Schema.Source == content.KindSteamWorkshop {
+		return usageErr(errors.New("--pin is not valid for a Steam Workshop item: it has no " +
+			"per-version id, so gvm always fetches the latest. Drop --pin, or pin a Modrinth/CurseForge item"))
+	}
 	add := make([]content.Ref, 0, len(pos)-1)
-	for _, id := range pos[1:] {
-		ref := content.Ref{ID: strings.TrimSpace(id), Pin: *pin, Note: *note}
+	for _, raw := range pos[1:] {
+		// Validate the id against this instance's source BEFORE writing it, so a
+		// URL is normalised and a mistyped name or an activation id fails here
+		// with a sentence rather than at the next sync with a 404.
+		id, err := content.NormalizeID(v.Schema.Source, raw)
+		if err != nil {
+			return usageErr(err)
+		}
+		ref := content.Ref{ID: id, Pin: *pin, Note: *note}
 		for _, r := range strings.Split(*requires, ",") {
 			if r = strings.TrimSpace(r); r != "" {
 				ref.Requires = append(ref.Requires, r)
@@ -1163,7 +1190,6 @@ func runContentAdd(ctx context.Context, env *Env, args []string) error {
 
 func runContentRemove(ctx context.Context, env *Env, args []string) error {
 	fset, opt := contentFlags(env, "remove", "<instance> <id>...")
-	apply := fset.Bool("apply", false, "sync immediately after writing the list")
 	pos, err := parseInterspersed(fset, args)
 	if err != nil {
 		return flagErr(err)
@@ -1172,9 +1198,7 @@ func runContentRemove(ctx context.Context, env *Env, args []string) error {
 		fset.Usage()
 		return errors.New("name an instance and at least one acquisition id")
 	}
-	if *apply {
-		return errContentSyncIsAJob(pos[0])
-	}
+	// No `--apply`: see runContentAdd.
 	v, err := openContent(ctx, env, opt, pos[:1])
 	if err != nil {
 		return err
@@ -1278,7 +1302,7 @@ func printOrderFindings(w io.Writer, name string, vs []content.OrderViolation) {
 func errContentSyncIsAJob(name string) error {
 	return fmt.Errorf("applying a content change stops the server, writes the acquisition key, "+
 		"boots once for the download, stops again, writes the activation key and starts -- one "+
-		"job holding this instance's lock the whole time (section 12.6). That job is not in "+
+		"job holding this instance's lock the whole time. That job is not in "+
 		"this build, and running the steps from the CLI would be a second thing that can leave "+
 		"a server stopped.\n"+
 		"  gvm content sync %s --dry-run   decides, read-only, safe with players online\n"+
@@ -1385,7 +1409,7 @@ func printContentPlan(w io.Writer, v *contentView, p *content.Plan) {
 	}
 	if len(p.Changes) == 0 {
 		// The normal nightly answer, stated as a first-class success: nothing
-		// to do must not read as something gone wrong (D-43).
+		// to do must not read as something gone wrong.
 		fmt.Fprint(w, "  = the declared list, the lock and the live config agree\n")
 	}
 	printOrderFindings(w, v.Name, content.CheckOrderPlan(p))
@@ -1650,7 +1674,7 @@ func countRequires(sl *content.SourceLock) int {
 func verbatimLine(sl *content.SourceLock, sc *content.Schema) string {
 	if sl.VerbatimActivation {
 		return fmt.Sprintf("verbatim_activation: the recorded %s line is the operator's and is "+
-			"returned untouched (`gvm content promote` hands it back to the resolver)",
+			"returned untouched (handing it back to the resolver is not available in this build)",
 			sc.Activation.Key)
 	}
 	return fmt.Sprintf("verbatim_activation: false, so %s is derived from the entries",

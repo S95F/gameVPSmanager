@@ -328,8 +328,15 @@ func SweepSnapDir(f FS, snapDir, instance string, now time.Time, olderThan time.
 		}
 		p := path.Join(snapDir, name)
 		if err := f.RemoveAll(p); err != nil {
-			errs = append(errs, fmt.Errorf("backup: sweeping %s: %w", p, err))
-			continue
+			// A read-only btrfs subvolume clone cannot be removed with RemoveAll;
+			// it needs BTRFS_IOC_SNAP_DESTROY_V2. Try that before giving up, so a
+			// subvolume clone is actually reclaimed rather than left to shrink
+			// free space every night (offsite-backup-dr-10).
+			if derr := destroyBtrfsSubvolume(p); derr != nil {
+				errs = append(errs, fmt.Errorf("backup: sweeping %s: %w (subvolume destroy: %v)",
+					p, err, derr))
+				continue
+			}
 		}
 		removed = append(removed, p)
 	}

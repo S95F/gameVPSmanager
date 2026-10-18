@@ -7,8 +7,6 @@ import (
 	"os"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/S95F/gameVPSmanager/internal/doctor"
 	"github.com/S95F/gameVPSmanager/internal/firewall"
 	"github.com/S95F/gameVPSmanager/internal/lifecycle"
@@ -30,17 +28,16 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	quiet := fs.Bool("q", false, "only show problems and warnings (suppress OK and Skip)")
+	asJSON := fs.Bool("json", false, "print the findings as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	// Load host config.
-	hostCfg, err := doctorLoadHostConfig()
-	if err != nil {
-		fmt.Fprintf(env.Stderr, "doctor: could not load host config (%v); using defaults\n", err)
-		d := spec.DefaultHostConfig()
-		hostCfg = &d
-	}
+	// Load host config. A bad file is not fatal to doctor — it reports the
+	// problem below and checks the rest of the host against the merged
+	// (defaults-filled) config, because an operator whose gvm.yaml has a typo
+	// still needs to know whether their servers are healthy.
+	hostCfg, cfgDiags := doctorLoadHostConfig()
 
 	// Build the check registry.
 	reg := &lifecycle.CheckRegistry{}
@@ -72,25 +69,93 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 	ce := &doctorCheckEnv{}
 	findings := reg.RunAll(ctx, ce)
 
-	// Header: if Postgres is unreachable, say so first.
-	if !ce.PostgresReachable(ctx) {
-		fmt.Fprintf(env.Stdout, "  - POSTGRES   not reachable; database checks skipped\n")
-	}
-
-	for _, f := range findings {
-		if *quiet && (f.Severity == lifecycle.CheckOK || f.Severity == lifecycle.CheckSkip) {
+	// A host config that does not validate is a HOST-CONFIG Problem (one per
+	// bad key), with the did-you-mean the loader produced carried through.
+	for _, d := range cfgDiags {
+		if d.Sev != spec.SevError {
 			continue
 		}
-		fmt.Fprintln(env.Stdout, lifecycle.FormatFinding(f))
+		msg := d.Msg
+		if d.Path != "" {
+			msg = d.Path + ": " + d.Msg
+		}
+		findings = append(findings, lifecycle.CheckFinding{
+			ID: "HOST-CONFIG", Severity: lifecycle.CheckProblem, Message: msg, Fix: d.Fix,
+		})
 	}
 
-	problems := lifecycle.CountCheckProblems(findings)
-	if problems > 0 {
-		fmt.Fprintf(env.Stdout, "\n  %d problem(s) found\n", problems)
-		return fmt.Errorf("doctor: %d problem(s)", problems)
+	// A missing Postgres is a Note, not a problem and not a scary header line:
+	// the dashboard and the searchable audit history need it, game servers do
+	// not (rule 1). It becomes more than a Note only once a gvm-web unit is
+	// installed, which this build does not ship.
+	if !ce.PostgresReachable(ctx) {
+		findings = append(findings, lifecycle.CheckFinding{
+			ID:       "POSTGRES",
+			Severity: lifecycle.CheckNote,
+			Message:  "Postgres not reachable: dashboard and audit-database features unavailable; game servers unaffected",
+		})
 	}
-	fmt.Fprintf(env.Stdout, "\n  0 problems\n")
+
+	problems, warnings, notes := countSeverities(findings)
+
+	if *asJSON {
+		if err := writeJSON(env.Stdout, doctorJSON(findings, problems, warnings, notes)); err != nil {
+			return err
+		}
+	} else {
+		for _, f := range findings {
+			if *quiet && (f.Severity == lifecycle.CheckOK || f.Severity == lifecycle.CheckSkip) {
+				continue
+			}
+			fmt.Fprintln(env.Stdout, lifecycle.FormatFinding(f))
+		}
+		// The totals line, always, so a clean run says "0 problems" and a dirty
+		// one says exactly how dirty, and both point at where to read next.
+		fmt.Fprintf(env.Stdout, "\n  %s, %s, %s · see: gvm help troubleshooting\n",
+			plural(problems, "problem"), plural(warnings, "warning"), plural(notes, "note"))
+	}
+
+	if problems > 0 {
+		// Exit 4, not 1: doctor ran fine and FOUND something. A script can
+		// branch on "problems exist" without parsing text, and a failed doctor
+		// run (which 1 would conflate with) is a different thing (U8).
+		return checked(fmt.Errorf("doctor: %d problem(s)", problems))
+	}
 	return nil
+}
+
+// countSeverities tallies the finding severities for the totals line and the
+// exit code.
+func countSeverities(findings []lifecycle.CheckFinding) (problems, warnings, notes int) {
+	for _, f := range findings {
+		switch f.Severity {
+		case lifecycle.CheckProblem:
+			problems++
+		case lifecycle.CheckWarning:
+			warnings++
+		case lifecycle.CheckNote:
+			notes++
+		}
+	}
+	return
+}
+
+// doctorJSON is the --json shape: the findings and the totals, read by the
+// dashboard and by a CI check. The keys are stable (snake_case) so a consumer
+// can rely on them.
+func doctorJSON(findings []lifecycle.CheckFinding, problems, warnings, notes int) map[string]any {
+	rows := make([]map[string]any, 0, len(findings))
+	for _, f := range findings {
+		row := map[string]any{"id": f.ID, "severity": string(f.Severity), "message": f.Message}
+		if f.Fix != "" {
+			row["fix"] = f.Fix
+		}
+		rows = append(rows, row)
+	}
+	return map[string]any{
+		"findings": rows,
+		"totals":   map[string]int{"problems": problems, "warnings": warnings, "notes": notes},
+	}
 }
 
 // doctorCheckEnv is the production CheckEnv.
@@ -131,20 +196,17 @@ func (e *doctorCheckEnv) PostgresReachable(ctx context.Context) bool {
 	return e.reached
 }
 
-func doctorLoadHostConfig() (*spec.HostConfig, error) {
+// doctorLoadHostConfig reads /etc/gvm/gvm.yaml through the one loader
+// (spec.LoadHost), so doctor's view of the config matches create's and ports'.
+// An absent file is the normal unconfigured state: the defaults, no diagnostics.
+func doctorLoadHostConfig() (*spec.HostConfig, spec.Diags) {
 	const path = "/etc/gvm/gvm.yaml"
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		d := spec.DefaultHostConfig()
+		return &d, nil
 	}
-	defer f.Close()
-	var h spec.HostConfig
-	dec := yaml.NewDecoder(f)
-	dec.KnownFields(false)
-	if err := dec.Decode(&h); err != nil {
-		return nil, err
-	}
-	return &h, nil
+	return spec.LoadHost(path, data)
 }
 
 func doctorLoadInstances() []spec.Instance              { return nil }

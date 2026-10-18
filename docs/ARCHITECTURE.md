@@ -1,5 +1,7 @@
 # gvm — Architecture
 
+> **Target design; see the [README](../README.md) for what works today.** This document describes the finished system. Many components it specifies are not in the current build — the README "What works in this build" table is the authority on what runs now.
+
 **A generalized VPS game-server manager built on the assumption that the daemon will be down when it matters.**
 
 > The files on disk *are* the server. systemd does the supervising. Postgres is the logbook.

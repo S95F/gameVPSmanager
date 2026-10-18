@@ -8,16 +8,34 @@ package cli
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
+	"strings"
 
-	"github.com/S95F/gameVPSmanager/internal/version"
+	helptopics "github.com/S95F/gameVPSmanager/docs/help"
+	"github.com/S95F/gameVPSmanager/internal/avail"
 )
 
-// ErrNotImplemented marks a command that is routed but not yet built. It
-// exits non-zero so a script cannot mistake an unbuilt phase for success.
-var ErrNotImplemented = errors.New("not implemented yet")
+// errHelpShown is returned by a parse*Args (through flagErr) when the operator
+// asked for help: the FlagSet has already printed usage, so there is nothing
+// left to do and nothing went wrong. Main maps it — and a raw flag.ErrHelp from
+// the few commands that return one directly — to exit 0, so `gvm <cmd> --help`
+// never continues into the command with zero options (U7, the panic the plan's
+// "Why now" describes). Requested help is success, not a usage error.
+var errHelpShown = errors.New("help shown")
+
+// ErrNotImplemented marks a command that is routed but not yet built.
+//
+// It is built on avail.New so it matches avail.ErrUnavailable: a routed-but-
+// unbuilt command and a half-built seam both exit 3 and both read "not
+// available in this build", because to an operator they are the same answer —
+// "this gvm cannot do that" — and a script telling them apart was never the
+// point. errors.Is(err, ErrNotImplemented) still works for the few call sites
+// that want the narrower match.
+var ErrNotImplemented = avail.New("not implemented yet")
 
 // ExitError lets a command choose the process exit status.
 //
@@ -91,15 +109,24 @@ type Command struct {
 	// Hidden keeps a command out of usage without disabling it. Used for
 	// internal roles that systemd invokes but a human never types.
 	Hidden bool
-	Run    func(ctx context.Context, env *Env, args []string) error
+	// Avail is this command's entry in the build's one availability registry
+	// (U1). The zero value is Works, which is most of them; a command only
+	// carries a row here when it is Partial or NotInBuild. usage() reads it to
+	// move NotInBuild commands under "Not available in this build", and
+	// TestAvailabilityMatchesBehaviour reads it to fail when a Works row refuses
+	// or a NotInBuild row starts working.
+	Avail avail.Availability
+	Run   func(ctx context.Context, env *Env, args []string) error
 }
 
 // commands is the dispatch table. Order within a group is the order listed.
 var commands = []Command{
 	{Name: "version", Group: "general", Summary: "print the version banner", Run: runVersion},
 
-	{Name: "gvmd", Group: "roles", Summary: "run the privileged verb gateway (root)", Hidden: true, Run: notImplemented},
-	{Name: "web", Group: "roles", Summary: "run the dashboard and API", Hidden: true, Run: notImplemented},
+	{Name: "gvmd", Group: "roles", Summary: "run the privileged verb gateway (root)", Hidden: true,
+		Avail: avail.Unbuilt("the privileged verb gateway is not in this build"), Run: notImplemented},
+	{Name: "web", Group: "roles", Summary: "run the dashboard and API", Hidden: true,
+		Avail: avail.Unbuilt("the dashboard and API are not in this build"), Run: notImplemented},
 	{Name: "run", Group: "roles", Summary: "supervise one instance", Hidden: true, Run: runRun},
 	// The three roles below are invoked by the unit and by gvmd, never typed.
 	// run-shutdown in particular is the layer-3 recovery path of section 11.8:
@@ -108,13 +135,14 @@ var commands = []Command{
 	{Name: "run-shutdown", Group: "roles", Summary: "run a stopped instance's shutdown ladder from shutdown.json", Hidden: true, Run: runRunShutdown},
 	// probe-write runs INSIDE the transient unit `gvm apply` builds, as the
 	// instance's own account and under the sandbox the drop-in will carry
-	// (D-15). It is the only command whose caller is another copy of gvm.
+	//. It is the only command whose caller is another copy of gvm.
 	{Name: "probe-write", Group: "roles", Summary: "test whether the sandbox permits a write to each path (root, apply)", Hidden: true, Run: runProbeWrite},
 
 	{Name: "game", Group: "manifests", Summary: "validate and inspect game manifests", Run: runGame},
 
 	{Name: "create", Group: "instances", Summary: "define a new instance", Run: runCreate},
-	{Name: "install", Group: "instances", Summary: "install or repair an instance's game files", Run: runInstall},
+	{Name: "install", Group: "instances", Summary: "install or repair an instance's game files",
+		Avail: avail.Unbuilt("installing game files is not in this build; `gvm install` reports its preflight, then refuses"), Run: runInstall},
 	{Name: "apply", Group: "instances", Summary: "reconcile an instance with its spec", Run: runApply},
 	{Name: "start", Group: "instances", Summary: "start an instance", Run: runStart},
 	{Name: "stop", Group: "instances", Summary: "stop an instance, saving cleanly", Run: runStop},
@@ -128,38 +156,50 @@ var commands = []Command{
 	{Name: "control", Group: "instances", Summary: "inspect and drive an instance's control channel", Run: runControl},
 
 	{Name: "content", Group: "content", Summary: "manage mods and workshop items", Run: runContent},
-	// `gvm mods` is an alias, because operators say "mods" (section 12.9). It
+	// `gvm mods` is an alias, because operators say "mods". It
 	// is hidden so the usage listing names one spelling: two visible entries
 	// for one verb invites the question of how they differ.
 	{Name: "mods", Group: "content", Summary: "alias for `gvm content`", Hidden: true, Run: runContent},
 	{Name: "backup", Group: "operations", Summary: "archive an instance, verify and prune archives", Run: runBackup},
-	{Name: "restore", Group: "operations", Summary: "restore an archive over a world", Run: runRestore},
-	{Name: "update", Group: "operations", Summary: "update an instance, deciding before it stops", Run: runUpdate},
-	{Name: "rebuild", Group: "operations", Summary: "rebuild a world, archiving it first", Run: runRebuild},
-	// `gvm job run %i` is gvm-job@.service's ExecStart (section 7.5) and is
+	{Name: "restore", Group: "operations", Summary: "restore an archive over a world",
+		Avail: avail.Partialf("`gvm restore --list` works; restoring a world is not in this build"), Run: runRestore},
+	{Name: "update", Group: "operations", Summary: "update an instance, deciding before it stops",
+		Avail: avail.Unbuilt("updating game files is not in this build; the decision-only report works"), Run: runUpdate},
+	{Name: "rebuild", Group: "operations", Summary: "rebuild a world, archiving it first",
+		Avail: avail.Unbuilt("rebuilding a world is not in this build"), Run: runRebuild},
+	// `gvm job run %i` is gvm-job@.service's ExecStart and is
 	// also how an operator fires a scheduled job by hand, so it is listed
 	// rather than hidden: `gvm job list` is the answer to "what does this box
 	// run at 05:00", which is a question asked far more often than it is run.
 	{Name: "job", Group: "operations", Summary: "run and inspect the scheduled work", Run: runJob},
 
-	{Name: "adopt", Group: "migration", Summary: "import an existing server install", Run: runAdopt},
+	{Name: "adopt", Group: "migration", Summary: "import an existing server install",
+		Avail: avail.Partialf("`gvm adopt discover` and `finalize` work; cutover and rollback are not in this build"), Run: runAdopt},
 
-	{Name: "user", Group: "admin", Summary: "manage dashboard users and roles", Run: runUser},
-	{Name: "token", Group: "admin", Summary: "manage API tokens", Run: runToken},
-	{Name: "secret", Group: "admin", Summary: "manage instance secrets", Run: runSecret},
-	{Name: "audit", Group: "admin", Summary: "view audit log records", Run: runAudit},
+	{Name: "user", Group: "admin", Summary: "manage dashboard users and roles",
+		Avail: avail.Unbuilt("dashboard users are not in this build"), Run: runUser},
+	{Name: "token", Group: "admin", Summary: "manage API tokens",
+		Avail: avail.Unbuilt("API tokens are not in this build"), Run: runToken},
+	{Name: "secret", Group: "admin", Summary: "manage instance secrets",
+		Avail: avail.Unbuilt("setting instance secrets is not in this build"), Run: runSecret},
+	{Name: "audit", Group: "admin", Summary: "view audit log records",
+		Avail: avail.Unbuilt("reading the audit log is not in this build"), Run: runAudit},
 
-	{Name: "firewall", Group: "host", Summary: "manage host firewall rules", Run: notImplemented},
+	{Name: "host", Group: "host", Summary: "install gvm on this host (host init)", Run: runHost},
+	{Name: "firewall", Group: "host", Summary: "manage host firewall rules",
+		Avail: avail.Unbuilt("gvm does not manage the firewall in this build"), Run: runFirewall},
 	{Name: "doctor", Group: "host", Summary: "check the host for problems", Run: runDoctor},
 	{Name: "db", Group: "host", Summary: "manage the datastore schema", Run: runDB},
 }
 
-// help is registered here rather than in the literal above because it calls
-// lookup, which reads commands: as a literal that is an initialization cycle.
+// help and completion are registered here rather than in the literal above
+// because they read `commands` (help via lookup, completion via
+// completionCommands): as a literal that is an initialization cycle.
 func init() {
-	commands = append(commands, Command{
-		Name: "help", Group: "general", Summary: "show usage for a command", Run: runHelp,
-	})
+	commands = append(commands,
+		Command{Name: "help", Group: "general", Summary: "show usage for a command", Run: runHelp},
+		Command{Name: "completion", Group: "general", Summary: "print a shell completion script (bash|zsh|fish)", Run: runCompletion},
+	)
 }
 
 var groupOrder = []struct{ key, title string }{
@@ -183,7 +223,7 @@ func lookup(name string) (Command, bool) {
 }
 
 // Main runs the CLI and returns a process exit code.
-func Main(ctx context.Context, env *Env) int {
+func Main(ctx context.Context, env *Env) (code int) {
 	if env.Getenv == nil {
 		env.Getenv = os.Getenv
 	}
@@ -207,8 +247,12 @@ func Main(ctx context.Context, env *Env) int {
 
 	cmd, ok := lookup(name)
 	if !ok {
-		fmt.Fprintf(env.Stderr, "gvm: unknown command %q\n\n", name)
-		usage(env.Stderr)
+		if s := didYouMean(name, commandNames()); s != "" {
+			fmt.Fprintf(env.Stderr, "gvm: unknown command %q — did you mean %q?\n", name, s)
+		} else {
+			fmt.Fprintf(env.Stderr, "gvm: unknown command %q\n\n", name)
+			usage(env.Stderr)
+		}
 		return 2
 	}
 
@@ -223,14 +267,32 @@ func Main(ctx context.Context, env *Env) int {
 		}
 	}()
 
+	// A panic in an operator verb is a gvm bug, not an operator error: catch it,
+	// say so in one line, and exit 1 rather than dumping a stack at someone who
+	// cannot act on it. The role verbs (run, run-shutdown, …) are NOT wrapped —
+	// they crash into the journal with their own exit codes, which is what
+	// systemd's Restart and RestartPreventExitStatus read (U8, rule 4).
+	if routeOf(name) != RouteRole {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(env.Stderr, "gvm %s: %v\n", name, r)
+				fmt.Fprintln(env.Stderr, "this is a gvm bug; GVM_DEBUG=1 shows the stack")
+				if env.Getenv("GVM_DEBUG") != "" {
+					fmt.Fprintf(env.Stderr, "%s\n", debug.Stack())
+				}
+				code = 1
+			}
+		}()
+	}
+
 	if err := cmd.Run(ctx, env, env.Args[1:]); err != nil {
-		// The wrapped error is printed rather than a fixed sentence so that a
-		// half-built subcommand can say WHICH half: "gvm control probe" and
-		// "gvm web" are both unbuilt and an operator needs to tell them apart.
-		if errors.Is(err, ErrNotImplemented) {
-			fmt.Fprintf(env.Stderr, "gvm %s: %v\n", name, err)
-			return 3
+		// Requested help is success: the FlagSet already printed usage, so a
+		// parse that stopped for -h/--help exits 0 and continues into nothing.
+		if errors.Is(err, errHelpShown) || errors.Is(err, flag.ErrHelp) {
+			return 0
 		}
+		// A role's exit code is a contract with systemd (see ExitError), so it
+		// is read before anything else and passed through untouched.
 		var xe *ExitError
 		if errors.As(err, &xe) {
 			if xe.Err != nil {
@@ -238,28 +300,227 @@ func Main(ctx context.Context, env *Env) int {
 			}
 			return xe.Code
 		}
-		fmt.Fprintf(env.Stderr, "gvm %s: %v\n", name, err)
+		// Everything "not in this build" exits 3 with one standard line, so a
+		// script can tell "gvm cannot do this" from a real failure by the code
+		// alone (U8). The reason is printed below it, in the command's own
+		// words — "gvm control probe" and "gvm web" are both unbuilt and an
+		// operator still needs to tell them apart — but the "not available"
+		// sentence is said once, by Main, and never by the error.
+		if errors.Is(err, avail.ErrUnavailable) {
+			fmt.Fprintf(env.Stderr, "gvm %s: not available in this build; nothing was changed.\n", name)
+			fmt.Fprintf(env.Stderr, "  %s\n", err)
+			return 3
+		}
+		// The forgotten `sudo`: one line that echoes the whole command, so the
+		// fix is a copy-paste and not a paragraph about transports. Every
+		// remaining ErrNoTransport is a non-root operator who needs root — the
+		// remote advice is gone with the API client (U10) — so the message is
+		// the same for a host op and for the console socket.
+		if errors.Is(err, ErrNoTransport) && env.Geteuid() != 0 {
+			full := "gvm " + strings.Join(env.Args, " ")
+			fmt.Fprintf(env.Stderr, "%s needs root. Run: sudo %s\n", full, full)
+			return 1
+		}
+		// The operator exit-code table (U8): a verb that refused (5), checked
+		// and found something (4) or was mis-typed (2) carries its own code,
+		// which Main reads here for operator verbs. Role verbs never reach this:
+		// their ExitError was already returned above, keeping their systemd
+		// contract intact.
+		var ce *codedError
+		if errors.As(err, &ce) {
+			fmt.Fprintf(env.Stderr, "gvm %s: %s\n", name, renderError(env, ce.err))
+			return ce.code
+		}
+		fmt.Fprintf(env.Stderr, "gvm %s: %s\n", name, renderError(env, err))
 		return 1
 	}
 	return 0
 }
 
-func notImplemented(context.Context, *Env, []string) error { return ErrNotImplemented }
+// Operator exit codes (U8). Role verbs keep their own contract (ExitError).
+const (
+	exitOK          = 0
+	exitFailed      = 1
+	exitUsage       = 2
+	exitUnavailable = 3
+	exitChecked     = 4 // checked and found something: a problem, a conflict, an available update
+	exitRefused     = 5 // refused or not confirmed
+)
 
-func runVersion(_ context.Context, env *Env, _ []string) error {
-	fmt.Fprintln(env.Stdout, version.String())
-	return nil
+// codedError carries an operator exit code up to Main. The message is the
+// inner error's; only the code is added, so a command says what happened and
+// Main decides which number a script sees.
+type codedError struct {
+	code int
+	err  error
 }
 
-func runHelp(_ context.Context, env *Env, args []string) error {
-	if len(args) == 0 {
+func (c *codedError) Error() string { return c.err.Error() }
+func (c *codedError) Unwrap() error { return c.err }
+
+// refused marks a verb that declined to act (5): a typed-name mismatch, a
+// lifecycle refusal, an unmet precondition the operator must clear.
+func refused(err error) error { return &codedError{exitRefused, err} }
+
+// checked marks a verb that looked and found something worth a non-zero code
+// without failing (4): doctor problems, `list --problems`, discover blockers,
+// an available update. A pipeline can branch on it without parsing text.
+func checked(err error) error { return &codedError{exitChecked, err} }
+
+// usageErr marks a usage mistake (2): an unknown subcommand, a missing
+// required argument. It is distinct from a failure so `|| exit 2` means "the
+// operator typed it wrong", not "the action failed".
+func usageErr(err error) error { return &codedError{exitUsage, err} }
+
+// commandNames is the visible, dispatchable command names, for did-you-mean.
+func commandNames() []string {
+	out := make([]string, 0, len(commands))
+	for _, c := range commands {
+		if !c.Hidden {
+			out = append(out, c.Name)
+		}
+	}
+	return out
+}
+
+// didYouMean returns the closest candidate within a small edit distance, or ""
+// when nothing is close enough. A typo like "creat" for "create" is one edit; a
+// word that resembles nothing offers no misleading suggestion.
+func didYouMean(input string, candidates []string) string {
+	best, bestDist := "", 1<<30
+	for _, c := range candidates {
+		d := editDistance(input, c)
+		if d < bestDist {
+			best, bestDist = c, d
+		}
+	}
+	// Allow at most a third of the longer word to differ, capped at 3 — enough
+	// for a transposition or a dropped letter, not a different word.
+	limit := len(input)/3 + 1
+	if limit > 3 {
+		limit = 3
+	}
+	if bestDist <= limit {
+		return best
+	}
+	return ""
+}
+
+// editDistance is the Levenshtein distance, two rolling rows.
+func editDistance(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	cur := make([]int, len(rb)+1)
+	for i := 1; i <= len(ra); i++ {
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(rb)]
+}
+
+func min3(a, b, c int) int {
+	m := a
+	if b < m {
+		m = b
+	}
+	if c < m {
+		m = c
+	}
+	return m
+}
+
+// isHelpFlag reports whether a token is a request for help.
+func isHelpFlag(s string) bool { return s == "-h" || s == "--help" || s == "help" }
+
+// helpRequested reports whether any argument asks for help. It lets a
+// subcommand that has no FlagSet of its own (an unbuilt one) still answer
+// `--help` with exit 0 rather than its refusal.
+func helpRequested(args []string) bool {
+	for _, a := range args {
+		if isHelpFlag(a) {
+			return true
+		}
+	}
+	return false
+}
+
+func notImplemented(context.Context, *Env, []string) error { return ErrNotImplemented }
+
+// runFirewall is a routed-but-unbuilt verb that still answers --help with exit 0
+// (U7) before refusing. gvmd and web stay on notImplemented because they are
+// hidden roles a human never types for help.
+func runFirewall(_ context.Context, env *Env, args []string) error {
+	if helpRequested(args) {
+		fmt.Fprintln(env.Stdout, "Usage: gvm firewall <subcommand>")
+		fmt.Fprintln(env.Stdout, "\ngvm does not manage the firewall in this build.")
+		return errHelpShown
+	}
+	return ErrNotImplemented
+}
+
+func runHelp(ctx context.Context, env *Env, args []string) error {
+	if len(args) == 0 || isHelpFlag(args[0]) {
 		usage(env.Stdout)
+		printHelpTopics(env.Stdout)
 		return nil
 	}
-	cmd, ok := lookup(args[0])
-	if !ok {
-		return fmt.Errorf("unknown command %q", args[0])
+	// A command wins over a topic of the same name: `gvm help firewall` shows
+	// the firewall command, which already says the true thing. Topics are the
+	// prose that has no command — concepts, exit-codes, the faq.
+	if cmd, ok := lookup(args[0]); ok {
+		return helpForCommand(ctx, env, cmd, args)
 	}
+	if text, ok := helptopics.Topic(args[0]); ok {
+		fmt.Fprint(env.Stdout, text)
+		if !strings.HasSuffix(text, "\n") {
+			fmt.Fprintln(env.Stdout)
+		}
+		return nil
+	}
+	// did-you-mean spans both, so `gvm help exitcodes` finds `exit-codes` and
+	// `gvm help destory` finds the command.
+	candidates := append(commandNames(), helptopics.Names()...)
+	if s := didYouMean(args[0], candidates); s != "" {
+		return fmt.Errorf("unknown help topic or command %q — did you mean %q?", args[0], s)
+	}
+	return fmt.Errorf("unknown help topic or command %q", args[0])
+}
+
+// printHelpTopics lists the prose topics under the command usage, so an
+// operator discovers `gvm help faq` without being told it exists.
+func printHelpTopics(w io.Writer) {
+	names := helptopics.Names()
+	if len(names) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\nHelp topics (gvm help <topic>): %s\n", strings.Join(names, ", "))
+}
+
+func helpForCommand(ctx context.Context, env *Env, cmd Command, args []string) error {
 	fmt.Fprintf(env.Stdout, "gvm %s — %s\n", cmd.Name, cmd.Summary)
+	switch cmd.Avail.State {
+	case avail.NotInBuild:
+		fmt.Fprintf(env.Stdout, "\n  Not available in this build: %s\n", cmd.Avail.Why)
+	case avail.Partial:
+		fmt.Fprintf(env.Stdout, "\n  Partly available in this build: %s\n", cmd.Avail.Why)
+	}
+	// Delegate to the command's own `--help` so `gvm help <cmd> [sub]` prints
+	// the same full usage `<cmd> [sub] --help` does, from one source. The
+	// delegated call prints usage and returns errHelpShown, which is success.
+	fmt.Fprintln(env.Stdout)
+	rest := append(append([]string(nil), args[1:]...), "--help")
+	if err := cmd.Run(ctx, env, rest); err != nil && !errors.Is(err, errHelpShown) && !errors.Is(err, flag.ErrHelp) {
+		return err
+	}
 	return nil
 }

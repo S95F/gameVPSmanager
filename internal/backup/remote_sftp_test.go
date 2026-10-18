@@ -2,11 +2,19 @@ package backup
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/S95F/gameVPSmanager/internal/spec"
 )
@@ -141,8 +149,181 @@ func TestThePinRejectsADifferentKeyAndADifferentAlgorithm(t *testing.T) {
 	if hk.Matches("ecdsa-sha2-nistp256", hk.Blob) {
 		t.Error("the pin accepted the right bytes under the wrong algorithm")
 	}
-	if !strings.HasPrefix(hk.Fingerprint(), "ssh-ed25519 ") {
-		t.Errorf("Fingerprint() = %q, want the algorithm and a truncated key", hk.Fingerprint())
+}
+
+// TestFingerprintIsTheOpenSSHSHA256Form: the pin a push log prints is exactly
+// what `ssh-keygen -lf` prints for the same key — "SHA256:" then the unpadded
+// base64 of sha256(blob) — so an operator can compare the two without special
+// tooling, and no key material lands in the journal.
+func TestFingerprintIsTheOpenSSHSHA256Form(t *testing.T) {
+	_, blob, line := ed25519HostKey(0x44)
+	hk, err := ParseHostKey(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(blob)
+	want := "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
+	got := hk.Fingerprint()
+	if got != want {
+		t.Errorf("Fingerprint() = %q, want %q (ssh-keygen -lf's form)", got, want)
+	}
+	// The format itself: the OpenSSH prefix, no base64 padding, and the 43
+	// characters a 32-byte digest raw-encodes to. ssh-keygen prints exactly
+	// this token, so any drift here is drift away from it.
+	if !strings.HasPrefix(got, "SHA256:") {
+		t.Errorf("Fingerprint() = %q, want the SHA256: prefix ssh-keygen uses", got)
+	}
+	if strings.Contains(got, "=") {
+		t.Errorf("Fingerprint() = %q carries base64 padding; ssh-keygen prints the unpadded form", got)
+	}
+	if digest := strings.TrimPrefix(got, "SHA256:"); len(digest) != 43 {
+		t.Errorf("the digest is %d chars, want 43 (a 32-byte sha256, raw-base64): %q", len(digest), got)
+	}
+}
+
+// TestTheHostKeyCallbackIsPinOnlyAndNeverTOFU checks the ssh.HostKeyCallback a
+// dialer installs: it accepts only the pinned key, refuses a different one with
+// ErrHostKeyMismatch naming both fingerprints, and -- the property that makes
+// it a pin at all -- refuses EVERY key when nothing is pinned. A callback that
+// returned nil for an unset pin would be trust-on-first-use in the one place
+// x/crypto/ssh actually reads.
+func TestTheHostKeyCallbackIsPinOnlyAndNeverTOFU(t *testing.T) {
+	_, pinnedBlob, line := ed25519HostKey(0x77)
+	hk, err := ParseHostKey(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := ssh.ParsePublicKey(pinnedBlob)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := hk.Callback()("nas.lan:22", nil, pinned); err != nil {
+		t.Errorf("the callback rejected the pinned key: %v", err)
+	}
+
+	_, otherBlob, _ := ed25519HostKey(0x78)
+	other, err := ssh.ParsePublicKey(otherBlob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = hk.Callback()("nas.lan:22", nil, other)
+	if !errors.Is(err, ErrHostKeyMismatch) {
+		t.Fatalf("a different key was not refused with ErrHostKeyMismatch: %v", err)
+	}
+	// Both fingerprints are in the message, so an operator can see which key
+	// showed up against the one they pinned -- and both are the SHA256 form
+	// `ssh-keygen -lf` prints, so the comparison needs no gvm-specific tooling.
+	if !strings.Contains(err.Error(), ssh.FingerprintSHA256(other)) {
+		t.Errorf("the refusal does not name the key that was presented: %v", err)
+	}
+	if !strings.Contains(err.Error(), hk.Fingerprint()) {
+		t.Errorf("the refusal does not name the pinned key: %v", err)
+	}
+
+	var zero HostKey
+	if err := zero.Callback()("nas.lan:22", nil, pinned); err == nil {
+		t.Fatal("an unpinned callback accepted a key; that is the trust-on-first-use this path refuses")
+	}
+}
+
+// TestAMismatchedPinAbortsTheHandshakeBeforeAuthentication is section 13.2's
+// testable security property, run against a real x/crypto/ssh handshake over an
+// in-memory pipe rather than a network: when the server presents a key that is
+// not the pin, the client aborts during the key exchange, and the server's auth
+// callback is never reached. Refused before the private key that can read every
+// world on the box is offered to the far end is the entire reason the pin
+// exists, and asserting it against the library's own handshake is what proves
+// Callback is wired at the right point rather than merely returning the right
+// error when called by hand.
+func TestAMismatchedPinAbortsTheHandshakeBeforeAuthentication(t *testing.T) {
+	// The server's real host key. The client pins a DIFFERENT one below.
+	_, serverPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(serverPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, pinLine := ed25519HostKey(0x99) // not the server's key
+	hk, err := ParseHostKey(pinLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A loopback listener rather than net.Pipe: the SSH version exchange writes
+	// before it reads, and net.Pipe is unbuffered, so two writers with no reader
+	// deadlock. 127.0.0.1:0 is in-process and cross-platform -- the handshake is
+	// what is under test, not a socket.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	var authReached atomic.Bool
+	serverCfg := &ssh.ServerConfig{
+		PasswordCallback: func(ssh.ConnMetadata, []byte) (*ssh.Permissions, error) {
+			authReached.Store(true)
+			return nil, errors.New("auth must never be reached once the pin fails")
+		},
+	}
+	serverCfg.AddHostKey(signer)
+
+	srvDone := make(chan struct{})
+	go func() {
+		defer close(srvDone)
+		c, aerr := ln.Accept()
+		if aerr != nil {
+			return
+		}
+		defer c.Close()
+		// The server handshake fails once the client aborts on the pin; that
+		// error is expected and is not what this test asserts.
+		if sc, _, _, serr := ssh.NewServerConn(c, serverCfg); serr == nil {
+			sc.Close()
+		}
+	}()
+
+	clientCfg := &ssh.ClientConfig{
+		User:            "gvmpush",
+		Auth:            []ssh.AuthMethod{ssh.Password("unused")},
+		HostKeyCallback: hk.Callback(),
+		Timeout:         10 * time.Second,
+	}
+	res := make(chan error, 1)
+	go func() {
+		conn, derr := net.DialTimeout("tcp", ln.Addr().String(), 10*time.Second)
+		if derr != nil {
+			res <- derr
+			return
+		}
+		defer conn.Close()
+		_, _, _, cerr := ssh.NewClientConn(conn, "nas.lan:22", clientCfg)
+		res <- cerr
+	}()
+
+	var cerr error
+	select {
+	case cerr = <-res:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the handshake neither completed nor aborted; a pin check must never hang")
+	}
+	<-srvDone
+
+	if cerr == nil {
+		t.Fatal("the handshake succeeded against a server key that is not the pin")
+	}
+	// Tie the failure to the pin specifically rather than to some other
+	// handshake error. errors.Is covers the version where ssh returns the
+	// callback error directly; the substring covers a version that rewraps it.
+	if !errors.Is(cerr, ErrHostKeyMismatch) && !strings.Contains(cerr.Error(), "not the pinned one") {
+		t.Fatalf("the handshake failed for a reason other than the pin: %v", cerr)
+	}
+	if authReached.Load() {
+		t.Fatal("the server's auth callback ran; the pin did not abort before authentication")
 	}
 }
 
@@ -227,7 +408,7 @@ func TestAConfiguredSFTPTargetWithNoDialerRefusesAndSaysWhatIsUnaffected(t *test
 	// The description is what goes in the job log: who, where, which pin. The
 	// private key is a PATH handed to the dialer and must not appear.
 	d := tr.Describe()
-	for _, want := range []string{"gvmpush", "backup.example.net:2222", "/srv/backups/gvm/pz-main", "ssh-ed25519"} {
+	for _, want := range []string{"gvmpush", "backup.example.net:2222", "/srv/backups/gvm/pz-main", "SHA256:"} {
 		if !strings.Contains(d, want) {
 			t.Errorf("Describe() = %q, missing %q", d, want)
 		}

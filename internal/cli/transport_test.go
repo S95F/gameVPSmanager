@@ -19,7 +19,10 @@ func envFor(euid int, vars map[string]string) *Env {
 	}
 }
 
-// TestResolveFollowsTheLadder is section 3.3, row by row.
+// TestResolveFollowsTheLadder is section 3.3, row by row, in a build with no
+// API client: root carries a host op in-process and a console over its socket,
+// a non-root operator is pointed at sudo, and a remote target — flag or env —
+// refuses at once because nothing can carry it.
 func TestResolveFollowsTheLadder(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -33,21 +36,15 @@ func TestResolveFollowsTheLadder(t *testing.T) {
 		{name: "root host op is in-process", euid: 0, verb: "stop", want: ModeLocalRoot},
 		{name: "root console is the socket", euid: 0, verb: "console", want: ModeConsole},
 		{
-			name: "the flag selects remote even as root",
+			name: "--remote refuses at once: no API client in this build",
 			euid: 0, verb: "stop", flag: "https://gvm.example.com",
-			vars: map[string]string{EnvToken: "t"}, want: ModeRemote,
+			vars: map[string]string{EnvToken: "t"}, errStr: "no API client",
 		},
 		{
-			name: "the environment selects remote for a non-root user",
+			name: "GVM_URL refuses at once: no API client in this build",
 			euid: 1000, verb: "stop",
-			vars: map[string]string{EnvURL: "https://gvm.example.com", EnvToken: "t"},
-			want: ModeRemote,
-		},
-		{
-			name: "the flag beats the environment",
-			euid: 1000, verb: "stop", flag: "https://one.example.com",
-			vars: map[string]string{EnvURL: "https://two.example.com", EnvToken: "t"},
-			want: ModeRemote,
+			vars:   map[string]string{EnvURL: "https://gvm.example.com", EnvToken: "t"},
+			errStr: "no API client",
 		},
 		{
 			name: "a non-root host op with no remote is refused",
@@ -58,19 +55,9 @@ func TestResolveFollowsTheLadder(t *testing.T) {
 			euid: 1000, verb: "console", errStr: "2750",
 		},
 		{
-			name: "a URL with no token names the command that mints one",
-			euid: 1000, verb: "stop", flag: "https://gvm.example.com",
-			errStr: "gvm token create",
-		},
-		{
-			name: "plain http off-loopback is refused",
-			euid: 1000, verb: "stop", flag: "http://gvm.example.com",
-			vars: map[string]string{EnvToken: "t"}, errStr: "in clear",
-		},
-		{
-			name: "plain http to loopback is a developer, and allowed",
-			euid: 1000, verb: "stop", flag: "http://localhost:8080",
-			vars: map[string]string{EnvToken: "t"}, want: ModeRemote,
+			name: "a schemeless --remote on backup names the off-box target instead",
+			euid: 0, verb: "backup", flag: "backups.example.com:/srv",
+			errStr: "spec.backup.remote",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -94,16 +81,20 @@ func TestResolveFollowsTheLadder(t *testing.T) {
 	}
 }
 
-// The refusal an unprivileged operator sees has to name BOTH fixes, because
-// the two people who see it are on different machines with different problems.
-func TestTheRefusalNamesBothFixes(t *testing.T) {
+// The unprivileged refusal points at sudo and nothing else: in a build with no
+// API client, naming --remote, GVM_URL or `gvm token create` would send the
+// operator to a path that is not here (U10).
+func TestTheUnprivilegedRefusalPointsAtSudoOnly(t *testing.T) {
 	_, err := Resolve(envFor(1000, nil), "apply", "")
 	if err == nil {
 		t.Fatal("an unprivileged apply resolved")
 	}
-	for _, want := range []string{"sudo gvm apply", "--remote", EnvToken, "gvm token create"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not mention %q:\n%v", want, err)
+	if !strings.Contains(err.Error(), "sudo gvm apply") {
+		t.Errorf("the refusal does not point at sudo:\n%v", err)
+	}
+	for _, gone := range []string{"--remote", EnvURL, EnvToken, "gvm token create"} {
+		if strings.Contains(err.Error(), gone) {
+			t.Errorf("the refusal still names %q, a path not in this build:\n%v", gone, err)
 		}
 	}
 	if !errors.Is(err, ErrNoTransport) {
@@ -111,29 +102,21 @@ func TestTheRefusalNamesBothFixes(t *testing.T) {
 	}
 }
 
-// A resolved remote transport is a real answer and a build with no API client
-// must say so distinctly, not fall back to doing the work locally.
-func TestRemoteResolvesAndThenRefusesHonestly(t *testing.T) {
-	tr, err := Resolve(envFor(0, map[string]string{EnvToken: "sekrit"}),
+// A remote target refuses at once with the honest "no API client" sentence,
+// and never resolves to ModeRemote, parses a token, or leaks one.
+func TestRemoteTargetRefusesHonestly(t *testing.T) {
+	_, err := Resolve(envFor(0, map[string]string{EnvToken: "sekrit"}),
 		"apply", "https://gvm.example.com/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tr.URL != "https://gvm.example.com" {
-		t.Errorf("URL = %q, want the trailing slash trimmed", tr.URL)
-	}
-	err = tr.RequireLocal()
 	if !errors.Is(err, ErrRemoteUnbuilt) {
-		t.Fatalf("RequireLocal = %v, want ErrRemoteUnbuilt", err)
+		t.Fatalf("Resolve = %v, want ErrRemoteUnbuilt", err)
 	}
-	// The token is the one thing that must never reach a diagnostic: the
-	// moment a transport fails is exactly when everything about it gets
-	// printed.
+	if !strings.Contains(err.Error(), "no API client") {
+		t.Errorf("refusal = %v, want it to say there is no API client", err)
+	}
+	// The token is never read, so it can never reach a diagnostic — the moment
+	// a transport fails is exactly when a leaked one would be printed.
 	if strings.Contains(err.Error(), "sekrit") {
 		t.Error("the bearer token appears in the transport's own error message")
-	}
-	if strings.Contains(tr.Token.String(), "sekrit") {
-		t.Error("the token renders as plaintext")
 	}
 }
 

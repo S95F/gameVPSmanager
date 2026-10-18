@@ -56,6 +56,11 @@ var (
 	ErrNotRegular = errors.New("secrets: not a regular file")
 	// ErrInsecureMode is a master key any account but root can read.
 	ErrInsecureMode = errors.New("secrets: file is group- or world-accessible")
+	// ErrBannedChar is an instance secret holding a character gvm cannot carry
+	// into a game's argv or config files (rule 10). It is a write-time refusal,
+	// not a read-time one: the value never reaches the game altered, so the
+	// operator rotates it to one gvm can carry.
+	ErrBannedChar = errors.New("secrets: value contains a character gvm cannot carry into a game")
 )
 
 // Store is the /etc/gvm/secrets tree (D-02).
@@ -110,6 +115,45 @@ func ValidateValue(v Value) error {
 		// The offset, never the byte and never the value: naming the
 		// character would print a fragment of the secret in a log.
 		return fmt.Errorf("%w: byte %d is a newline, a carriage return or a NUL", ErrMultiline, i)
+	}
+	return nil
+}
+
+// instanceBanReason maps a character gvm cannot carry into a game's argv or
+// config files to WHY, so the refusal tells the operator what to avoid without
+// ever printing the value. These are the characters that would be cut, escaped
+// or re-interpreted between the store and the game.
+var instanceBanReason = map[byte]string{
+	'\'': "a single quote, which terminates a quoted value in a game config",
+	'"':  "a double quote, which terminates a quoted value in a game config",
+	'\\': "a backslash, a config and shell escape character",
+	'$':  "a dollar sign, a shell metacharacter",
+	'`':  "a backtick, a shell metacharacter",
+	';':  "a semicolon, a list separator (Project Zomboid cuts its mod list there)",
+	'=':  "an equals sign, a key/value separator",
+	' ':  "a space, which splits a value in argv and many config formats",
+	'\t': "a tab, which splits a value in argv and many config formats",
+}
+
+// ValidateInstanceValue is ValidateValue plus the rule-10 ban on characters a
+// secret cannot carry into a game's argv or config files. A secret that reaches
+// a game (every one a manifest's secrets: block declares) must pass this;
+// host-scope secrets — an API key sent only in an HTTP header — keep only
+// ValidateValue's file-format rules, which is what rule 10 already allows.
+//
+// It reports the offending byte's OFFSET and its reason, never the byte itself
+// and never the value, so a refusal is legible in a log without leaking a
+// fragment of the password.
+func ValidateInstanceValue(v Value) error {
+	if err := ValidateValue(v); err != nil {
+		return err
+	}
+	p := v.plain()
+	for i := 0; i < len(p); i++ {
+		if reason, banned := instanceBanReason[p[i]]; banned {
+			return fmt.Errorf("%w: byte %d is %s — rotate it to a password without that character",
+				ErrBannedChar, i, reason)
+		}
 	}
 	return nil
 }

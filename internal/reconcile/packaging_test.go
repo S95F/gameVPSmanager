@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/S95F/gameVPSmanager/internal/hostops"
+	"github.com/S95F/gameVPSmanager/internal/lifecycle"
 )
 
 // The packaged unit files and this package are two halves of one supervision
@@ -118,18 +119,28 @@ func TestTheProbeRestatesTheTemplatesProtectSystem(t *testing.T) {
 func TestTheTemplateRefusesToRestartTheExitCodeTheProbeUses(t *testing.T) {
 	tmpl := readPackaged(t, "systemd/gvm@.service")
 	prevent := directiveValue(tmpl, "RestartPreventExitStatus")
-	for _, code := range []string{"64", "65", "66", "78"} {
+	for _, code := range []string{"64", "65", "66", "78", "79"} {
 		if !containsField(prevent, code) {
 			t.Errorf("RestartPreventExitStatus=%q does not include %s; that failure would "+
 				"restart-loop instead of being reported once", prevent, code)
 		}
 	}
-	// 70 (panic) and 75 (orphan) must NOT be there: those are the two that a
-	// restart genuinely fixes.
-	for _, code := range []string{"70", "75"} {
+	// 70 (panic), 75 (orphan/readiness) and 69 (a single boot death) must NOT be
+	// there: those are the ones a restart genuinely fixes.
+	for _, code := range []string{"69", "70", "75"} {
 		if containsField(prevent, code) {
 			t.Errorf("RestartPreventExitStatus=%q includes %s, which a restart does fix", prevent, code)
 		}
+	}
+	// The directive must equal the exported Go constant, so the unit and the
+	// code (Phase 28's NeedsOperator, the role-exit test) cannot drift.
+	var want []string
+	for _, c := range lifecycle.RestartPreventExitStatus {
+		want = append(want, strconv.Itoa(c))
+	}
+	if prevent != strings.Join(want, " ") {
+		t.Errorf("RestartPreventExitStatus=%q, want %q (lifecycle.RestartPreventExitStatus)",
+			prevent, strings.Join(want, " "))
 	}
 }
 

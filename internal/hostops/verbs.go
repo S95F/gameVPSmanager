@@ -202,7 +202,7 @@ var verbs = map[Verb]Decl{
 		Summary: "stop an instance's service unit and wait for the job to finish",
 	},
 	VerbUnitRestart: {
-		Verb: VerbUnitRestart, Effect: Mutates, Audit: audit.InstanceStart, Instance: true,
+		Verb: VerbUnitRestart, Effect: Mutates, Audit: audit.InstanceRestart, Instance: true,
 		Args:    ArgUnit | ArgJob,
 		Summary: "restart an instance's service unit",
 	},

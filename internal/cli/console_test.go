@@ -356,7 +356,7 @@ func TestTypedLineIsSentAndEchoedWithItsActor(t *testing.T) {
 	}
 }
 
-// The owner tier may write but may not run verbs (section 11.4). The client
+// The owner tier may write but may not run verbs. The client
 // must render that from the hello frame rather than discovering it by being
 // refused, because a refusal after the fact reads as a broken server.
 func TestVerbIsRefusedLocallyForATierThatCannotUseIt(t *testing.T) {
@@ -497,6 +497,28 @@ func TestParseConsoleArgs(t *testing.T) {
 		}
 		if opt.Name != "" {
 			t.Errorf("--socket should not imply an instance name, got %q", opt.Name)
+		}
+	})
+
+	// NO_COLOR is the cross-tool convention (no-color.org): any non-empty value
+	// turns colour off without a flag. parseConsoleArgs honours it so a box that
+	// exports NO_COLOR globally gets a plain console everywhere.
+	t.Run("NO_COLOR turns colour off without a flag", func(t *testing.T) {
+		withEnv := &Env{
+			Stdout: io.Discard, Stderr: io.Discard, Stdin: strings.NewReader(""),
+			Getenv: func(k string) string {
+				if k == "NO_COLOR" {
+					return "1"
+				}
+				return ""
+			},
+		}
+		opt, err := parseConsoleArgs(withEnv, []string{"pz-main"})
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if opt.ANSI {
+			t.Error("NO_COLOR set, but colour was still requested")
 		}
 	})
 

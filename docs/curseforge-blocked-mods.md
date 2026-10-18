@@ -1,5 +1,10 @@
 # CurseForge Blocked Mods
 
+> **Not available in this build.** CurseForge content is not wired into the CLI
+> in this release — see the README "What works" table. This page documents the
+> design and the drop-box workflow for when it lands (Phase 45). The commands
+> below do not run yet.
+
 Some mod authors opt out of third-party API distribution. When a mod is
 blocked, the CurseForge API returns an empty `downloadUrl` for its file.
 
@@ -32,7 +37,7 @@ The resolution ladder handles blocked mods as follows:
 
 When a modpack contains a blocked mod:
 
-1. Run `gvm content plan <instance>`. The plan output lists blocked mods with
+1. Run `gvm content blocked <instance>`. The plan output lists blocked mods with
    their CurseForge project ID and file ID.
 
 2. Download the JAR manually from the CurseForge website (requires a CurseForge
@@ -42,7 +47,7 @@ When a modpack contains a blocked mod:
    `.jar`; the stem should match the CurseForge file name (used as a fallback
    match after the murmur2 fingerprint check).
 
-4. Re-run `gvm content plan <instance>`. The blocked entry will now resolve via
+4. Re-run `gvm content blocked <instance>`. The blocked entry will now resolve via
    the **manual** rung.
 
 ## Security

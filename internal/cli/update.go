@@ -1,4 +1,4 @@
-// `gvm update` — decide before you stop (D-43), from the terminal.
+// `gvm update` — decide before you stop, from the terminal.
 //
 // The command is `update.sh` with its one structural flaw removed. That script
 // stops the server, runs `app_update … validate`, starts it again and sleeps
@@ -13,7 +13,7 @@
 // operator is shown is the list the job will run rather than a paragraph that
 // has to be kept in step with it.
 //
-// `--repair` is the only path in gvm that emits `validate` (D-32), and it is a
+// `--repair` is the only path in gvm that emits `validate`, and it is a
 // flag and never an escalation: a failed post-update verification sets
 // NEEDS_REPAIR, starts the server anyway and tells the operator to run this.
 // `--repair --dry-run` prints the files `validate` may overwrite without
@@ -37,15 +37,15 @@ import (
 
 func runUpdate(ctx context.Context, env *Env, args []string) error {
 	var opt jobOptions
-	var diff, repair, dry bool
+	var diff, repair, dry, dryAlias bool
 	fs := flag.NewFlagSet("gvm update", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	fs.Usage = func() {
 		fmt.Fprint(env.Stderr, "Usage: gvm update <instance> [--diff] [--repair [--dry-run]]\n\n"+
 			"Checks for a Steam build change and a content change with the server UP,\n"+
 			"and stops it only if one of them needs it. On a quiet night nothing is\n"+
-			"touched and the run records `skipped`, which is a success (D-43).\n\n")
-		fs.PrintDefaults()
+			"touched and the run records `skipped`, which is a success.\n\n")
+		flagUsage(env.Stderr, fs, "dry")
 	}
 	opt.bind(fs, jobs.TriggerCLI)
 	fs.BoolVar(&diff, "diff", false,
@@ -53,13 +53,15 @@ func runUpdate(ctx context.Context, env *Env, args []string) error {
 			"touches nothing")
 	fs.BoolVar(&repair, "repair", false,
 		"emit `validate`: re-download every file that differs from what the provider wrote. "+
-			"It OVERWRITES customised files and takes a preserve archive first (D-32)")
+			"It OVERWRITES customised files and takes a preserve archive first")
 	fs.BoolVar(&dry, "dry-run", false,
 		"with --repair, print the at-risk files and stop")
-	pos, err := parseInterspersed(fs, args)
+	fs.BoolVar(&dryAlias, "dry", false, "alias for --dry-run")
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return flagErr(err)
 	}
+	dry = dry || dryAlias
 	name, err := oneInstance(pos)
 	if err != nil {
 		fs.Usage()
@@ -145,8 +147,8 @@ func printUpdateDiff(w io.Writer, name string, managed bool, names, stops []stri
 		// a summary field: gvm may write nothing into that tree, so a newer
 		// build is REPORTED and never installed.
 		fmt.Fprintf(w, "  %s is adopted (managed_install: false): a newer Steam build is "+
-			"reported as update_available and never installed. `gvm instance promote %s` "+
-			"changes that\n", name, name)
+			"reported as update_available and never installed. Taking over binary updates for "+
+			"an adopted instance is not available in this build\n", name)
 	}
 }
 

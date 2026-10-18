@@ -26,13 +26,14 @@ type Backend struct{}
 
 func (Backend) Name() string { return "nft" }
 
-// Available reports whether the nft binary is in PATH.
+// Available reports whether this build can use the nft backend. It is off for
+// now (Phase 40 item 2): the backend code exists and is kept compiling, but gvm
+// ships ufw first, and a host that asked for nft would get a backend no part of
+// the firewall surface has been exercised against. ValidateHost already rejects
+// `backend: nft`; returning false here is the second lock, and it makes
+// buildScript unreachable. The message names the backends that do work.
 func (Backend) Available() (bool, string) {
-	_, err := exec.LookPath("nft")
-	if err != nil {
-		return false, "nft binary not found in PATH; install nftables"
-	}
-	return true, ""
+	return false, "nft backend not supported yet; use ufw or none"
 }
 
 // Status returns the current rules in the inet gvm table and whether the

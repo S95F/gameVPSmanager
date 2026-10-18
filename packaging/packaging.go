@@ -21,10 +21,11 @@ import "embed"
 // FS is every file this build installs, at the path it is installed under
 // within its destination directory.
 //
-// systemd's files go to /usr/lib/systemd/system and the tmpfiles fragment to
-// /usr/lib/tmpfiles.d; the mapping is the installer's business and
+// systemd's files go to /usr/lib/systemd/system, the tmpfiles fragment to
+// /usr/lib/tmpfiles.d and the sysusers fragment to /usr/lib/sysusers.d; the
+// mapping is the installer's business (internal/hostinit's one table) and
 // deliberately not encoded here, because a second place that knows where a
 // unit belongs is a second place to be wrong about it.
 //
-//go:embed systemd tmpfiles
+//go:embed systemd tmpfiles sysusers.d
 var FS embed.FS

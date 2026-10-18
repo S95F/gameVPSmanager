@@ -442,7 +442,7 @@ func BuildProbes(rs spec.ReadinessSpec, ring *console.Ring, addr func(port strin
 			m.Timeout = p.Timeout.Duration()
 			out = append(out, m)
 
-		case probe.KindTCP, probe.KindUDP:
+		case probe.KindTCP, probe.KindUDP, probe.KindA2S, probe.KindMCPing:
 			if addr == nil {
 				return nil, fmt.Errorf("runner: %s needs a port resolver", field)
 			}
@@ -450,18 +450,22 @@ func BuildProbes(rs spec.ReadinessSpec, ring *console.Ring, addr func(port strin
 			if err != nil {
 				return nil, fmt.Errorf("runner: %s: %w", field, err)
 			}
-			if p.Kind == probe.KindTCP {
+			switch p.Kind {
+			case probe.KindTCP:
 				out = append(out, &probe.TCP{Port: p.Port, Addr: a, Timeout: p.Timeout.Duration()})
-			} else {
+			case probe.KindUDP:
 				out = append(out, &probe.UDP{Port: p.Port, Addr: a, Timeout: p.Timeout.Duration()})
+			case probe.KindA2S:
+				out = append(out, &probe.A2S{Port: p.Port, Addr: a, Timeout: p.Timeout.Duration()})
+			case probe.KindMCPing:
+				out = append(out, &probe.MCPing{Port: p.Port, Addr: a, Timeout: p.Timeout.Duration()})
 			}
 
 		default:
-			// a2s, mc_ping and control_auth are declared SupportImplemented in
-			// spec's registry and are not built here yet. Saying so is the
-			// point: skipping an unknown probe would send READY=1 for a check
-			// that never ran, which is exactly the lie readiness exists to
-			// prevent.
+			// Only control_auth is left unbuilt (SupportPlanned in spec's
+			// registry). Saying so is the point: skipping an unknown probe would
+			// send READY=1 for a check that never ran, which is exactly the lie
+			// readiness exists to prevent.
 			return nil, fmt.Errorf("runner: %s kind %q is not built in this release", field, p.Kind)
 		}
 	}

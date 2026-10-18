@@ -16,7 +16,7 @@ func TestScreenCompatArgv(t *testing.T) {
 	}
 	want := []string{
 		"/usr/bin/screen", "-dmS", "pzserver",
-		"/usr/local/bin/gvm", "console", "--socket", "/run/gvm/pz-main/console.sock", "--no-color",
+		"/usr/bin/gvm", "console", "--socket", "/run/gvm/pz-main/console.sock", "--no-color",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("argv = %q\nwant %q", got, want)
@@ -81,7 +81,7 @@ func TestScreenSunset(t *testing.T) {
 func TestStartScreenCompat(t *testing.T) {
 	t.Run("no compat asked for", func(t *testing.T) {
 		h := newHarness(t)
-		if err := h.StartScreenCompat("/usr/local/bin/gvm"); err != nil {
+		if err := h.StartScreenCompat("/usr/bin/gvm"); err != nil {
 			t.Fatalf("err = %v, want nil when the manifest asks for no bridge", err)
 		}
 	})

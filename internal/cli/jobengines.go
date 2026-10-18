@@ -26,13 +26,14 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
+	"path"
 	"strings"
 	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/archive"
+	"github.com/S95F/gameVPSmanager/internal/avail"
 	"github.com/S95F/gameVPSmanager/internal/backup"
 	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/jobs"
@@ -46,12 +47,49 @@ import (
 
 // ErrContentApplyUnbuilt is a job that needs internal/content's applying half.
 //
-// Its own sentinel, and not ErrNotImplemented: the verb is built, its
-// decision-only paths work, and what is missing is one adapter. A script
-// telling the two apart is telling "gvm cannot do this" from "gvm cannot do
-// this yet".
-var ErrContentApplyUnbuilt = errors.New(
-	"gvm: the content apply adapter (materialize, resolve, activate) is not built in this release")
+// Built on avail.New so it matches avail.ErrUnavailable and exits 3: the verb
+// is built, its decision-only paths work, and what is missing is one adapter.
+// errors.Is still tells it apart from the provider sentinel for the callers
+// that care.
+var ErrContentApplyUnbuilt = avail.New(
+	"applying mod changes is not in this build; the decision-only, read-only half works")
+
+// engineWired reports whether THIS BUILD can execute kind, and when it cannot,
+// one plain sentence naming what is missing.
+//
+// It is the single predicate four callers share, so the answer to "does a
+// nightly of this kind actually run" is given in one place (U1):
+//   - attachEngines, which refuses the run rather than panic on a nil seam;
+//   - `gvm job list` (jobRows), which prints "cannot run in this build: <why>"
+//     beside a timer, so a timer that fires against a kind nothing runs is not
+//     the least observable failure in the subsystem;
+//   - `gvm apply`, which marks a timer it will install but cannot fire;
+//   - `gvm start`'s missing-files refusal, which must not point back at an
+//     install that is not here either.
+//
+// in and m are the instance and its pinned manifest. This build's answer turns
+// only on kind, but a later phase keys content_sync on the manifest's content
+// block (an instance that declares no content has nothing to sync), so the
+// signature already carries them and today's callers may pass nil.
+func engineWired(kind lifecycle.JobKind, _ *spec.Instance, _ *spec.Manifest) (bool, string) {
+	if _, err := jobs.Lookup(kind); err != nil {
+		// A kind with no runner at all (restore) — internal/jobs already holds
+		// the one honest sentence naming the package that brings it, and it is
+		// the sentence `gvm job run` would print, so this does not invent a
+		// second one.
+		return false, err.Error()
+	}
+	switch kind {
+	case lifecycle.JobUpdate:
+		return false, "this build has no engine to run SteamCMD, so update jobs cannot run"
+	case lifecycle.JobContentSync:
+		return false, "applying mod changes is not in this build; " +
+			"`gvm content sync <instance> --dry-run` shows what it would do"
+	case lifecycle.JobRebuild:
+		return false, "rebuilding a world is not in this build"
+	}
+	return true, ""
+}
 
 // JobSeams are the engines and host handles one job run needs.
 //
@@ -73,7 +111,7 @@ type JobSeams struct {
 	// /run/gvm/<n>/job.lock, which is why a test must supply one: creating
 	// /run on the development machine is not a thing a test may do.
 	Locker jobs.Locker
-	// Repair is the `validate` path (D-32). *update.Pipeline is the
+	// Repair is the `validate` path. *update.Pipeline is the
 	// production implementation and needs the provider context.
 	Repair Repairer
 	// Desc reads /etc/gvm/jobs/<slug>.json.
@@ -177,7 +215,7 @@ func (h *HostEnv) attachEngines(ctx context.Context, jenv *jobs.Env, eo engineOp
 			return nil
 		}
 		return fmt.Errorf("%w: a rebuild resolves and downloads the whole content list before "+
-			"it deletes anything (section 13.6), so it needs the same adapter. Nothing was "+
+			"it deletes anything, so it needs the same adapter. Nothing was "+
 			"stopped and %s is untouched", ErrContentApplyUnbuilt, jenv.Instance)
 	}
 	// Unreachable through Lookup, which refuses an unknown kind before this
@@ -260,6 +298,36 @@ func (h *HostEnv) archiveStore(jenv *jobs.Env, eo engineOptions) (jobs.Archives,
 // A failure to read the spec falls back rather than refusing: the host-level
 // sweep walks directories under /var/backups/gvm, and a decommissioned
 // instance whose YAML is gone still has archives somebody may want verified.
+// validateBackupDir checks a configured spec.backup.dir before apply writes
+// anything: it must be an absolute path, and it must not sit inside the world
+// it backs up (a backup dir under install/data/work would archive itself and
+// grow without bound). Cross-instance sharing IS allowed — Prune skips other
+// instances' archives — so this does not require uniqueness.
+func validateBackupDir(in *spec.Instance) error {
+	d := strings.TrimSpace(in.Spec.Backup.Dir)
+	if d == "" {
+		return nil
+	}
+	// Unix path semantics deliberately (path, not filepath): gvm paths are
+	// always Linux forward-slash, even when the binary is built and tested on
+	// Windows, where filepath would judge "/var/..." as relative.
+	if !path.IsAbs(d) {
+		return fmt.Errorf("spec.backup.dir %q is not an absolute path", d)
+	}
+	clean := path.Clean(d)
+	for _, base := range []string{in.Spec.Paths.Install, in.Spec.Paths.Data, in.Spec.Paths.Work, in.Spec.Paths.Home} {
+		if base == "" {
+			continue
+		}
+		b := path.Clean(base)
+		if clean == b || strings.HasPrefix(clean, b+"/") {
+			return fmt.Errorf("spec.backup.dir %q is inside %q; a backup directory under the "+
+				"world it backs up would archive itself and fill the disk", d, base)
+		}
+	}
+	return nil
+}
+
 func (h *HostEnv) backupDir(name string) string {
 	if in, _, err := loadInstance(h, name); err == nil {
 		if d := strings.TrimSpace(in.Spec.Backup.Dir); d != "" {
@@ -301,20 +369,44 @@ func (h *HostEnv) backupEngine(ctx context.Context, jenv *jobs.Env) (jobs.Backup
 	if closeCh != nil {
 		h.closers = append(h.closers, closeCh)
 	}
+	// The WRITER honours spec.backup.dir, through the one resolver that list,
+	// verify and prune already use. Before this it wrote to the standard
+	// /var/backups/gvm/<n> while everything else looked where backup.dir
+	// pointed, so a configured dir held archives no `gvm backup` command could
+	// see (offsite-backup-dr-2).
+	p := h.paths(jenv.Instance)
+	p.Backups = h.backupDir(jenv.Instance)
+	// The embedded instance YAML never carries an age IDENTITY. apply refuses
+	// one outright, but a YAML hand-edited after apply could still hold it, so
+	// the backup redacts it here rather than copying the key that decrypts the
+	// off-box backups into every archive (offsite-backup-dr-3).
+	specYAML, redacted := spec.RedactAgeSecretKeys(raw)
+	if redacted > 0 {
+		jobNote(jenv, fmt.Sprintf("redacted %d age identity value(s) from the embedded instance "+
+			"YAML before archiving; an age identity in the spec is a misconfiguration", redacted))
+	}
 	return backup.New(backup.Config{
 		Instance: jenv.Instance,
 		Game:     in.Spec.Game,
 		Spec:     in,
 		Manifest: m,
 		Renderer: spec.NewRenderer(renderData(jenv.Instance, in, spec.SecretValues{})),
-		SpecYAML: string(raw),
+		SpecYAML: string(specYAML),
 		Reason:   string(archive.ClassRoutine),
-		Paths:    h.paths(jenv.Instance),
+		Paths:    p,
 		Channels: ch,
-		Audit:    h.audit(),
-		Actor:    jenv.Actor,
-		Now:      h.Now,
-		PID:      jenv.PID,
+		// The configured off-box target is handed to the engine so the push is
+		// actually attempted and its outcome recorded. With no SFTP transport in
+		// this build the push returns an honest refusal, which on_failure=warn
+		// (the default) turns into a DEGRADED step — never the silent `ok
+		// backup.push` the engine used to report for a remote it never tried
+		// (offsite-backup-dr-1). Until Phase 54 wires the transport, this is how
+		// an operator learns the off-box copy was not made.
+		Remote: &backup.Remote{Target: in.Spec.Backup.Remote},
+		Audit:  h.audit(),
+		Actor:  jenv.Actor,
+		Now:    h.Now,
+		PID:    jenv.PID,
 		// The pin that makes the lease watchdog's early thaw legal. Zero is
 		// the fail-safe answer and is what the error path gives: off Linux
 		// there is no /proc, and a lease the watcher cannot pin falls back to

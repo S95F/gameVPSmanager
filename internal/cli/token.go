@@ -2,29 +2,20 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"flag"
-	"fmt"
 )
 
+func tokenGroup() subGroup {
+	return subGroup{Verb: "token", Subs: []subcmd{
+		{Name: "create", Summary: "mint an API token", Run: runTokenCreate,
+			Examples: []string{"gvm token create --name ci-bot --role operator"}},
+		{Name: "list", Summary: "list API tokens", Run: runTokenList},
+		{Name: "revoke", Summary: "revoke an API token", Run: runTokenRevoke},
+	}}
+}
+
 func runToken(ctx context.Context, env *Env, args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintln(env.Stderr, "usage: gvm token <subcommand>")
-		fmt.Fprintln(env.Stderr, "subcommands: create, list, revoke")
-		return errors.New("token: subcommand required")
-	}
-	sub := args[0]
-	rest := args[1:]
-	switch sub {
-	case "create":
-		return runTokenCreate(ctx, env, rest)
-	case "list":
-		return runTokenList(ctx, env, rest)
-	case "revoke":
-		return runTokenRevoke(ctx, env, rest)
-	default:
-		return fmt.Errorf("token: unknown subcommand %q", sub)
-	}
+	return tokenGroup().dispatch(ctx, env, args)
 }
 
 func runTokenCreate(_ context.Context, env *Env, args []string) error {
@@ -36,10 +27,10 @@ func runTokenCreate(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if *name == "" {
-		return fmt.Errorf("token create: --name is required")
+		return usageErr(&userError{Msg: "create needs --name", Hint: "a name for the token"})
 	}
 	_ = role
-	return errRequiresDaemon("token create")
+	return errAdminUnbuilt("token create")
 }
 
 func runTokenList(_ context.Context, env *Env, args []string) error {
@@ -48,7 +39,7 @@ func runTokenList(_ context.Context, env *Env, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return errRequiresDaemon("token list")
+	return errAdminUnbuilt("token list")
 }
 
 func runTokenRevoke(_ context.Context, env *Env, args []string) error {
@@ -58,7 +49,7 @@ func runTokenRevoke(_ context.Context, env *Env, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("token revoke: <token-prefix> required")
+		return usageErr(&userError{Msg: "revoke needs a token prefix", Hint: "`gvm token list` shows the prefixes"})
 	}
-	return errRequiresDaemon("token revoke")
+	return errAdminUnbuilt("token revoke")
 }

@@ -115,7 +115,7 @@ func TestAnAdoptedInstanceIsNeverStoppedForABinaryUpdateItMayNotPerform(t *testi
 	}
 	// And the sentence has to carry both ids and the escape hatch.
 	notes := strings.Join(run.Notes, " ")
-	for _, want := range []string{"18452901", "18461233", "gvm instance promote pz-main"} {
+	for _, want := range []string{"18452901", "18461233", "not available in this build"} {
 		if !strings.Contains(notes, want) {
 			t.Errorf("the recorded reason does not mention %q: %s", want, notes)
 		}

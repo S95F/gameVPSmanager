@@ -54,7 +54,7 @@ func runRebuild(ctx context.Context, env *Env, args []string) error {
 		"stop after the content plan having touched nothing, not even the acquisition list")
 	fs.BoolVar(&opt.Engine.Rebuild.NoFetch, "no-fetch", false,
 		"use the acquisition list as it stands, for the day Steam is rate-limiting")
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return flagErr(err)
 	}

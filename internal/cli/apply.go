@@ -23,36 +23,48 @@ import (
 	"strings"
 
 	"github.com/S95F/gameVPSmanager/internal/archive"
+	"github.com/S95F/gameVPSmanager/internal/instance"
+	"github.com/S95F/gameVPSmanager/internal/jobs"
 	"github.com/S95F/gameVPSmanager/internal/reconcile"
 	"github.com/S95F/gameVPSmanager/internal/spec"
 	"github.com/S95F/gameVPSmanager/internal/version"
 )
 
 type applyOptions struct {
-	Name   string
-	Diff   bool
-	Yes    bool
-	Remote string
+	Name    string
+	Diff    bool
+	Yes     bool
+	Verbose bool
+	Remote  string
 }
 
 func parseApplyArgs(env *Env, verb string, args []string) (applyOptions, error) {
 	var opt applyOptions
+	var dryRun, dry bool
 	fs := flag.NewFlagSet("gvm "+verb, flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	fs.Usage = func() {
 		fmt.Fprintf(env.Stderr, "Usage: gvm %s <instance> [--diff]\n\n"+
 			"Reconciles the host with /etc/gvm/instances/<instance>.yaml.\n"+
 			"--diff builds the same plan and applies none of it.\n\n", verb)
-		fs.PrintDefaults()
+		// --dry-run and --dry are the project-wide spelling of the same thing,
+		// accepted here so muscle memory works; --diff is the documented name.
+		flagUsage(env.Stderr, fs, "dry-run", "dry")
 	}
 	fs.BoolVar(&opt.Diff, "diff", false, "print the plan and change nothing")
+	fs.BoolVar(&dryRun, "dry-run", false, "alias for --diff")
+	fs.BoolVar(&dry, "dry", false, "alias for --diff")
+	fs.BoolVar(&opt.Verbose, "verbose", false, "with --diff, show every row, including the ones already correct")
 	fs.BoolVar(&opt.Yes, "yes", false, "answer the confirmation for a plan that removes data")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return applyOptions{}, flagErr(err)
 	}
+	// The project convention is --dry-run; apply's own documented spelling is
+	// --diff. They mean the same "build the plan, change nothing", so fold them.
+	opt.Diff = opt.Diff || dryRun || dry
 	name, err := oneInstance(pos)
 	if err != nil {
 		fs.Usage()
@@ -75,6 +87,19 @@ type planned struct {
 	// UncheckedSchedules records that the OnCalendar expressions were not put
 	// past systemd-analyze on this host.
 	UncheckedSchedules bool
+	// UnrunnableJobs are the instance's timers whose KIND this build cannot
+	// run: the drop-in and the timer are installed and armed, and the nightly
+	// would fail every time it fired. apply says so plainly rather than letting
+	// an operator discover it at 05:03, because the timer being present is not
+	// the same as the work happening (U3).
+	UnrunnableJobs []unrunnableJob
+}
+
+// unrunnableJob is one timer apply will install against a kind with no engine.
+type unrunnableJob struct {
+	Job  string
+	Kind string
+	Why  string
 }
 
 // buildApply loads the instance and its PINNED manifest and renders the plan.
@@ -92,6 +117,29 @@ func buildApply(ctx context.Context, h *HostEnv, t Transport, name string, diffO
 		return nil, err
 	}
 
+	// A hand edit that raised the heap var but left spec.resources.memory_max
+	// unchanged is an OOM-SIGKILL waiting to happen (game-catalog-config-4,
+	// rule 4): the kernel kills the JVM mid-save when native allocation crosses
+	// a ceiling the heap already fills. apply refuses rather than write a
+	// drop-in that arms it; `gvm set` (a later phase) recomputes the block. The
+	// check runs for --diff too, because a plan that cannot be safely applied
+	// should not read as one that can.
+	if err := instance.CheckResources(m, spec.VarValues(in.Spec.Vars), in.Spec.Resources); err != nil {
+		return nil, err
+	}
+	if err := validateBackupDir(in); err != nil {
+		return nil, err
+	}
+	// An age IDENTITY (private key) in the instance YAML is a hard error: it is
+	// the wrong value for spec.backup.remote (which wants the public recipient),
+	// and leaving it would embed the key that decrypts the off-box backups
+	// inside every one of them (offsite-backup-dr-3).
+	if spec.ContainsAgeSecretKey(raw) {
+		return nil, fmt.Errorf("%s contains an age identity (AGE-SECRET-KEY-1…), a PRIVATE key. "+
+			"Paste the public recipient (age1…), not the identity: the identity would be copied "+
+			"into every archive", instance.PathsFor(name).Spec)
+	}
+
 	ins := h.inspector()
 	p, err := reconcile.BuildPlan(reconcile.PlanInput{
 		Instance:  in,
@@ -103,7 +151,7 @@ func buildApply(ctx context.Context, h *HostEnv, t Transport, name string, diffO
 		// A --diff must never need systemd-run: it is not an apply, and a
 		// development box has no transient units. An APPLY never sets this,
 		// so a sandbox that would hide the game's own save directory is still
-		// caught before the drop-in is written (D-15).
+		// caught before the drop-in is written.
 		AllowUnprobed: diffOnly,
 		Probe:         h.Probe,
 		HasSecret:     func(id string) bool { return h.hasSecret(name, id) },
@@ -130,6 +178,17 @@ func buildApply(ctx context.Context, h *HostEnv, t Transport, name string, diffO
 			return nil, err
 		}
 		out.UncheckedSchedules = unchecked
+
+		// A timer whose kind this build cannot run is installed all the same —
+		// apply reconciles the host with the spec, and the spec declares it —
+		// but the printer must not let it read as work that will happen.
+		for _, job := range sortedJobNames(in) {
+			kind, _ := jobs.KindForAction(in.Spec.Jobs[job].Action)
+			if ok, why := engineWired(kind, in, m); !ok {
+				out.UnrunnableJobs = append(out.UnrunnableJobs,
+					unrunnableJob{Job: job, Kind: string(kind), Why: why})
+			}
+		}
 	}
 	return out, nil
 }
@@ -160,7 +219,7 @@ func applyOrDiff(ctx context.Context, env *Env, verb string, args []string) erro
 		return err
 	}
 	if opt.Diff {
-		printPlan(env.Stdout, pl)
+		printPlan(env.Stdout, pl, opt.Verbose)
 		return nil
 	}
 
@@ -208,7 +267,7 @@ func confirmDestructivePlan(env *Env, name string, yes bool) func(context.Contex
 	}
 }
 
-// TypedConfirm is rebuild.sh's prompt, generalised (section 16.4).
+// TypedConfirm is rebuild.sh's prompt, generalised.
 //
 // The contract is that the operator TYPES THE SUBJECT -- the instance name --
 // and that the check happens where the action does, not in the interface that

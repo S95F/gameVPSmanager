@@ -241,8 +241,9 @@ func (l *Lock) CheckManifest(sha256 string) error {
 			"run `gvm content lock --refresh`", ErrManifestMoved)
 	case !strings.EqualFold(l.ManifestSHA256, want):
 		return fmt.Errorf("%w: the lock was computed against manifest %s and the pinned "+
-			"manifest is now %s; run `gvm content lock --refresh` after reviewing "+
-			"`gvm manifest upgrade --dry`", ErrManifestMoved, short(l.ManifestSHA256), short(want))
+			"manifest is now %s; run `gvm content lock --refresh` after reviewing the change. "+
+			"Moving an instance to a newer manifest revision is not available in this build",
+			ErrManifestMoved, short(l.ManifestSHA256), short(want))
 	}
 	return nil
 }
@@ -502,13 +503,15 @@ func (l *Lock) ValidateAgainst(sc *Schema) error {
 			"%s", ErrInvalidLock, sc.Block, sl.Kind, sc.Source))
 	}
 	if sl.VerbatimActivation != sc.VerbatimActivation {
-		// Not auto-corrected in either direction. preserve -> derive is `gvm
-		// content promote`, an explicit act; derive -> preserve would mean
-		// freezing a list nobody recorded deliberately.
+		// Not auto-corrected in either direction: taking over a recorded
+		// activation line is an explicit act, and derive -> preserve would mean
+		// freezing a list nobody recorded deliberately. Changing activation
+		// ownership is not available in this build, so the only move offered is
+		// restoring the policy the lock was written with.
 		errs = append(errs, fmt.Errorf("%w: block %q is locked with verbatim_activation:%t and "+
-			"the instance declares activation_policy for %t; run `gvm content promote %s` or "+
-			"restore the policy", ErrInvalidLock, sc.Block, sl.VerbatimActivation,
-			sc.VerbatimActivation, l.Instance))
+			"the instance declares activation_policy for %t; restore the policy in "+
+			"%s.yaml. Changing activation ownership is not available in this build",
+			ErrInvalidLock, sc.Block, sl.VerbatimActivation, sc.VerbatimActivation, l.Instance))
 	}
 	errs = append(errs, sl.Validate(sc.Block, sc.Acquisition.Separator,
 		sc.Activation.Separator, sc.Acquisition.KeepMissing))

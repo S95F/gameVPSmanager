@@ -5,9 +5,68 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/reconcile"
 )
+
+// TestApplyRefusesAnOOMProneHeap: a hand edit that raises the heap var but
+// leaves spec.resources.memory_max unchanged arms the OOM killer mid-save
+// (game-catalog-config-4, rule 4). apply must refuse, naming both numbers and
+// the field to raise, and change nothing.
+func TestApplyRefusesAnOOMProneHeap(t *testing.T) {
+	h := newTestHost(t)
+	seedInstance(t, h, "pz1", "projectzomboid", "--var", "public_name=Test")
+
+	// Raise the heap to 9g while leaving the memory_max that create computed for
+	// 5g. 9g heap + 3G native_headroom now exceeds the recorded memory_max.
+	in := mustReadInstance(t, h, "pz1")
+	in.Spec.Vars["jvm_xmx"] = "9g"
+	raw, err := yaml.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.FS.put(instance.PathsFor("pz1").Spec, raw, 0o640)
+
+	before := len(h.FS.writes)
+	code, _, errb := runWith(t, h, "", "apply", "pz1", "--diff")
+	if code == 0 {
+		t.Fatal("apply accepted an OOM-prone heap")
+	}
+	for _, want := range []string{"memory_max", "jvm_xmx", "OUTSIDE the Java heap"} {
+		if !strings.Contains(errb, want) {
+			t.Errorf("the refusal does not mention %q:\n%s", want, errb)
+		}
+	}
+	if len(h.FS.writes) != before {
+		t.Errorf("a refused apply wrote %d file(s)", len(h.FS.writes)-before)
+	}
+}
+
+// TestApplyRefusesAnAgeIdentityInTheSpec: an age identity (private key) pasted
+// into the instance YAML is a hard error — it would be copied into every
+// archive (offsite-backup-dr-3). apply refuses and names the fix.
+func TestApplyRefusesAnAgeIdentityInTheSpec(t *testing.T) {
+	h := newTestHost(t)
+	seedInstance(t, h, "pz1", "projectzomboid", "--var", "public_name=Test")
+
+	p := instance.PathsFor("pz1").Spec
+	raw, err := h.FS.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "AGE-SECRET-KEY-1QQPQZRFR7ZZ2WCVQYE2WEXHZW6MM3FK3RT8T8FR0WX8U9YQ0X3ZSABCDEF"
+	h.FS.put(p, append(raw, []byte("\n# leaked: "+id+"\n")...), 0o640)
+
+	code, _, errb := runWith(t, h, "", "apply", "pz1", "--diff")
+	if code == 0 {
+		t.Fatal("apply accepted an age identity in the spec")
+	}
+	if !strings.Contains(errb, "age identity") || !strings.Contains(errb, "age1") {
+		t.Errorf("the refusal does not name the fix (paste the age1 recipient):\n%s", errb)
+	}
+}
 
 // `gvm apply --diff` prints the plan and changes nothing.
 //
@@ -32,21 +91,30 @@ func TestApplyDiffPrintsThePlanAndChangesNothing(t *testing.T) {
 
 	// The section 17.6 shape: a header naming the instance and its pinned
 	// manifest, sigil-led step lines, and a closing count that says plainly
-	// that nothing happened.
+	// that nothing happened. By default only the CHANGED rows are shown; the
+	// already-correct ones are hidden behind --verbose, so the two rows that
+	// matter are not buried under a screenful of "= already correct".
 	for _, want := range []string{
 		"instance valheim-1", "valheim rev", "pinned",
 		"+ dir /etc/gvm/instances/valheim-1.d",
-		// `gvm create` already wrote the definition, so apply reports it as
-		// unchanged rather than re-writing it. "unchanged" being a first-class
-		// outcome is the whole reason the sigil column exists.
-		"= file /etc/gvm/instances/valheim-1.yaml",
 		"+ user gvm-valheim-1",
 		"+ dropin " + instance.DropInPath("valheim-1"),
 		"already correct", "nothing has been applied",
+		"already-correct row(s) hidden",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--diff output is missing %q:\n%s", want, out)
 		}
+	}
+	// The unchanged definition row is a first-class outcome — the whole reason
+	// the sigil column exists — but it is a --verbose detail now, not default
+	// noise. It must NOT appear by default, and MUST appear under --verbose.
+	if strings.Contains(out, "= file /etc/gvm/instances/valheim-1.yaml") {
+		t.Errorf("--diff showed an already-correct row by default:\n%s", out)
+	}
+	_, vout, _ := runWith(t, h, "", "apply", "valheim-1", "--diff", "--verbose")
+	if !strings.Contains(vout, "= file /etc/gvm/instances/valheim-1.yaml") {
+		t.Errorf("--diff --verbose did not show the unchanged definition row:\n%s", vout)
 	}
 	// A diff never runs the write-probe, and must say so rather than showing
 	// a sandbox that looks checked.
@@ -101,7 +169,7 @@ func TestASecondApplyReportsZeroActions(t *testing.T) {
 }
 
 // The write-probe runs BEFORE the drop-in, and a plan that got that wrong is
-// refused rather than executed (D-15).
+// refused rather than executed.
 func TestTheApplyPlanProbesBeforeItWritesTheDropIn(t *testing.T) {
 	h := newTestHost(t)
 	seedInstance(t, h, "valheim-1", "valheim", "--var", "public_name=Test")

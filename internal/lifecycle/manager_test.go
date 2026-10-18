@@ -124,7 +124,7 @@ func TestTheStopRowCanSayHowTheWorldWasSaved(t *testing.T) {
 	m, _, h := managerFor(t, true)
 	if _, err := m.Do(context.Background(), Request{
 		Verb: VerbStop, Instance: "valheim-1", Actor: audit.RootCLI(),
-		Reason: "nightly", Budget: 300 * time.Second,
+		Reason: "nightly",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -132,10 +132,16 @@ func TestTheStopRowCanSayHowTheWorldWasSaved(t *testing.T) {
 	if !ok {
 		t.Fatal("no stop was issued")
 	}
-	for _, key := range []string{"rung", "degraded", "reason", "budget_sec"} {
+	for _, key := range []string{"rung", "degraded", "reason"} {
 		if _, ok := req.Params[key]; !ok {
 			t.Errorf("the stop's params carry no %q: %+v", key, req.Params)
 		}
+	}
+	// --budget was removed (Phase 34): a stop never records a budget_sec, so
+	// the only ladder bound an auditor can trust is the unit's TimeoutStopSec.
+	if _, ok := req.Params["budget_sec"]; ok {
+		t.Errorf("the stop recorded budget_sec; --budget is gone and the ladder bound is "+
+			"spec.shutdown.budget: %+v", req.Params)
 	}
 	// The params must survive the allowlist, or the row records _unallowlisted
 	// instead of the value.

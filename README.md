@@ -1,9 +1,10 @@
 # gameVPSmanager (`gvm`)
 
 Turns a Debian/Ubuntu VPS into a host for **several game servers at once** —
-Steam dedicated servers first, modded Minecraft after — with a CLI, a web
-dashboard, a firewall derived from what is actually running, and backups that
-do not corrupt worlds.
+Steam dedicated servers first, modded Minecraft after — with a CLI, a planned
+web dashboard, a planned firewall derived from what is actually running, and
+backups that do not corrupt worlds. See **What works in this build** below for
+what the current release does today.
 
 It generalizes a single-game Project Zomboid installer, which lives in
 [`legacy/projectzomboid-bash/`](legacy/) as the behavioural specification.
@@ -17,31 +18,52 @@ It generalizes a single-game Project Zomboid installer, which lives in
 The filesystem is the control plane, systemd is the supervisor, and Postgres
 is the logbook — authoritative for *people* (users, roles, sessions, audit),
 a mirror for machines. `sudo gvm stop pz-main` works with the database down.
-CI asserts this on every change.
+CI asserts that no game or job unit depends on Postgres, gvmd or gvm-web.
 
-## Status
+## What works in this build
 
-Early. The architecture is settled and the foundation is being built
-bottom-up; see [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md)
-for the phase order and what each milestone makes possible.
+gvm is built bottom-up. This release delivers the command surface and honest
+messaging; the engines that install game files, open the firewall and serve
+the dashboard arrive in later phases of
+[`docs/USABILITY-PLAN.md`](docs/USABILITY-PLAN.md). Every command below works
+over SSH as root with gvmd, the dashboard and Postgres all down. Anything not
+built refuses with exit code 3 and the line `not available in this build;
+nothing was changed.`, so a script can never mistake an unbuilt feature for
+success.
 
-| Milestone | What works |
+| Command | This build |
 | --- | --- |
-| **A** | `create` + `apply` + `start` runs a fresh server with a real console and a clean shutdown |
-| **B** | SteamCMD install, workshop mods, nightly backup, update, archive-before-destroy rebuild |
-| **C** | **The live Project Zomboid server is adopted**, with rollback proven |
-| **D** | Dashboard, RBAC, audit, API, Caddy, firewall |
+| `gvm create` · `apply` · `start` · `stop` · `restart` | **works** — define and run an instance |
+| `gvm status` · `list` · `logs` · `ports` · `console` · `control` | **works** — observe and drive a running server |
+| `gvm backup` · `backup verify` · `backup prune` | **works** — archive, verify, prune |
+| `gvm game` · `doctor` · `db` | **works** |
+| `gvm content list/diff/why/add/remove/move/lock` | **works** — edit the declared mod list |
+| `gvm content sync` | **partial** — `--dry-run` decides; applying mod changes is not in this build |
+| `gvm restore` | **partial** — `--list` works; restoring a world is not in this build |
+| `gvm adopt discover` · `adopt finalize` | **works**; `adopt cutover` and `rollback` are not in this build |
+| `gvm install` · `update` · `rebuild` | **not built** — installing, updating and rebuilding game files land later |
+| `gvm firewall` | **not built** — gvm does not manage the firewall in this build |
+| `gvm user` · `token` · `secret` · `audit` | **not built** — these land with the dashboard |
 
-Commands that are routed but not yet built exit non-zero with
-`not implemented`, so a script can never mistake an unbuilt phase for success.
+**Not available in this build:** `audit`, `firewall`, `install`, `rebuild`, `secret`, `token`, `update`, `user`.
+
+(That list is checked against the command registry by a test, so this table
+cannot drift from what the binary actually refuses.)
+
+A journey counts as done only when its whole row works end to end; see
+[`docs/USABILITY-PLAN.md`](docs/USABILITY-PLAN.md) for the order — J1 (first
+joinable server) through J5 (adopt, package, recover). The earlier
+milestones A–D in [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md)
+are the code-level foundation those journeys build on.
 
 ## Documentation
 
 | Document | Contents |
 | --- | --- |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The full spec: process topology, manifest schema, instance model, control channel, SQL schema, RBAC, security model |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The full **target design**: process topology, manifest schema, instance model, control channel, SQL schema, RBAC, security model. Describes the finished system, not this build — see the table above for what works today. |
 | [`docs/ARCHITECTURE.md` §19](docs/ARCHITECTURE.md) | **The Project Zomboid adopt runbook** — importing the live server without touching the world |
-| [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) | 20 dependency-ordered phases, each with a definition of done |
+| [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) | Phases 0–19 (**target design**): the dependency-ordered foundation, each with a definition of done |
+| [`docs/USABILITY-PLAN.md`](docs/USABILITY-PLAN.md) | Phases 20–55: the operator-journey plan (J1–J5) that turns the foundation into a usable product |
 | [`docs/research/`](docs/research/) | Primary-source research behind the decisions |
 
 ## Building

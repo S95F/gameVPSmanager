@@ -128,6 +128,30 @@ func (r registry) names() []string {
 
 func (r registry) nearest(name string) string { return nearestName(name, r.names()) }
 
+// implemented returns the entries this build declares SupportImplemented.
+func (r registry) implemented() []string {
+	out := make([]string, 0, len(r.entries))
+	for n, s := range r.entries {
+		if s == SupportImplemented {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ImplementedProbeKinds returns the readiness probe kinds this build declares
+// as fully supported. internal/runner's TestEveryImplementedProbeKindIsBuilt
+// reads it to prove BuildProbes can construct each one, so the validation
+// registry and the builder cannot drift (a kind validate accepts but the
+// runner cannot build would send READY=1 for a check that never ran).
+func ImplementedProbeKinds() []string { return probeKinds.implemented() }
+
+// ImplementedWrapperKinds returns the launch wrapper kinds this build can
+// build. internal/runner's TestImplementedWrappersMatchTheRunner reads it so
+// the validation registry and BuildLaunch cannot drift.
+func ImplementedWrapperKinds() []string { return wrapperKinds.implemented() }
+
 var (
 	providerKinds = registry{what: "provider kind", entries: map[string]Support{
 		ProviderSteamCMD:  SupportImplemented,
@@ -160,12 +184,25 @@ var (
 	}}
 
 	probeKinds = registry{what: "readiness probe kind", entries: map[string]Support{
-		"log_marker":   SupportImplemented,
-		"tcp_probe":    SupportImplemented,
-		"udp_probe":    SupportImplemented,
-		"a2s":          SupportImplemented,
-		"mc_ping":      SupportImplemented,
-		"control_auth": SupportImplemented,
+		"log_marker": SupportImplemented,
+		"tcp_probe":  SupportImplemented,
+		"udp_probe":  SupportImplemented,
+		"a2s":        SupportImplemented,
+		"mc_ping":    SupportImplemented,
+		// control_auth is planned, not built: the runner's BuildProbes cannot
+		// construct it yet, so validate warns rather than letting a manifest
+		// rely on a readiness check that would never run.
+		"control_auth": SupportPlanned,
+	}}
+
+	// wrapperKinds is the readiness registry's twin for spec.runtime.wrapper.
+	// The runner's BuildLaunch builds only proton (wrapper_proton.go); xvfb and
+	// wine are planned until Phase 42, so a manifest that names one validates
+	// with a warning rather than failing to launch in silence.
+	wrapperKinds = registry{what: "wrapper kind", entries: map[string]Support{
+		"proton": SupportImplemented,
+		"xvfb":   SupportPlanned,
+		"wine":   SupportPlanned,
 	}}
 
 	// hookNames is the v1 registry of section 8.8. internal/hook.Get is the
@@ -347,7 +384,7 @@ func (c *checker) checkSchema() {
 	}
 	if c.m.Metadata.Revision < 1 {
 		c.add(c.errf("metadata.revision", "revision %d is not a revision; the first is 1", c.m.Metadata.Revision).
-			WithFix("revision is monotonic per game id and is what `gvm manifest upgrade` diffs by"))
+			WithFix("revision is monotonic per game id, and the first shipped revision is 1"))
 	}
 }
 
@@ -396,6 +433,14 @@ func (c *checker) checkRegistries() {
 
 	for i, pr := range c.m.Spec.Readiness.Probes {
 		c.closed(probeKinds, fmt.Sprintf("spec.readiness.probes[%d].kind", i), pr.Kind)
+	}
+
+	// A wrapper the runner cannot build is a game that cannot launch, so a
+	// planned wrapper (xvfb, wine) warns and an unknown one is a load error —
+	// the same contract as the probe kinds, so a manifest can never pin a
+	// launch path BuildLaunch does not implement.
+	if w := c.m.Spec.Runtime.Wrapper; w != nil {
+		c.closed(wrapperKinds, "spec.runtime.wrapper.kind", w.Kind)
 	}
 
 	for _, ph := range hookPhases {

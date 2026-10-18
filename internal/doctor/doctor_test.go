@@ -139,6 +139,7 @@ func TestHostCheckNoUnitDependsOnPostgres(t *testing.T) {
 
 func TestEdgeCheckAdminSocketDetectsLocalhost(t *testing.T) {
 	host := spec.DefaultHostConfig()
+	host.Spec.Edge.Mode = "caddy_managed" // the EDGE checks only run with an edge
 	host.Spec.Edge.Caddy.Admin = "localhost:2019"
 	checks := EdgeChecks(&host)
 	var c *lifecycle.DoctorCheck
@@ -162,6 +163,7 @@ func TestEdgeCheckAdminSocketDetectsLocalhost(t *testing.T) {
 
 func TestEdgeCheckAdminSocketPassesForUnixSocket(t *testing.T) {
 	host := spec.DefaultHostConfig()
+	host.Spec.Edge.Mode = "caddy_managed" // the EDGE checks only run with an edge
 	checks := EdgeChecks(&host)
 	var c *lifecycle.DoctorCheck
 	for i := range checks {
@@ -200,42 +202,26 @@ func TestEdgeCheckMinVersion(t *testing.T) {
 
 // --- FW checks ---
 
-func TestFWCheckActiveFailsWhenInactive(t *testing.T) {
+// TestFirewallChecksAllSkipInThisBuild: gvm does not manage the firewall and
+// does not read the live ruleset, so every FW-* check is a Skip with no Fix
+// that would tell an operator to enable a firewall gvm will not touch (U10).
+// Phase 33 reintroduces the real checks. This replaces the old per-check
+// Problem assertions, which measured a stub.
+func TestFirewallChecksAllSkipInThisBuild(t *testing.T) {
 	host := spec.DefaultHostConfig()
 	host.Spec.Firewall.Backend = "ufw"
 	checks := FirewallChecks(&host, nil, nil, nil, false, true, sshportDetection())
-	var c *lifecycle.DoctorCheck
-	for i := range checks {
-		if checks[i].ID == "FW-001" {
-			c = &checks[i]
-			break
+	if len(checks) == 0 {
+		t.Fatal("no FW checks")
+	}
+	for _, c := range checks {
+		f := c.Run(context.Background(), fakeCheckEnv{})
+		if f.Severity != lifecycle.CheckSkip {
+			t.Errorf("%s should Skip in this build, got %v: %s", c.ID, f.Severity, f.Message)
 		}
-	}
-	if c == nil {
-		t.Fatal("FW-001 not found")
-	}
-	f := c.Run(context.Background(), fakeCheckEnv{})
-	if f.Severity != lifecycle.CheckProblem {
-		t.Errorf("FW-001 should be Problem when ufw inactive, got %v", f.Severity)
-	}
-}
-
-func TestFWCheckParseNotTrustedIsAProblem(t *testing.T) {
-	host := spec.DefaultHostConfig()
-	checks := FirewallChecks(&host, nil, nil, nil, true, false, sshportDetection())
-	var c *lifecycle.DoctorCheck
-	for i := range checks {
-		if checks[i].ID == "FW-003" {
-			c = &checks[i]
-			break
+		if f.Fix != "" {
+			t.Errorf("%s carries a Fix %q; a firewall check must not tell an operator to enable a firewall gvm will not touch", c.ID, f.Fix)
 		}
-	}
-	if c == nil {
-		t.Fatal("FW-003 not found")
-	}
-	f := c.Run(context.Background(), fakeCheckEnv{})
-	if f.Severity != lifecycle.CheckProblem {
-		t.Errorf("FW-003 should be Problem when parse not trusted, got %v", f.Severity)
 	}
 }
 

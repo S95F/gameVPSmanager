@@ -53,3 +53,38 @@ TRAILING=value  # inline comment
 		t.Errorf("DOLLAR: dollar-var must be literal, got %q", env["DOLLAR"])
 	}
 }
+
+// TestParseConfigEnvQuotesAndComments pins the quote-aware rules (migration-
+// adopt-12): a quoted value runs to its closing quote and drops a trailing
+// comment, and a bare value's comment begins only at a `#` after whitespace.
+func TestParseConfigEnvQuotesAndComments(t *testing.T) {
+	cases := []struct{ key, line, want string }{
+		{"SERVER_PASSWORD", `SERVER_PASSWORD="" # none`, ""},
+		{"HASHINQUOTE", `HASHINQUOTE="a # b"`, "a # b"},
+		{"URLFRAG", `URLFRAG=http://x/y#z`, "http://x/y#z"},
+		{"BARECOMMENT", `BARECOMMENT=value # trailing`, "value"},
+		{"SINGLE", `SINGLE='a # b'`, "a # b"},
+		{"EMPTY", `EMPTY=`, ""},
+	}
+	for _, tc := range cases {
+		got := ParseConfigEnv([]byte(tc.line))
+		if got[tc.key] != tc.want {
+			t.Errorf("%s: parsed %q, want %q", tc.key, got[tc.key], tc.want)
+		}
+	}
+}
+
+// TestUnsafePassword: a password gvm cannot carry unaltered is flagged, a plain
+// one is not.
+func TestUnsafePassword(t *testing.T) {
+	for _, bad := range []string{`a'b`, `a"b`, `a\b`, `a$b`, "a`b"} {
+		if !UnsafePassword(bad) {
+			t.Errorf("%q should be flagged as unsafe to carry", bad)
+		}
+	}
+	for _, ok := range []string{"", "plainpass", "P4ss-word_123", "with spaces"} {
+		if UnsafePassword(ok) {
+			t.Errorf("%q should be safe", ok)
+		}
+	}
+}

@@ -244,17 +244,17 @@ func (m *Manager) execute(ctx context.Context, d Decl, req Request, res *Result)
 			return err
 		}
 		res.Shutdown = &out
-		// The allowlist for instance.stop is reason, budget_sec, rung,
-		// degraded, and rung is REQUIRED on the success row. Assembling it
-		// here rather than inside hostops is the split working as intended:
-		// hostops knows how to stop a unit and has no way to know how the
-		// world was saved.
+		// The allowlist for instance.stop reserves reason, budget_sec, rung and
+		// degraded, and rung is REQUIRED on the success row. We assemble it here
+		// rather than inside hostops -- the split working as intended: hostops
+		// knows how to stop a unit and has no way to know how the world was
+		// saved. budget_sec stays in the allowlist's vocabulary but is no longer
+		// written: --budget was removed (Phase 34), so the ladder's bound is
+		// always spec.shutdown.budget and recording a per-stop number that could
+		// only ever equal the unit's own TimeoutStopSec told a reader nothing.
 		params = audit.Params{"rung": out.Rung, "degraded": out.Degraded}
 		if req.Reason != "" {
 			params["reason"] = req.Reason
-		}
-		if req.Budget > 0 {
-			params["budget_sec"] = int(req.Budget.Seconds())
 		}
 	} else if req.Reason != "" {
 		params = audit.Params{"reason": req.Reason}

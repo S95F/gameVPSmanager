@@ -25,7 +25,6 @@ type lifecycleOptions struct {
 	Name   string
 	Reason string
 	Force  bool
-	Budget time.Duration
 	JSON   bool
 	Remote string
 }
@@ -36,17 +35,38 @@ func parseLifecycleArgs(env *Env, verb string, args []string) (lifecycleOptions,
 	fs.SetOutput(env.Stderr)
 	fs.Usage = func() {
 		fmt.Fprintf(env.Stderr, "Usage: gvm %s <instance> [--reason \"...\"]\n\n", verb)
-		fs.PrintDefaults()
+		flagUsage(env.Stderr, fs, "budget")
 	}
 	fs.StringVar(&opt.Reason, "reason", "", "why, recorded in the audit row and (for a stop) in the hold file")
 	fs.BoolVar(&opt.Force, "force", false, "override a refusal that says it can be overridden")
-	fs.DurationVar(&opt.Budget, "budget", 0, "bound the shutdown ladder (default: the instance's shutdown.budget)")
 	fs.BoolVar(&opt.JSON, "json", false, "print the result as JSON")
 	fs.StringVar(&opt.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 
-	pos, err := parseInterspersed(fs, args)
+	// --budget is gone (Phase 34). The shutdown ladder's bound is
+	// spec.shutdown.budget, written in the instance's YAML and applied with
+	// `gvm apply`; a per-invocation --budget could silently disagree with the
+	// unit the audit row names, and on start it was meaningless (a start has no
+	// ladder). The flag is still recognised -- as a hidden string that takes
+	// any value, hidden from the usage above -- only so passing it earns the
+	// sentence that says where the budget actually lives, instead of a bare
+	// "flag provided but not defined".
+	var budget string
+	fs.StringVar(&budget, "budget", "", "")
+
+	pos, err := parseWithInstance(fs, args)
 	if err != nil {
 		return lifecycleOptions{}, flagErr(err)
+	}
+	if budgetWasGiven(fs) {
+		name := "<n>"
+		if len(pos) == 1 {
+			name = pos[0]
+		}
+		return lifecycleOptions{}, usageErr(&userError{
+			Msg: "--budget was removed",
+			Hint: fmt.Sprintf("the ladder budget is spec.shutdown.budget in "+
+				"/etc/gvm/instances/%s.yaml; change it and run gvm apply", name),
+		})
 	}
 	name, err := oneInstance(pos)
 	if err != nil {
@@ -55,6 +75,19 @@ func parseLifecycleArgs(env *Env, verb string, args []string) (lifecycleOptions,
 	}
 	opt.Name = name
 	return opt, nil
+}
+
+// budgetWasGiven reports whether --budget appeared on the command line. It is
+// set apart from the removed flag's value so the check reads as "was the dead
+// flag used", not "does it have a value".
+func budgetWasGiven(fs *flag.FlagSet) bool {
+	given := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "budget" {
+			given = true
+		}
+	})
+	return given
 }
 
 func runStart(ctx context.Context, env *Env, args []string) error {
@@ -89,7 +122,6 @@ func runLifecycle(ctx context.Context, env *Env, verb lifecycle.Verb, args []str
 		Instance: opt.Name,
 		Actor:    actorFor(t),
 		Reason:   opt.Reason,
-		Budget:   opt.Budget,
 		Force:    opt.Force,
 	})
 	if err != nil {

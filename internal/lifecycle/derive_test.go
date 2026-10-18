@@ -81,7 +81,7 @@ func deriveCases() []deriveCase {
 				o.Pin.Reason = "pinned revision 7 sha256 1b40c9de, got revision 8 sha256 22aa9911"
 			},
 			phase: PhaseFailed, rule: RulePinMismatch,
-			hint:   "gvm manifest upgrade pz-main --dry",
+			hint:   "not available in this build",
 			reason: "revision 8",
 		},
 		{
@@ -208,6 +208,17 @@ func deriveCases() []deriveCase {
 			reason: "log_marker",
 		},
 		{
+			name: "crash-looping",
+			setup: func(o *Observation) {
+				o.Unit.ActiveState = "activating"
+				o.Unit.SubState = "auto-restart"
+				o.Unit.NRestarts = 2
+				o.Unit.ExecMainStatus = runner.ExitBootDied
+			},
+			phase: PhaseDegraded, rule: RuleCrashLooping,
+			reason: "restarted 2 times",
+		},
+		{
 			name:  "deactivating",
 			setup: func(o *Observation) { o.Unit.ActiveState = "deactivating" },
 			phase: PhaseStopping, rule: RuleDeactivating,
@@ -278,7 +289,7 @@ func deriveCases() []deriveCase {
 				o.Installed = No
 			},
 			phase: PhaseProvisioning, rule: RuleNotInstalled,
-			hint: "gvm install pz-main",
+			hint: "not available in this build",
 		},
 		{
 			name: "an operator stopped it",
@@ -309,7 +320,7 @@ func deriveCases() []deriveCase {
 				o.Status = nil
 			},
 			phase: PhaseStopped, rule: RuleDisabled,
-			hint: "gvm enable pz-main",
+			hint: "sudo gvm apply pz-main",
 		},
 		{
 			name: "inactive, enabled and nothing holding it",
@@ -495,6 +506,7 @@ func TestTheExitCodeTableHasAHintForEveryRestartPreventedCode(t *testing.T) {
 		runner.ExitDataErr:  "gvm doctor pz-main",
 		exitPortUnavailable: "gvm ports pz-main",
 		runner.ExitConfig:   "gvm apply --diff pz-main",
+		runner.ExitBootLoop: "gvm logs pz-main --shutdown",
 	}
 	for code, hint := range want {
 		o := base()
@@ -512,6 +524,24 @@ func TestTheExitCodeTableHasAHintForEveryRestartPreventedCode(t *testing.T) {
 		if !strings.Contains(v.Reason, exitMeaning(code)) {
 			t.Errorf("exit %d reason %q does not explain the code", code, v.Reason)
 		}
+	}
+}
+
+// TestExitMeaningClassifiesEveryRoleCode: every exit code in the section 7.8
+// contract has a sentence, and the boot codes 69/79 are present (Phase 27).
+func TestExitMeaningClassifiesEveryRoleCode(t *testing.T) {
+	for _, code := range []int{
+		runner.ExitUsage, runner.ExitDataErr, exitPortUnavailable,
+		runner.ExitBootDied, runner.ExitSoftware, runner.ExitTempFail,
+		runner.ExitConfig, runner.ExitBootLoop,
+	} {
+		if m := exitMeaning(code); m == "unclassified" {
+			t.Errorf("exit %d has no sentence in the section 7.8 table", code)
+		}
+	}
+	// 75's sentence now admits the readiness-failure cause, not only the orphan.
+	if m := exitMeaning(runner.ExitTempFail); !strings.Contains(m, "readiness") {
+		t.Errorf("exit 75 meaning %q should mention readiness failure", m)
 	}
 }
 

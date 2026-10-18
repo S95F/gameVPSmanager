@@ -3,7 +3,7 @@ kind: Game
 metadata:
   id: minecraft-forge
   name: Minecraft Forge Server
-  revision: 1
+  revision: 3
   tags: [minecraft, java, forge]
   doc: |
     Minecraft Forge is the original community mod loader for Minecraft. gvm
@@ -19,6 +19,16 @@ metadata:
 
 spec:
   driverABI: 1
+
+  # Minecraft requires accepting Mojang's EULA before a server may run. gvm
+  # does not accept it for you: `gvm create` refuses until accept_eula is true,
+  # which is an explicit operator action (D-22), and mc.accept_eula writes
+  # eula.txt from that var at install.
+  legal:
+    eula:
+      var: accept_eula
+      url: https://www.minecraft.net/eula
+      prompt: "Minecraft requires accepting the EULA before you run a server."
 
   provider:
     kind: minecraft
@@ -113,7 +123,7 @@ spec:
       source: modrinth
       acquisition:
         mechanism: http
-      activation: {}
+      activation: {mode: presence}
       roots: ["{{ .Data }}/mods"]
       impact:
         add:    restart
@@ -144,6 +154,11 @@ spec:
       lease_budget: 30s
 
   vars:
+    accept_eula:
+      type: bool
+      default: "false"
+      apply: rebuild
+      help: "Accept the Minecraft EULA (https://www.minecraft.net/eula). Required to create a Minecraft server; gvm never accepts it for you."
     mc_version:
       type: string
       required: true

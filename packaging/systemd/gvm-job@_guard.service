@@ -29,7 +29,7 @@ Wants=network-online.target
 Type=oneshot
 User=root
 Slice=gvm-jobs.slice
-ExecStart=/usr/local/bin/gvm job run %i
+ExecStart=/usr/bin/gvm job run %i
 
 # Ten minutes, against the template's four hours. The sweep is reads plus one
 # start per instance that is genuinely down; anything slower than this is a

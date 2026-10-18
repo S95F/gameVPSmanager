@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/audit"
+	"github.com/S95F/gameVPSmanager/internal/avail"
 	"github.com/S95F/gameVPSmanager/internal/hostops"
 	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/lifecycle"
@@ -58,7 +59,12 @@ const DefaultLeaseFor = 4 * time.Hour
 var ErrSkipJob = errors.New("jobs: nothing to do")
 
 // ErrNoRunner is a job kind this build cannot execute.
-var ErrNoRunner = errors.New("jobs: no runner for this job kind")
+//
+// Built on avail.New so it matches avail.ErrUnavailable: a scheduled kind this
+// build has no runner for exits 3, the same code `gvm install` and `gvm update`
+// give, so `gvm job run` under systemd and an operator at a prompt get the same
+// answer. errors.Is(err, ErrNoRunner) still works for the narrower match.
+var ErrNoRunner = avail.New("jobs: no runner for this job kind")
 
 // ErrEnv is an environment a job cannot run in.
 var ErrEnv = errors.New("jobs: the job environment is incomplete")

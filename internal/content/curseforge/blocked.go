@@ -13,6 +13,20 @@ import (
 // distribution and the CDN URL is therefore absent from the API response.
 const DropBoxSuffix = ".jar"
 
+// DropBoxDir is the single, host-wide directory an operator drops manually
+// obtained jars into for a blocked mod. It is one shared location, not a
+// per-instance one: an operator who downloads a jar by hand should not have to
+// know which instance's private directory to put it in, and the fingerprint
+// match (never the path) is what ties a dropped jar to the instance that needs
+// it.
+//
+// It is exported and referenced by name everywhere the path appears — the
+// resolver that scans it, the `gvm content blocked` report that names it, and
+// the docs — so the three cannot drift into telling an operator to use one
+// directory while gvm reads another. TestDropBoxDirIsTheDocumentedPath pins the
+// value, and the CLI uses this symbol rather than a literal of its own.
+const DropBoxDir = "/var/lib/gvm/downloads/mods"
+
 // blockedEntry records the state of a blocked mod.
 type blockedEntry struct {
 	ProjectID int
@@ -117,15 +131,8 @@ func fileStem(name string) string {
 	return name
 }
 
-// dropBoxPath returns the standard drop-box path for an instance.
-// The operator drops manually-obtained JARs here; gvm will pick them up on
-// the next `gvm content resolve-blocked` run.
-func dropBoxPath(instanceName string) string {
-	return filepath.Join("/var/lib/gvm/instances", instanceName, "blocked-mods")
-}
-
 // ErrNoDropBox is returned when the drop-box directory does not exist.
-var ErrNoDropBox = fmt.Errorf("curseforge: drop-box directory not found; create it or run gvm content resolve-blocked")
+var ErrNoDropBox = fmt.Errorf("curseforge: drop-box directory not found; create it or run gvm content blocked")
 
 // _ is a compile-time assertion that fs.DirEntry is used.
 var _ fs.DirEntry

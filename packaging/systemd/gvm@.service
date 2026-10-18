@@ -20,8 +20,8 @@ StartLimitBurst=5
 Type=notify
 NotifyAccess=main
 Slice=gvm.slice
-ExecStartPre=+/usr/local/bin/gvm run-prepare %i
-ExecStart=/usr/local/bin/gvm run %i
+ExecStartPre=+/usr/bin/gvm run-prepare %i
+ExecStart=/usr/bin/gvm run %i
 
 # There is deliberately NO ExecStop=. systemd's own manual: it is "usually not
 # sufficient to specify a command ... that only asks the service to terminate
@@ -54,9 +54,10 @@ WatchdogSignal=SIGTERM
 Restart=on-failure
 RestartSec=20
 # 64 spec/manifest-pin invalid, 65 preflight failed, 66 port unavailable,
-# 78 sandbox blocks a required write. Restarting cannot fix any of these and a
-# restart loop hides the error. 70 (panic) and 75 (orphan) DO retry.
-RestartPreventExitStatus=64 65 66 78
+# 78 sandbox blocks a required write, 79 gave up after 3 failed boots.
+# Restarting cannot fix any of these and a restart loop hides the error.
+# 70 (panic), 75 (orphan/readiness) and 69 (a single boot death) DO retry.
+RestartPreventExitStatus=64 65 66 78 79
 OOMPolicy=stop
 
 RuntimeDirectory=gvm/%i

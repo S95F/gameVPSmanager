@@ -6,7 +6,7 @@
 // grouped by the instance's own group, and there is no directive that can make
 // it 2750 gvm-<name>:gvm-console — which is what gvm-web needs in order to
 // traverse into an instance's runtime directory and reach the console socket
-// (section 6.5).
+//.
 //
 // Two properties, and both are load-bearing:
 //
@@ -15,7 +15,7 @@
 //     user, and they inherit group gvm-console with no further help. Nothing
 //     downstream chgrps anything, and nothing downstream needs to be root.
 //   - 2750, not 2755. Instance A cannot stat instance B's runtime directory
-//     (D-10). The socket's own 0660 is the second lock, and the peer-credential
+//    . The socket's own 0660 is the second lock, and the peer-credential
 //     tiers in internal/socket are the third; this is the first.
 //
 // It reads the instance file for the account name rather than deriving it,

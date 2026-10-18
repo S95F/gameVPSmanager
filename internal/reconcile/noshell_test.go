@@ -82,7 +82,7 @@ var programLiterals = []string{
 	// The binary the probe unit executes. It is the PACKAGED path, because
 	// the sandbox applies to the file that runs and probing with anything
 	// else would test a path the unit never takes.
-	"/usr/local/bin/gvm",
+	"/usr/bin/gvm",
 }
 
 func packageSources(t *testing.T) map[string][]byte {
