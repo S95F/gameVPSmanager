@@ -20,7 +20,7 @@ import (
 
 func newStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := NewStore(filepath.Join(t.TempDir(), "blobs"))
+	s, err := NewStore(filepath.Join(realTempDir(t), "blobs"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,9 +611,21 @@ func (e errReader) Read([]byte) (int, error) { return 0, e.err }
 
 // destIn builds a jailed destination inside a throwaway instance tree, the way
 // the content linker gets one.
+// realTempDir is t.TempDir() with 8.3 short names resolved. On a host whose
+// TEMP is spelled with one (the GitHub Windows runner's RUNNER~1), fixture
+// paths would otherwise disagree with what EvalSymlinks returns.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		return r
+	}
+	return dir
+}
+
 func destIn(t *testing.T, rel string) instance.Jailed {
 	t.Helper()
-	root := filepath.Join(t.TempDir(), "srv", "pz-main", "install")
+	root := filepath.Join(realTempDir(t), "srv", "pz-main", "install")
 	if err := os.MkdirAll(filepath.Join(root, "mods"), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,8 @@ import (
 
 	"github.com/S95F/gameVPSmanager/internal/instance"
 	"github.com/S95F/gameVPSmanager/internal/lifecycle"
+	"github.com/S95F/gameVPSmanager/internal/platform"
+	"github.com/S95F/gameVPSmanager/internal/ports"
 	"github.com/S95F/gameVPSmanager/internal/reconcile"
 )
 
@@ -182,8 +184,14 @@ func TestListRefusesAnArgumentAndPointsAtStatus(t *testing.T) {
 // gets made by somebody reading this output.
 func TestPortsSaysWhenTheEphemeralRangeWasAssumed(t *testing.T) {
 	h := newTestHost(t)
-	h.HostEnv.Ephemeral = nil // no reader: the occupancy falls back
-	h.HostEnv.Listeners = nil // and neither is there a listener table
+	// Readers that fail, not nil: nil means "use the real platform reader",
+	// which on Linux reads the real /proc and measures instead of assuming.
+	h.HostEnv.Ephemeral = func() (platform.PortRange, error) {
+		return platform.PortRange{}, platform.ErrNotSupported
+	}
+	h.HostEnv.Listeners = func() ([]ports.Listener, error) {
+		return nil, platform.ErrNotSupported
+	}
 
 	seedInstance(t, h, "valheim-1", "valheim", "--var", "public_name=One")
 

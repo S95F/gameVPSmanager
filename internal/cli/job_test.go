@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -614,9 +616,12 @@ func TestJobClearRefusesALiveLease(t *testing.T) {
 	h, _, _ := jobHost(t)
 	seedJobbableInstance(t, h, "pz-main")
 
+	// The test's own pid: provably alive on every platform. A fixed number
+	// like 4242 classifies LIVE on Windows only because /proc is unreadable
+	// there, and STALE on Linux where the real aliveTri sees it unallocated.
 	l := lifecycle.Lease{
 		Instance: "pz-main", Kind: lifecycle.JobUpdate, Unit: "gvm-job@pz-main_nightly.service",
-		PID: 4242, BootID: h.HostEnv.BootID, StartedAt: testTime,
+		PID: os.Getpid(), BootID: h.HostEnv.BootID, StartedAt: testTime,
 		Deadline: testTime.Add(4 * time.Hour), Reason: "update",
 	}
 	body, err := l.Bytes()
@@ -660,7 +665,8 @@ func TestJobClearRefusesAFutureProtoLiveLease(t *testing.T) {
 	seedJobbableInstance(t, h, "pz-main")
 
 	future := `{"proto":2,"instance":"pz-main","kind":"update",` +
-		`"unit":"gvm-job@pz-main_nightly.service","pid":4242,"boot_id":"` + h.HostEnv.BootID + `",` +
+		`"unit":"gvm-job@pz-main_nightly.service","pid":` + strconv.Itoa(os.Getpid()) +
+		`,"boot_id":"` + h.HostEnv.BootID + `",` +
 		`"started_at":"` + testTime.UTC().Format(time.RFC3339Nano) + `"}`
 	h.FS.put("/var/lib/gvm/instances/pz-main/lease.json", []byte(future), 0o640)
 

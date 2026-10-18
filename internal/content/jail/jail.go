@@ -523,7 +523,12 @@ func checkRelative(rel string) error {
 		return fmt.Errorf("%w: %q contains a NUL byte, which would truncate the path the "+
 			"kernel sees to a prefix of the path that was checked", ErrBadTarget, rel)
 	}
-	if filepath.VolumeName(rel) != "" {
+	// filepath.VolumeName is a no-op off Windows, but a content target is the
+	// same hostile string on every platform (an archive is unpacked wherever
+	// gvm runs), so the drive-letter prefix is spelled out by hand.
+	if filepath.VolumeName(rel) != "" ||
+		(len(rel) >= 2 && rel[1] == ':' &&
+			('a' <= rel[0] && rel[0] <= 'z' || 'A' <= rel[0] && rel[0] <= 'Z')) {
 		return fmt.Errorf("%w: %q names a volume", ErrAbsolute, rel)
 	}
 	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, `\`) {

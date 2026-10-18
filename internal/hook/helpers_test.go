@@ -32,9 +32,21 @@ type env struct {
 	active bool
 }
 
+// realTempDir is t.TempDir() with 8.3 short names resolved. On a host whose
+// TEMP is spelled with one (the GitHub Windows runner's RUNNER~1), fixture
+// paths would otherwise disagree with what EvalSymlinks returns.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		return r
+	}
+	return dir
+}
+
 func newEnv(t *testing.T, manifestFile string, vars spec.VarValues) *env {
 	t.Helper()
-	root := t.TempDir()
+	root := realTempDir(t)
 	e := &env{t: t, root: root}
 
 	dirs := map[string]string{}
