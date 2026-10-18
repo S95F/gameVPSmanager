@@ -11,7 +11,7 @@ const murmur2Seed uint32 = 1
 
 const (
 	murmur2M uint32 = 0x5bd1e995
-	murmur2R        = 24
+	murmur2R uint32 = 24
 )
 
 // murmur2 computes MurmurHash2 over the given data with seed 1.

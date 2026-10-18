@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Go module dependencies. x/crypto backs the argon2id passwords and the
+  # pin-only SSH host-key callback, so security bumps should land promptly.
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+
+  # GitHub Actions are pinned to commit SHAs; dependabot reads the trailing
+  # "# vX.Y.Z" comment and bumps both the SHA and the comment together.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

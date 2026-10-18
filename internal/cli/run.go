@@ -269,13 +269,15 @@ func manifestRefs(m *spec.Manifest) (manifestTemplateRefs, error) {
 }
 
 func firstErrorDiag(d spec.Diags) string {
-	for _, e := range d.Errors() {
-		if e.Path != "" {
-			return e.Path + ": " + e.Msg
-		}
-		return e.Msg
+	errs := d.Errors()
+	if len(errs) == 0 {
+		return "invalid"
 	}
-	return "invalid"
+	e := errs[0]
+	if e.Path != "" {
+		return e.Path + ": " + e.Msg
+	}
+	return e.Msg
 }
 
 const (

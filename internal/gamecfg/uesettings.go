@@ -292,9 +292,7 @@ func ueUnquote(s string) string {
 		return s
 	}
 	s = s[1:]
-	if strings.HasSuffix(s, `"`) {
-		s = s[:len(s)-1]
-	}
+	s = strings.TrimSuffix(s, `"`)
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\\' && i+1 < len(s) {
