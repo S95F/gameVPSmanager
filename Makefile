@@ -40,9 +40,11 @@ build-native: ## Build for the host OS (local experimentation only)
 	@mkdir -p $(BIN_DIR)
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/ ./cmd/...
 
+# -race needs cgo. Only the test binaries get it; release builds keep the
+# exported CGO_ENABLED=0 and stay static.
 .PHONY: test
 test: ## Run the full test suite with the race detector
-	$(GO) test ./... -count=1 -race
+	CGO_ENABLED=1 $(GO) test ./... -count=1 -race
 
 .PHONY: test-short
 test-short: ## Run tests without the race detector (faster inner loop)
