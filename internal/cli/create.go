@@ -275,7 +275,7 @@ func buildInstance(in createInput) (*spec.Instance, ports.Allocation, error) {
 func resolveVars(m *spec.Manifest, opt createOptions) (map[string]string, error) {
 	for _, k := range opt.VarOrder {
 		if _, ok := m.Spec.Vars[k]; !ok {
-			return nil, fmt.Errorf("%s declares no variable %q; `gvm game validate %s` lists them",
+			return nil, fmt.Errorf("%s declares no variable %q; `gvm game show %s` lists them",
 				m.Metadata.ID, k, m.Metadata.ID)
 		}
 	}

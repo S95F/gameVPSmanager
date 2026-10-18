@@ -54,10 +54,6 @@ type restoreOptions struct {
 	// 2-7 entirely. It touches no live world, which is why it is the one
 	// restore route with nothing to confirm.
 	To string
-	// NoPreArchive skips step 2. It prints a warning and requires the
-	// instance name typed, because what it removes is the only copy of the
-	// world it is about to overwrite.
-	NoPreArchive bool
 	// Paranoid upgrades the source verification from `--spot 24` to `--deep`.
 	Paranoid bool
 	// PreserveOwnership applies the recorded uid/gid instead of the instance
@@ -96,8 +92,14 @@ func runRestore(ctx context.Context, env *Env, args []string) error {
 		"a directory to list instead of the instance's own (legacy bash-suite tarballs too)")
 	fs.StringVar(&ro.To, "to", "",
 		"extract into this directory instead of over the live world; skips steps 2-7")
-	fs.BoolVar(&ro.NoPreArchive, "no-pre-archive", false,
-		"do NOT archive the current world first. Requires --confirm <instance>")
+	// --no-pre-archive is gone. A restore always archives the current world as
+	// class `preserve` first (no retention policy deletes it), so a bad restore
+	// is recoverable; the engine does this unconditionally. The flag is still
+	// recognised only so passing it earns the sentence that says the pre-archive
+	// is mandatory, instead of a bare "flag provided but not defined".
+	var noPreArchive bool
+	fs.BoolVar(&noPreArchive, "no-pre-archive", false,
+		"(removed) a restore always pre-archives the current world; passing this is refused")
 	fs.BoolVar(&ro.Paranoid, "paranoid", false,
 		"verify the source archive member by member (--deep) instead of by sample (--spot 24)")
 	fs.BoolVar(&ro.PreserveOwnership, "preserve-ownership", false,
@@ -110,6 +112,13 @@ func runRestore(ctx context.Context, env *Env, args []string) error {
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return flagErr(err)
+	}
+	if flagWasGiven(fs, "no-pre-archive") {
+		return usageErr(&userError{
+			Msg: "--no-pre-archive was removed",
+			Hint: "a restore always archives the current world as class `preserve` first " +
+				"(no retention policy deletes it), so a bad restore can be rolled back",
+		})
 	}
 	if list {
 		if len(pos) > 0 {
@@ -130,17 +139,6 @@ func runRestore(ctx context.Context, env *Env, args []string) error {
 			"  (or --to <dir> to extract it somewhere for inspection, which touches no world)",
 			ro.Source)
 	}
-	if ro.NoPreArchive && strings.TrimSpace(opt.Confirm) != only {
-		// Refused HERE as well as in the engine, and not as belt and braces:
-		// the engine's confirmation authorises the restore, and this one
-		// authorises removing the only copy of what the restore overwrites.
-		// They are different decisions and `--yes` does not satisfy this one.
-		return fmt.Errorf("--no-pre-archive overwrites %s's world with no archive of what was "+
-			"there, and nothing in gvm can undo that. Type the instance name to use it: "+
-			"gvm restore %s --instance %s --no-pre-archive --confirm %s",
-			only, ro.Source, only, only)
-	}
-
 	opt.Engine.Restore = ro
 	return runRestoreOnto(ctx, env, only, opt)
 }
@@ -419,9 +417,6 @@ func printRestorePreflight(w io.Writer, name, src string, m *archive.Manifest, r
 	case ro.To != "":
 		fmt.Fprint(w, "  step 2    not applicable: --to extracts for inspection and touches "+
 			"no world\n")
-	case ro.NoPreArchive:
-		fmt.Fprintf(w, "\n  WARNING: --no-pre-archive. %s's current world will be overwritten "+
-			"with NO archive of what is there now, and nothing in gvm can undo that.\n", name)
 	default:
 		fmt.Fprint(w, "  step 2    the current world is archived as `preserve`, "+
 			"reason pre-restore, first\n")

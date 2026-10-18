@@ -1,8 +1,8 @@
 # gameVPSmanager (`gvm`)
 
 Turns a Debian/Ubuntu VPS into a host for **several game servers at once** —
-Steam dedicated servers first, modded Minecraft after — with a CLI, a planned
-web dashboard, a planned firewall derived from what is actually running, and
+Steam dedicated servers first, modded Minecraft after — with a CLI, a web
+dashboard, a planned firewall derived from what is actually running, and
 backups that do not corrupt worlds. See **What works in this build** below for
 what the current release does today.
 
@@ -22,9 +22,9 @@ CI asserts that no game or job unit depends on Postgres, gvmd or gvm-web.
 
 ## What works in this build
 
-gvm is built bottom-up. This release delivers the command surface and honest
-messaging; the engines that install game files, open the firewall and serve
-the dashboard arrive in later phases of
+gvm is built bottom-up. This release delivers the command surface, the
+dashboard and honest messaging; the engines that install game files and open
+the firewall arrive in later phases of
 [`docs/USABILITY-PLAN.md`](docs/USABILITY-PLAN.md). Every command below works
 over SSH as root with gvmd, the dashboard and Postgres all down. Anything not
 built refuses with exit code 3 and the line `not available in this build;

@@ -23,7 +23,7 @@ The resolution ladder handles blocked mods as follows:
    fingerprint) is already in the blob store.
 
 3. **manual** — The operator placed the JAR file in the *drop-box* directory
-   (`/etc/gvm/curseforge/dropbox/`). gvm matches it by murmur2 fingerprint or,
+   (`/var/lib/gvm/downloads/mods`). gvm matches it by murmur2 fingerprint or,
    as a fallback, by filename stem.
 
 4. **mirror\_modrinth** — The mod is also published on Modrinth under the same
@@ -43,7 +43,7 @@ When a modpack contains a blocked mod:
 2. Download the JAR manually from the CurseForge website (requires a CurseForge
    account) or from a mirror the author has authorised.
 
-3. Place the JAR in `/etc/gvm/curseforge/dropbox/`. The filename must end in
+3. Place the JAR in `/var/lib/gvm/downloads/mods`. The filename must end in
    `.jar`; the stem should match the CurseForge file name (used as a fallback
    match after the murmur2 fingerprint check).
 

@@ -41,6 +41,30 @@ func (mcAcceptEULA) Run(_ context.Context, h *Ctx) error {
 	if err != nil {
 		return err
 	}
+
+	// D-22: gvm never accepts the EULA on the operator's behalf. `gvm create`
+	// already refuses until the manifest's acceptance var is true, but this hook
+	// is the one place that writes eula=true, so it re-checks the var rather than
+	// trusting create was the only door in. An adopted instance or a hand-edited
+	// instance YAML that reaches post_install without acceptance must not have
+	// the licence accepted for it.
+	m := h.Manifest
+	if m == nil || m.Spec.Legal == nil || m.Spec.Legal.EULA == nil {
+		h.Problem("%s not written: this manifest names mc.accept_eula but declares no "+
+			"legal.eula gate, so acceptance cannot be confirmed", eulaFile)
+		return nil
+	}
+	eula := m.Spec.Legal.EULA
+	if h.Vars[eula.Var] != "true" {
+		hint := ""
+		if eula.URL != "" {
+			hint = " (see " + eula.URL + ")"
+		}
+		h.Problem("%s not written: the EULA is not accepted. Set --var %s=true%s, then "+
+			"re-run `gvm update`.", eulaFile, eula.Var, hint)
+		return nil
+	}
+
 	if _, err := fsys.Stat(RootData, eulaFile); err == nil {
 		h.Note("%s already exists; not overwriting", eulaFile)
 		return nil
