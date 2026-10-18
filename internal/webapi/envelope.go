@@ -154,9 +154,9 @@ func ServeDegraded(w http.ResponseWriter, r *http.Request) {
 // commands only — asserted by TestDegradedPageNamesNoInstance.
 const degraded503HTML = `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>gvm dashboard — datastore down</title>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>gvm dashboard — datastore down</title>
 <style>
-body{font-family:monospace;max-width:72ch;margin:4rem auto;padding:0 1rem;background:#1a1a1a;color:#e0e0e0}
+body{font-family:monospace;max-width:72ch;margin:2rem auto;padding:0 1rem;background:#1a1a1a;color:#e0e0e0}
 h1{color:#f08080}pre{background:#111;padding:1rem;border-radius:4px;overflow-x:auto}
 </style>
 </head>
