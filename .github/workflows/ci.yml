@@ -76,34 +76,22 @@ jobs:
       - name: golden-units
         run: bash ci/golden-units.sh
 
-      - name: no-shell-in-gvm
-        # gvm must never spawn a shell. Grep for exec.Command calls that could
-        # launch sh/bash/python directly.
-        run: |
-          if grep -r 'exec\.Command.*"\(sh\|bash\|python\|/bin/sh\)"' internal/ cmd/ 2>/dev/null | grep -v '_test\.go'; then
-            echo "FAIL: shell invocation found in non-test code"
-            exit 1
-          fi
-          echo "OK: no shell invocations found"
-
-      - name: no-kill-9-in-gvm
-        # gvm must never SIGKILL a game server (corrupts worlds).
-        run: |
-          if grep -r 'syscall\.SIGKILL\|kill.*-9\|Signal(9)' internal/ cmd/ 2>/dev/null | grep -v '_test\.go' | grep -v 'adopt\|rollback'; then
-            echo "FAIL: SIGKILL found in non-test, non-rollback code"
-            exit 1
-          fi
-          echo "OK: no SIGKILL in game-facing code"
-
-      - name: no-unauthenticated-api
-        # /api/v1 routes must require auth. Verify no handler is registered
-        # without going through the auth middleware.
-        run: |
-          if grep -r 'http\.HandleFunc.*api/v1\|mux\.HandleFunc.*api/v1' internal/web/ 2>/dev/null; then
-            echo "FAIL: bare /api/v1 route found (must go through auth middleware)"
-            exit 1
-          fi
-          echo "OK: no bare /api/v1 routes"
+      # no-shell-in-gvm, no-kill-9-in-gvm and no-unauthenticated-api used to be
+      # line-oriented greps here. They are now AST/route-table tests that run
+      # in the `check` job's `go test ./...`, because the greps could each be
+      # bypassed without anyone noticing:
+      #   - no-shell:    internal/platform.TestNoShellSpawnedAnywhere resolves the
+      #                  program argument of every os/exec spawn (the greps saw
+      #                  only a literal shell on the same line as exec.Command,
+      #                  and every real call site passes a variable).
+      #   - no-kill-9:   internal/platform.TestNoSigkillOutsideTheLadder flags
+      #                  SIGKILL and a raw signal-9 by enclosing FUNCTION, not by
+      #                  a path substring (the grep blessed all of adopt/ and
+      #                  rollback/ and missed unix.SIGKILL / Kill(pid, 9)).
+      #   - no-auth-api: internal/web.TestAPIIgnoresCookies +
+      #                  TestBrowserRoutesRequireSession walk the actual route
+      #                  tables and hit every route, which the HandleFunc grep
+      #                  could not see through the registration loop.
 
       - name: dashboard-linked-whole
         # Phase 48 linked the web tier; what must now hold is that it came in
