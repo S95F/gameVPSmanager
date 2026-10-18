@@ -455,13 +455,14 @@ func TestTheRestoreKindNamesThePackageThatWillBringIt(t *testing.T) {
 	}
 }
 
-// TestNoPreArchiveNeedsTheInstanceNameTyped.
+// TestNoPreArchiveIsRefused.
 //
-// Skipping step 2 means the live world is overwritten with no copy of what was
-// there, which is the one thing in this subsystem no later command can undo.
-// `--yes` does not satisfy it: automation may authorise a restore, and this is
-// a second decision.
-func TestNoPreArchiveNeedsTheInstanceNameTyped(t *testing.T) {
+// The pre-archive is mandatory: a restore always archives the current world as
+// class `preserve` first, so a bad restore can be rolled back. The old
+// `--no-pre-archive` escape hatch is gone, and any attempt to use it — with or
+// without a confirm or `--yes` — is refused with a message that says so rather
+// than a bare "flag provided but not defined".
+func TestNoPreArchiveIsRefused(t *testing.T) {
 	h, _, _ := jobHost(t)
 	seedJobbableInstance(t, h, "pz-main")
 
@@ -470,13 +471,13 @@ func TestNoPreArchiveNeedsTheInstanceNameTyped(t *testing.T) {
 		{"restore", "/var/backups/gvm/pz-main/x.tar.gz", "--instance", "pz-main",
 			"--no-pre-archive", "--yes"},
 		{"restore", "/var/backups/gvm/pz-main/x.tar.gz", "--instance", "pz-main",
-			"--no-pre-archive", "--confirm", "pz-test"},
+			"--no-pre-archive", "--confirm", "pz-main"},
 	} {
 		code, _, errb := runWith(t, h, "", args...)
 		if code == 0 {
 			t.Fatalf("%v: accepted", args)
 		}
-		if !strings.Contains(errb, "nothing in gvm can undo that") {
+		if !strings.Contains(errb, "--no-pre-archive was removed") {
 			t.Errorf("%v: stderr = %q", args, errb)
 		}
 	}

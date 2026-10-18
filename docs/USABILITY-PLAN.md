@@ -402,7 +402,7 @@ Every phase's status section (✅/🟡/⏸️) was checked against the tree at t
 
 **Sentinel tests** (from [When the plan is done](#when-the-plan-is-done)): 6 of 10 exist and are green — `TestHintsResolve`, `TestEveryHelpPathExitsZero`, `TestAvailabilityMatchesBehaviour`, `TestDoctorFixesNameRealThings`, `TestJobUnitExitCodes`, `TestNoUfwEnableAdvice`. The other four belong to phases still pending (32, 37, 47–49).
 
-**Per-phase verdicts.** *Confirmed* means every statically checkable landed claim was found under the names the status section uses, and nothing in its Remaining list turned out to be already done. *Needs review* marks a status section whose text does not match the code. In every phase the landed code itself was found — each discrepancy below is plan text or shipped help text out of step with the code, not missing work.
+**Per-phase verdicts.** *Confirmed* means every statically checkable landed claim was found under the names the status section uses, and nothing in its Remaining list turned out to be already done. *Needs review* marks a status section whose text does not match the code. In every phase the landed code itself was found — each discrepancy below is plan text or shipped help text out of step with the code, not missing work. Rows marked *fixed 2026-10-18* were resolved in the follow-up pass after this audit (improvement review §7); the Verified cell and each phase's own callout record what changed, and what, if anything, is still open.
 
 | Ph | Plan status | Verified | Review notes |
 |---|---|---|---|
@@ -412,26 +412,26 @@ Every phase's status section (✅/🟡/⏸️) was checked against the tree at t
 | 23 | 🟡 partial | Confirmed | — |
 | 24 | 🟡 partial | Confirmed | — |
 | 25 | 🟡 partial | Confirmed | "needs the live-pz fixtures" is off — the `live-pz/rootfs` fixture exists; what is missing is a tracked `config.env` (gitignore item above). |
-| 26 | 🟡 partial | ⚠ Needs review | Item 1 is claimed landed, but `create`'s undeclared-var error still points at `gvm game validate` (`create.go:278`), not `gvm game show`, and the gap is not in Remaining. |
+| 26 | 🟡 partial | ✓ fixed 2026-10-18 | `create`'s undeclared-var error now points at `gvm game show` (`create.go:278`). |
 | 27 | 🟡 partial | Confirmed | — |
 | 28 | 🟡 partial | ⚠ Needs review | The ready-restart Note is claimed tested but has no test, and lacks the DoD's "since <timestamp>". `VerbUnitStop` is called new but already existed; the genuinely missing piece is the dead-runner branch in `Manager.execute`. |
 | 29 | 🟡 partial | Confirmed | `ValidateInstanceValue` has no production caller yet (expected until the `secret` surface lands); `\v` and `\f` are not banned. |
-| 30 | 🟡 partial | ⚠ Needs review | The EULA gate is item 5, not "part of item 4". Code names differ from the plan text (`accept_eula` vs `eula_accepted`, minecraft.net/eula vs aka.ms, `apply: rebuild` vs restart). No `mc.eula_accepted` validator, and it is not in Remaining. "no hook does [accept it]" is wrong: `mc.accept_eula` (`hook/mc.go:39`) writes `eula=true` without checking the var — unreachable only because hooks are not run yet. `internal/hook` is already linked (`cli/game.go:27`), not "for the first time". |
+| 30 | 🟡 partial | ✓ safety fixed 2026-10-18 | `mc.accept_eula` (`hook/mc.go`) now refuses to write `eula=true` unless the manifest's `accept_eula` var is set, so no hook accepts the EULA for the operator (D-22). Plan-text nits remain: the gate is item 5 not "part of item 4", and the code var is `accept_eula`, not the plan's `eula_accepted`. |
 | 31 | 🟡 partial | ⚠ Needs review | Two items neither landed nor in Remaining: static `jobs.StepNames` (item 4 — it still calls `r.Steps(env)`), and install's progress plus `next: sudo gvm start <n>` (item 6). |
 | 32 | 🟡 partial | Confirmed | Caveat: the section cites Phase 27's argv-secret lint, which is still pending — no such lint exists yet. |
 | 33 | 🟡 partial | Confirmed | — |
-| 34 | 🟡 partial | ⚠ Needs review | Item 3's "`start` gets its own usage text" was not done and is not in Remaining. Related: the job verbs still advertise `--budget` (`cli/job.go:140`) which `consoleShutdown` silently discards — the same ignored-flag problem item 3 removed from start/stop/restart. |
+| 34 | 🟡 partial | ⚠ Needs review | `--budget` is now removed from the job verbs too (`cli/job.go`), matching the lifecycle verbs. Still open: item 3's "`start` gets its own usage text" was not done and is not in Remaining. |
 | 35 | 🟡 partial | Confirmed | — |
 | 36 | 🟡 partial | Confirmed | Phase 10 groundwork (snapshot fields on `backup.SnapshotResult`) exists but reaches no spec, index or CLI print yet. |
 | 37 | 🟡 partial | Confirmed | `audit.ConsoleSend`/`ContentSync` are declared but nothing emits them; `audit tail`/`search` are stubs. |
-| 38 | 🟡 partial | ⚠ Needs review | Remaining item 2 says the removed `--no-pre-archive` "stays refused" — the flag is neither removed nor refused: still bound (`restore.go:99`) and accepted when `--confirm <instance>` matches. Minor: the `restore` availability text does not mention `--to`. |
+| 38 | 🟡 partial | ✓ fixed 2026-10-18 | `--no-pre-archive` is now refused (`restore.go`) with a message that the pre-archive is mandatory: a restore always archives the current world as class `preserve` first. Minor still open: the `restore` availability text does not mention `--to`. |
 | 39 | 🟡 partial | Confirmed | — |
 | 40 | 🟡 partial | Confirmed | — |
 | 41 | 🟡 partial | Confirmed | Overstatement: "every control character" is C0 plus DEL; C1 (U+0080–U+009F) is not refused. |
-| 42 | 🟡 partial | ⚠ Needs review | The shipped `gvm help proton` topic describes pending item 2 as done: it says satisfactory/ark-se "run native", but both manifests are still `kind: proton` and no `*-proton.yaml` exists — the topic contradicts its own ARK line. Its `proton_path`/ProtectHome warning claim has no code behind it. |
+| 42 | 🟡 partial | ✓ fixed 2026-10-18 | The `gvm help proton` topic now says `satisfactory`/`ark-se` run under Proton (both are `kind: proton`; no `*-proton.yaml` ships), lists Satisfactory among the Proton titles, and no longer claims a `gvm create` ProtectHome warning that has no code (the real check is the spawn preflight, exit 78). |
 | 43 | 🟡 partial | ⚠ Needs review | The DoD line is not "covered": no title is stored, and the refusal is generic (points at `content why`) rather than naming the offending item. |
 | 44 | ⏸️ not started | Confirmed | Nothing landed; no stray half-implementation. |
-| 45 | 🟡 partial | ⚠ Needs review | `curseforge.DropBoxDir` exists but is not consumed — `curseforge.New` has no callers — and `docs/curseforge-blocked-mods.md:26,46` still names `/etc/gvm/curseforge/dropbox/`. The agreement test only pins the literal. |
+| 45 | 🟡 partial | ✓ doc fixed 2026-10-18 | `docs/curseforge-blocked-mods.md` now names the real drop-box path `/var/lib/gvm/downloads/mods` (matching `curseforge.DropBoxDir`). Still open: `DropBoxDir` has no consumer yet — `curseforge.New` has no callers. |
 | 46 | 🟡 partial | Confirmed | — |
 | 47 | 🟡 partial | Confirmed | — |
 | 48 | 🟡 partial | Confirmed | — |
@@ -1191,7 +1191,7 @@ The pure, cross-platform pieces are in; the rest reads the live host and needs t
 
 ### 🟡 Partial — `game show`, the template handling (items 1, 2) and a quickstart topic (item 6-partial) landed 2026-10-15; the `next:` machinery and the sizing warnings remain
 
-> ⚠ Review 2026-10-17: item 1 is not fully landed — `create`'s undeclared-var error still points at `gvm game validate` (`create.go:278`), not `gvm game show`. See [Status review](#status-review--2026-10-17-verified-against-the-code).
+> ✓ Resolved 2026-10-18: `create`'s undeclared-var error now points at `gvm game show` (`create.go:278`). See [Status review](#status-review--2026-10-17-verified-against-the-code).
 
 The offline, choose-a-game half is in. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
 
@@ -1586,7 +1586,7 @@ The pure rule-10 core and the operator-facing explanation are in. `make check` i
 
 ### 🟡 Partial — the EULA gate landed 2026-10-15; the config-file rendering and hook linkage remain
 
-> ⚠ Review 2026-10-17: the gate is item 5 (not 4); code names differ from the plan text; no `mc.eula_accepted` validator; `mc.accept_eula` (`hook/mc.go:39`) would write `eula=true` unchecked once hooks run; `internal/hook` is already linked. See [Status review](#status-review--2026-10-17-verified-against-the-code).
+> ✓ Resolved 2026-10-18 (safety): `mc.accept_eula` (`hook/mc.go`) now refuses to write `eula=true` unless the manifest's `accept_eula` var is set, so no hook accepts the EULA for the operator (D-22). Plan-text nits remain: the gate is item 5 (not 4) and the code var is `accept_eula`, not `eula_accepted`. See [Status review](#status-review--2026-10-17-verified-against-the-code).
 
 The one bounded, cross-platform piece is in. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
 
@@ -2025,7 +2025,7 @@ The one piece that needs no `/proc`, no `ufw` and no manifest data is in. `make 
 
 ### 🟡 Partial — `--budget` removal (item 3) landed 2026-10-16; the start progress UI, failure diagnosis, `gvm up`, the quickstart finalisation and the VM golden-journey CI remain
 
-> ⚠ Review 2026-10-17: item 3's "`start` gets its own usage text" was not done (one shared block remains), and the job verbs still advertise a silently-discarded `--budget` (`cli/job.go:140`). See [Status review](#status-review--2026-10-17-verified-against-the-code).
+> ⚠ Review 2026-10-17 (partly resolved 2026-10-18): `--budget` is now removed from the job verbs too (`cli/job.go`). Still open: item 3's "`start` gets its own usage text" was not done (one shared block remains). See [Status review](#status-review--2026-10-17-verified-against-the-code).
 
 The one item that needs no install engine, no live VM and no `status.json` stream is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
 
@@ -2454,7 +2454,7 @@ The two pieces that need no job runner, no D-Bus timer read and no running game 
 
 ### 🟡 Partial — the safe extract-to-directory (item 1, `restore --to`) landed 2026-10-17; the restore-onto-a-world runner, destroy's auto-archive and content-free rebuild remain
 
-> ⚠ Review 2026-10-17: Remaining item 2's premise is wrong — `--no-pre-archive` was not removed and is accepted with `--confirm` (`restore.go:99`); the `restore` availability text also predates `--to`. See [Status review](#status-review--2026-10-17-verified-against-the-code).
+> ✓ Resolved 2026-10-18: `--no-pre-archive` is now refused (`restore.go`); a restore always pre-archives the current world. Minor still open: the `restore` availability text does not mention `--to`. See [Status review](#status-review--2026-10-17-verified-against-the-code).
 
 The one piece that touches no live world — so it needs no ladder, no job engine and no running game — is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
 
@@ -2864,7 +2864,7 @@ Every manifest change below gets a revision bump. It is confirmed by `sudo gvm g
 
 ### 🟡 Partial — the Proton guidance (item 9's cross-platform half) landed 2026-10-17; the 15 scratch boots, the manifest fixes, the Xvfb wrapper and the secrets-off-argv work remain
 
-> ⚠ Review 2026-10-17: the shipped `gvm help proton` topic describes pending item 2 as done (satisfactory/ark-se are still `kind: proton`, no `*-proton.yaml` exists) and contradicts its own ARK line; its `proton_path`/ProtectHome warning has no code behind it. See [Status review](#status-review--2026-10-17-verified-against-the-code).
+> ✓ Resolved 2026-10-18: the `gvm help proton` topic now says `satisfactory`/`ark-se` run under Proton, lists Satisfactory among the Proton titles, and drops the `gvm create` ProtectHome-warning claim that had no code. See [Status review](#status-review--2026-10-17-verified-against-the-code).
 
 This phase is verified by `gvm game try <id> --scratch` on Debian 12 and Ubuntu 24.04 — 15 real boots on two distributions, plus a Linux Xvfb wrapper — and the plan is explicit that "labelling a game is not fixing it": a manifest change counts only once a scratch boot proves it. None of that can be done, or honestly claimed, without a VM, so what landed here is the one piece that needs no boot: the Proton guidance. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
 
@@ -3117,7 +3117,7 @@ The pieces this phase builds on did land earlier: the id validation and comment-
 
 ### 🟡 Partial — the one exported drop-box constant (item 2's core) landed 2026-10-17; the Modrinth/CurseForge wiring, resolve-blocked, dependencies and the engine flips remain
 
-> ⚠ Review 2026-10-17: `curseforge.DropBoxDir` has no consumer (`curseforge.New` has no callers) and `docs/curseforge-blocked-mods.md:26,46` still names `/etc/gvm/curseforge/dropbox/`; the agreement test pins only the literal. See [Status review](#status-review--2026-10-17-verified-against-the-code).
+> ⚠ Review 2026-10-17 (doc fixed 2026-10-18): `docs/curseforge-blocked-mods.md` now names the real path `/var/lib/gvm/downloads/mods`. Still open: `curseforge.DropBoxDir` has no consumer — `curseforge.New` has no callers. See [Status review](#status-review--2026-10-17-verified-against-the-code).
 
 This phase depends on Phase 44's content job engine (not built) and its definition of done is end-to-end against running Minecraft servers, so most of it is runtime. The one piece that is pure and needs neither — the shared drop-box path — is in. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
 

@@ -57,7 +57,7 @@ func parseLifecycleArgs(env *Env, verb string, args []string) (lifecycleOptions,
 	if err != nil {
 		return lifecycleOptions{}, flagErr(err)
 	}
-	if budgetWasGiven(fs) {
+	if flagWasGiven(fs, "budget") {
 		name := "<n>"
 		if len(pos) == 1 {
 			name = pos[0]
@@ -77,13 +77,13 @@ func parseLifecycleArgs(env *Env, verb string, args []string) (lifecycleOptions,
 	return opt, nil
 }
 
-// budgetWasGiven reports whether --budget appeared on the command line. It is
-// set apart from the removed flag's value so the check reads as "was the dead
-// flag used", not "does it have a value".
-func budgetWasGiven(fs *flag.FlagSet) bool {
+// flagWasGiven reports whether a flag appeared on the command line. It is how a
+// removed-but-recognised flag (a hidden one that takes any value) is detected,
+// so the check reads as "was the dead flag used", not "does it have a value".
+func flagWasGiven(fs *flag.FlagSet, name string) bool {
 	given := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "budget" {
+		if f.Name == name {
 			given = true
 		}
 	})

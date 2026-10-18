@@ -112,9 +112,6 @@ type jobOptions struct {
 	Yes     bool
 	JSON    bool
 	Remote  string
-	// Budget bounds a shutdown ladder the job runs. Zero lets the instance's
-	// own shutdown.budget decide, which is what the rendered ladder carries.
-	Budget time.Duration
 	// Lease is the lease's self-expiry backstop.
 	Lease time.Duration
 	// Engine are the flags that tune a work ENGINE rather than the schedule
@@ -137,8 +134,6 @@ type jobOptions struct {
 func (o *jobOptions) bind(fs *flag.FlagSet, defTrigger jobs.Trigger) {
 	o.Trigger = string(defTrigger)
 	fs.StringVar(&o.Reason, "reason", "", "why, recorded in the audit row and the lease")
-	fs.DurationVar(&o.Budget, "budget", 0,
-		"bound a shutdown ladder this job runs (default: the instance's shutdown.budget)")
 	fs.BoolVar(&o.JSON, "json", false, "print the run record as JSON")
 	fs.StringVar(&o.Remote, "remote", "", "dashboard URL to run this against instead of the local host")
 }
@@ -419,9 +414,8 @@ func buildJobEnv(ctx context.Context, env *Env, h *HostEnv, res jobs.Resolved,
 		BootID: h.BootID,
 		Locker: h.Jobs.Locker,
 
-		StopBudget: opt.Budget,
-		LeaseFor:   opt.leaseFor(),
-		Policy:     pol,
+		LeaseFor: opt.leaseFor(),
+		Policy:   pol,
 
 		Confirm: &jobs.Confirmation{Typed: opt.Confirm, Automated: opt.Yes, ArchiveAck: true},
 	}
