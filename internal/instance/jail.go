@@ -152,11 +152,15 @@ func NewJail(cfg JailConfig) (*Jail, error) {
 	// protected, describes a jail in which nothing is destroyable. That is
 	// not a safe configuration, it is an unnoticed one: every destroy would
 	// report "protected" and the operator would go looking at the wrong list.
+	// It also wraps ErrProtected, because the resolved overlap may not be
+	// configuration at all: a data root that is a symlink into the secrets
+	// directory lands here, and the caller refusing that destroy needs the
+	// protection sentinel, not just "bad jail".
 	for _, a := range j.allow {
 		for _, p := range j.protected {
 			if under(a.real, p.real) {
 				return nil, fmt.Errorf("%w: allow root %s is at or under protected path %s, "+
-					"so nothing under it could ever be destroyed", ErrJail, a.given, p.given)
+					"so nothing under it could ever be destroyed (%w)", ErrJail, a.given, p.given, ErrProtected)
 			}
 		}
 	}

@@ -21,8 +21,8 @@ import (
 //
 // Layers 1 and 2 (recover at every goroutine boundary, recover in main and run
 // the ladder anyway) keep a panicking runner from taking a world with it. They
-// cannot help when the runner was SIGKILLed -- an OOM kill, an operator with
-// `kill -9`, a kernel panic on the host's other half. Then the game is
+// cannot help when the runner was SIGKILLed -- an OOM kill, an operator's
+// manual SIGKILL, a kernel panic on the host's other half. Then the game is
 // orphaned in the cgroup with nobody waiting for it, and the only thing that
 // knows how to stop it correctly is a file.
 //

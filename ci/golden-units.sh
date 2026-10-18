@@ -28,7 +28,7 @@ mkdir -p "$GOLDEN_DIR"
 
 drifted=0
 # For each golden file, compare with freshly generated output.
-for golden in "$GOLDEN_DIR"/*.service "$GOLDEN_DIR"/*.conf 2>/dev/null; do
+for golden in "$GOLDEN_DIR"/*.service "$GOLDEN_DIR"/*.conf; do
     [ -f "$golden" ] || continue
     name="$(basename "$golden")"
 
