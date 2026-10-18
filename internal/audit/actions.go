@@ -37,6 +37,7 @@ const (
 
 	SecretWrite  Action = "secret.write"
 	SecretRotate Action = "secret.rotate"
+	SecretRead   Action = "secret.read"
 
 	ManifestPublish Action = "manifest.publish"
 	ManifestUpgrade Action = "manifest.upgrade"
@@ -156,6 +157,15 @@ var allowedParams = map[Action]Spec{
 	},
 	SecretRotate: {
 		Params:   []string{"scope", "name", "key_id"},
+		Required: []string{"scope", "name"},
+	},
+	// secret.read records that a stored value was read back and shown to an
+	// operator (`gvm secret show`). The scope/name pair is the whole record:
+	// WHO revealed WHICH secret and WHEN is the only question reading a secret
+	// raises, and the value itself must never be here for the same reason
+	// secret.write's never is.
+	SecretRead: {
+		Params:   []string{"scope", "name"},
 		Required: []string{"scope", "name"},
 	},
 	ManifestPublish: {

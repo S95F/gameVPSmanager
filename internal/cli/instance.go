@@ -86,6 +86,12 @@ type HostEnv struct {
 	// HasSecret reports whether a credential file exists, for the drop-in's
 	// LoadCredential= lines. It answers presence and never reads a value.
 	HasSecret func(inst, id string) bool
+	// Secrets is the /etc/gvm/secrets store the `gvm secret` verbs read and
+	// write. Nil is secrets.DefaultStore(), the real tree; it is a seam only so
+	// a test can point it at a temp directory it owns, because the store writes
+	// through os directly rather than through the Files seam (a root-owned 0600
+	// file is not a thing a memFS can model).
+	Secrets *secrets.Store
 	// Probe is the D-15 write-probe. Nil is the real one, which launches a
 	// transient unit through systemd-run; it is a seam ONLY so that a test can
 	// exercise the plan on a box with no systemd, never so that an apply can
@@ -249,11 +255,20 @@ func (h *HostEnv) accountExists(name string) bool {
 	return err == nil
 }
 
+// secretStore is the store the `gvm secret` verbs and the presence check use.
+// Nil Secrets means the real tree; a test supplies one rooted at a temp dir.
+func (h *HostEnv) secretStore() *secrets.Store {
+	if h.Secrets != nil {
+		return h.Secrets
+	}
+	return secrets.DefaultStore()
+}
+
 func (h *HostEnv) hasSecret(inst, id string) bool {
 	if h.HasSecret != nil {
 		return h.HasSecret(inst, id)
 	}
-	ok, err := secrets.DefaultStore().Has(secrets.InstanceRef(inst, id))
+	ok, err := h.secretStore().Has(secrets.InstanceRef(inst, id))
 	return err == nil && ok
 }
 

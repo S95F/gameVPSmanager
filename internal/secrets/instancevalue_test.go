@@ -12,7 +12,7 @@ import (
 // never the value.
 func TestValidateInstanceValueBansGameHostileChars(t *testing.T) {
 	for _, bad := range []string{
-		`a'b`, `a"b`, `a\b`, `a$b`, "a`b", `a;b`, `a=b`, `a b`, "a\tb",
+		`a'b`, `a"b`, `a\b`, `a$b`, "a`b", `a;b`, `a=b`, `a b`, "a\tb", "a\vb", "a\fb",
 	} {
 		err := ValidateInstanceValue(New(bad))
 		if !errors.Is(err, ErrBannedChar) {

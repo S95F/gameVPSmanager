@@ -415,7 +415,7 @@ Every phase's status section (✅/🟡/⏸️) was checked against the tree at t
 | 26 | 🟡 partial | ⚠ Needs review | Item 1 is claimed landed, but `create`'s undeclared-var error still points at `gvm game validate` (`create.go:278`), not `gvm game show`, and the gap is not in Remaining. |
 | 27 | 🟡 partial | Confirmed | — |
 | 28 | 🟡 partial | ⚠ Needs review | The ready-restart Note is claimed tested but has no test, and lacks the DoD's "since <timestamp>". `VerbUnitStop` is called new but already existed; the genuinely missing piece is the dead-runner branch in `Manager.execute`. |
-| 29 | 🟡 partial | Confirmed | `ValidateInstanceValue` has no production caller yet (expected until the `secret` surface lands); `\v` and `\f` are not banned. |
+| 29 | 🟡 partial | Confirmed | Item 1 (the `gvm secret set/list/show/rotate/show-path` surface) landed 2026-10-18: `ValidateInstanceValue` now has its production caller (`secret set`), and `\v`/`\f` are banned. Items 2–7 (the manifest `secrets:` block, passworded-by-default `create`, doctor INST-011/HOST-006..008) remain. |
 | 30 | 🟡 partial | ⚠ Needs review | The EULA gate is item 5, not "part of item 4". Code names differ from the plan text (`accept_eula` vs `eula_accepted`, minecraft.net/eula vs aka.ms, `apply: rebuild` vs restart). No `mc.eula_accepted` validator, and it is not in Remaining. "no hook does [accept it]" is wrong: `mc.accept_eula` (`hook/mc.go:39`) writes `eula=true` without checking the var — unreachable only because hooks are not run yet. `internal/hook` is already linked (`cli/game.go:27`), not "for the first time". |
 | 31 | 🟡 partial | ⚠ Needs review | Two items neither landed nor in Remaining: static `jobs.StepNames` (item 4 — it still calls `r.Steps(env)`), and install's progress plus `next: sudo gvm start <n>` (item 6). |
 | 32 | 🟡 partial | Confirmed | Caveat: the section cites Phase 27's argv-secret lint, which is still pending — no such lint exists yet. |
@@ -1499,22 +1499,26 @@ This phase ships in the same release as Phase 30 (U3). A password gvm stores mus
 - **Rule 4:** nothing restarts automatically, and `--restart` uses the ladder.
 - **Rule 11:** gvm never generates or rotates an adopted instance's secrets. Its values arrive only through cutover's import (Phase 50), after discovery has stayed read-only.
 
-### 🟡 Partial — the rule-10 validation and a secrets help topic landed 2026-10-15; the secret command surface remains
+### 🟡 Partial — the rule-10 validation and help topic (2026-10-15) and the `gvm secret` command surface (2026-10-18) landed; the manifest `secrets:` block and doctor checks remain
 
-The pure rule-10 core and the operator-facing explanation are in. `make check` is green on Windows (fmt + vet + `go test ./... -race`) and the module cross-compiles clean for `linux/amd64`.
+The pure rule-10 core, the operator-facing explanation and item 1's command surface are in. `make check` is green on Windows (fmt + vet + `go test ./...`) and the module cross-compiles clean for `linux/amd64`.
 
 **Landed, with tests:**
-- **Rule-10 instance-secret validation.** `secrets.ValidateInstanceValue` is `ValidateValue` plus the ban on characters a secret cannot carry into a game's argv or config files — a quote, backslash, dollar sign, backtick, semicolon, equals sign or whitespace — reporting the offending byte's OFFSET and its reason (`ErrBannedChar`), never the byte and never the value. Host-scope secrets keep only the file-format rules, so a CurseForge `$2a$10$…` key passes as a host secret and is refused as an instance one — the separation item 1 calls for. `TestValidateInstanceValueBansGameHostileChars`, `TestHostSecretsKeepOnlyFileRules`.
-- **`gvm help secrets`** explains instance vs host secrets, the character rule, that a value never comes from argv, and that setting secrets from the CLI lands in a later release.
+- **Rule-10 instance-secret validation.** `secrets.ValidateInstanceValue` is `ValidateValue` plus the ban on characters a secret cannot carry into a game's argv or config files — a quote, backslash, dollar sign, backtick, semicolon, equals sign or whitespace, now including `\v` and `\f` — reporting the offending byte's OFFSET and its reason (`ErrBannedChar`), never the byte and never the value. Host-scope secrets keep only the file-format rules, so a CurseForge `$2a$10$…` key passes as a host secret and is refused as an instance one — the separation item 1 calls for. `TestValidateInstanceValueBansGameHostileChars`, `TestHostSecretsKeepOnlyFileRules`.
+- **`gvm help secrets`** explains instance vs host secrets, the character rule, and that a value never comes from argv.
+- **Item 1 — the `gvm secret set|list|show|rotate|show-path` surface** (2026-10-18). In-process as root (RouteHostOp, never admin.sock), through `secrets.Store`:
+  - `set [--host] [--generate] [--length N] [--from-file F] <inst> <name>` — the value comes from a no-echo TTY prompt, a pipe, `--from-file` or `--generate` (base62 `GeneratePassword`), never argv (U9). Instance values are refused for a rule-10 character (exit 5, nothing written) via `ValidateInstanceValue` — its first production caller; host values keep only `ValidateValue`. `ValidateInstanceValue` now also bans `\v`/`\f`.
+  - Each write records a `<name>.source` sidecar (`generated`/`operator`/`adopted`), audits `secret.write` with scope/name/source (never the value), and prints length + fingerprint + the restart-effect line.
+  - `list [--host] <inst>` shows name, length, fingerprint and source (`secrets.Fingerprint` is a one-way 12-hex label computed without `Reveal`). `show-path` prints the file. `show <inst> <name>` reveals one value to root at an interactive terminal only (refuses a pipe/file, exit 5) and audits `secret.read`. `rotate` generates a fresh password, refuses an `adopted` secret (rule 11) and a host scope, and honours `--restart` through the ladder.
+  - `secret` flips from NotInBuild to Works in the registry; README, the availability test, the audit allowlist (`secret.read`) and `docs/cli-reference.md` are updated to match. Tests in `internal/cli/secret_test.go`, `internal/secrets/{source,fingerprint}_test.go`.
 
-**Remaining (a dedicated session should take these — the L-effort body):**
-- **Item 1 — the `gvm secret set|list|show-path|rotate|show` surface** through `secrets.Store`, in-process as root, with the no-echo TTY prompt, `--from-file`/`--generate`/stdin value sources, the `.source` sidecar, length+fingerprint output and the `secret.write`/`secret.read` audit. This flips `secret` from NotInBuild to built, which cascades into verification (Phase 32).
-- **Item 2 — the declarative `secrets:` block** in manifests, plus the revision bumps across the 16 shipped games.
-- **Items 3–6 — passworded-by-default `create`, the join-password print, `secret show` read-back.**
+**Remaining (the rest of the L-effort body; each its own phase-29 follow-up):**
+- **Item 2 — the declarative `secrets:` block** in manifests, plus the revision bumps across the 16 shipped games. `secret show`'s player-facing-only default and `--admin-secrets` depend on this (today any named secret is shown to root at a terminal).
+- **Items 3–6 — passworded-by-default `create`/`apply` generation, the join-password print, and the credential preflight passing over `games.FS`.** These reach into `create`/`apply`; left for their own phase to respect the §1 WIP limit.
 - **Item 7 — doctor INST-011 (credentials) and HOST-006..008** in their own check file (HOST-006/007 Skip pre-dashboard, HOST-008 runs now).
-- **Item 8 (rest) — the misleading-text fixes** at the four cited call sites.
+- **Item 8 (rest) — the misleading-text fixes** at `create.go:511`, `preflight.go:242`, `validate_instance.go:383`, `minecraft-paper.yaml:19-21`.
 
-**Effort for this task:** the rule-10 validation and the help topic implemented by Claude (Opus 4.8) on 2026-10-15, in the same session as Phases 20–28. The secret command surface, the manifest `secrets:` blocks and the doctor checks are their own body of work.
+**Effort for this task:** the rule-10 validation and help topic by Claude (Opus 4.8) on 2026-10-15; the command surface by Claude (Opus 4.8) on 2026-10-18. The manifest `secrets:` blocks, the `create`/`apply` generation and the doctor checks are their own bodies of work.
 
 ---
 

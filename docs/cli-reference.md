@@ -165,14 +165,29 @@ sudo gvm token create --user you@example.com --name ci-bot --role operator --exp
 
 ### gvm secret
 
-manage instance secrets _(not in this build: setting instance secrets is not in this build)_
+set, rotate and read back instance and host secrets
 
 Subcommands:
 
-- `list` — list instance secret names
-- `set` — set an instance secret
-- `rotate` — rotate an instance secret
-- `show-path` — print where a secret is stored
+- `set` — set an instance or host secret from a prompt, file, pipe or --generate
+- `list` — list an instance's or the host's secrets, with length and fingerprint
+- `show` — print one secret's value to an interactive terminal
+- `rotate` — replace an instance secret with a freshly generated password
+- `show-path` — print the file a secret is (or would be) stored in
+
+Examples:
+
+```
+printf '%s' hunter2 | sudo gvm secret set pz1 join_password
+sudo gvm secret set cs2-1 gslt
+sudo gvm secret set pz1 rcon_password --generate
+printf '%s' "$KEY" | sudo gvm secret set --host curseforge
+sudo gvm secret list pz1
+sudo gvm secret list --host
+sudo gvm secret show pz1 join_password
+sudo gvm secret rotate pz1 rcon_password
+sudo gvm secret show-path pz1 join_password
+```
 
 ### gvm audit
 

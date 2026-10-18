@@ -176,8 +176,7 @@ var commands = []Command{
 
 	{Name: "user", Group: "admin", Summary: "manage dashboard users, invites and roles", Run: runUser},
 	{Name: "token", Group: "admin", Summary: "manage API tokens", Run: runToken},
-	{Name: "secret", Group: "admin", Summary: "manage instance secrets",
-		Avail: avail.Unbuilt("setting instance secrets is not in this build"), Run: runSecret},
+	{Name: "secret", Group: "admin", Summary: "set, rotate and read back instance and host secrets", Run: runSecret},
 	{Name: "audit", Group: "admin", Summary: "view audit log records",
 		Avail: avail.Unbuilt("reading the audit log is not in this build"), Run: runAudit},
 
