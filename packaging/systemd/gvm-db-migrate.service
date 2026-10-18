@@ -1,0 +1,13 @@
+# gvm-db-migrate — the ONE way the schema moves (rule 8).
+#
+# Migrations are explicit: gvmd and gvm-web check AssertCompatible and refuse
+# auth work while the schema is behind, and neither ever migrates on its own.
+# An operator runs `sudo gvm db migrate` or starts this oneshot; nothing
+# enables or triggers it automatically.
+
+[Unit]
+Description=gvm schema migration (explicit; never automatic)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gvm db migrate

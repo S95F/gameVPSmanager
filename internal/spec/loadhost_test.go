@@ -88,6 +88,74 @@ func TestValidateHostRejectsNftBackend(t *testing.T) {
 	}
 }
 
+// TestValidateHostEdgeRequiredFields: the edge enums are validated together
+// with the field each mode cannot work without (Phase 47 item 6).
+func TestValidateHostEdgeRequiredFields(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*HostConfig)
+		want   string
+	}{
+		{"caddy_managed needs site", func(h *HostConfig) {
+			h.Spec.Edge.Mode = "caddy_managed"
+		}, "needs a site"},
+		{"caddy_snippet needs site", func(h *HostConfig) {
+			h.Spec.Edge.Mode = "caddy_snippet"
+		}, "needs a site"},
+		{"proxy_external needs trusted_origins", func(h *HostConfig) {
+			h.Spec.Edge.Mode = "proxy_external"
+		}, "trusted origin"},
+		{"acme_dns needs dns_provider", func(h *HostConfig) {
+			h.Spec.Edge.Mode = "caddy_managed"
+			h.Spec.Edge.Site = "gvm.example.com"
+			h.Spec.Edge.TLS.Mode = "acme_dns"
+		}, "needs a dns provider"},
+		{"external tls refused under caddy_managed", func(h *HostConfig) {
+			h.Spec.Edge.Mode = "caddy_managed"
+			h.Spec.Edge.Site = "gvm.example.com"
+			h.Spec.Edge.TLS.Mode = "external"
+		}, "another proxy terminates"},
+		{"non-loopback listen refused", func(h *HostConfig) {
+			h.Spec.Edge.Mode = "proxy_external"
+			h.Spec.Edge.TrustedOrigins = []string{"https://gvm.example.com"}
+			h.Spec.Edge.Listen = "0.0.0.0:8080"
+		}, "not a loopback listener"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := DefaultHostConfig()
+			tc.mutate(&h)
+			ds := ValidateHost("gvm.yaml", &h)
+			if !ds.HasErrors() {
+				t.Fatalf("expected a validation error")
+			}
+			if got := ds.String(); !strings.Contains(got, tc.want) {
+				t.Errorf("diagnostic missing %q:\n%s", tc.want, got)
+			}
+		})
+	}
+
+	// And the fixed configs validate clean.
+	okConfigs := []func(*HostConfig){
+		func(h *HostConfig) {
+			h.Spec.Edge.Mode = "caddy_managed"
+			h.Spec.Edge.Site = "gvm.example.com"
+		},
+		func(h *HostConfig) {
+			h.Spec.Edge.Mode = "proxy_external"
+			h.Spec.Edge.TrustedOrigins = []string{"https://gvm.example.com"}
+			h.Spec.Edge.Listen = "127.0.0.1:8130"
+		},
+	}
+	for i, mutate := range okConfigs {
+		h := DefaultHostConfig()
+		mutate(&h)
+		if ds := ValidateHost("gvm.yaml", &h); ds.HasErrors() {
+			t.Errorf("ok config %d rejected:\n%s", i, ds.String())
+		}
+	}
+}
+
 // A valid config validates clean — the default must never fail its own checks.
 func TestValidateHostAcceptsDefault(t *testing.T) {
 	h := DefaultHostConfig()

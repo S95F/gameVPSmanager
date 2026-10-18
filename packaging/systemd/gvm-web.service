@@ -1,0 +1,33 @@
+# gvm-web — the dashboard and API (ARCHITECTURE.md 16, Phase 48).
+#
+# Deliberately NO dependency on gvmd or postgresql: with either down the
+# dashboard serves the one degraded page and the game servers never notice
+# (rule 1). The listener is /run/gvm/web/dashboard.sock (unix, 0660, group
+# from the setgid directory) or edge.listen on loopback — never a public port;
+# the reverse proxy is the one public face (D-06).
+
+[Unit]
+Description=gvm dashboard and API
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/gvm web
+# The unprivileged web tier: no master key, no LoadCredential, host access
+# only through gvmd's closed verb set. gvm-console membership is what lets it
+# sit directly on the instances' console sockets for streaming (D-09).
+User=gvm
+SupplementaryGroups=gvm-console
+# 0007: the dashboard socket is created 0660, group inherited from the setgid
+# /run/gvm/web directory (ARCHITECTURE.md 17.3).
+UMask=0007
+Restart=on-failure
+RestartSec=2
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/run/gvm/web
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

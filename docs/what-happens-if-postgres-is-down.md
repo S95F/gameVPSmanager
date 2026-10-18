@@ -41,7 +41,7 @@ into Postgres when it comes back, via `gvm db replay-spool`.
 
 ## gvmd daemon
 
-> **Planned — not in this release.** gvmd is not in the current build; `gvm gvmd` refuses with "not available in this build". The behaviour below is the target design for when it lands.
+> **In this release** (Phase 48): gvmd serves its closed verb set from `gvmd.service`; the behaviour below holds.
 
 gvmd starts and listens on its unix socket regardless of Postgres state.
 Verbs that need the database return `ErrDatastoreUnavailable` (exit 3).
@@ -54,7 +54,7 @@ When it reconnects, `store.Open`'s `Ready()` channel closes and normal operation
 
 ## Web dashboard
 
-> **Planned — not in this release.** The dashboard is not in the current build; `gvm web` refuses with "not available in this build". The behaviour below is the target design for when it lands.
+> **In this release** (Phase 48): the dashboard runs from `gvm-web.service`; the behaviour below holds.
 
 | State | Response |
 |---|---|
@@ -77,10 +77,14 @@ depend on this database.
   journalctl -u postgresql -n 50
   df -h /var/lib/postgresql        # an unrotated WAL filling the disk is the usual cause
 
-Everything the dashboard does is available from the box:
-  sudo gvm status      sudo gvm console pz-main
-  sudo gvm stop pz-main   sudo gvm doctor
+Everything the dashboard does is available on the host over SSH:
+  sudo gvm status
+  sudo gvm doctor
 ```
+
+(The page carries generic commands only — never an example instance name, so
+it cannot read as a lie on a box with different servers. A test holds it to
+that.)
 
 ---
 

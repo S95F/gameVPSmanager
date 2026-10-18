@@ -123,10 +123,8 @@ type Command struct {
 var commands = []Command{
 	{Name: "version", Group: "general", Summary: "print the version banner", Run: runVersion},
 
-	{Name: "gvmd", Group: "roles", Summary: "run the privileged verb gateway (root)", Hidden: true,
-		Avail: avail.Unbuilt("the privileged verb gateway is not in this build"), Run: notImplemented},
-	{Name: "web", Group: "roles", Summary: "run the dashboard and API", Hidden: true,
-		Avail: avail.Unbuilt("the dashboard and API are not in this build"), Run: notImplemented},
+	{Name: "gvmd", Group: "roles", Summary: "run the privileged verb gateway (root)", Hidden: true, Run: runGvmd},
+	{Name: "web", Group: "roles", Summary: "run the dashboard and API", Hidden: true, Run: runWeb},
 	{Name: "run", Group: "roles", Summary: "supervise one instance", Hidden: true, Run: runRun},
 	// The three roles below are invoked by the unit and by gvmd, never typed.
 	// run-shutdown in particular is the layer-3 recovery path of section 11.8:
@@ -176,16 +174,16 @@ var commands = []Command{
 	{Name: "adopt", Group: "migration", Summary: "import an existing server install",
 		Avail: avail.Partialf("`gvm adopt discover` and `finalize` work; cutover and rollback are not in this build"), Run: runAdopt},
 
-	{Name: "user", Group: "admin", Summary: "manage dashboard users and roles",
-		Avail: avail.Unbuilt("dashboard users are not in this build"), Run: runUser},
-	{Name: "token", Group: "admin", Summary: "manage API tokens",
-		Avail: avail.Unbuilt("API tokens are not in this build"), Run: runToken},
+	{Name: "user", Group: "admin", Summary: "manage dashboard users, invites and roles", Run: runUser},
+	{Name: "token", Group: "admin", Summary: "manage API tokens", Run: runToken},
 	{Name: "secret", Group: "admin", Summary: "manage instance secrets",
 		Avail: avail.Unbuilt("setting instance secrets is not in this build"), Run: runSecret},
 	{Name: "audit", Group: "admin", Summary: "view audit log records",
 		Avail: avail.Unbuilt("reading the audit log is not in this build"), Run: runAudit},
 
 	{Name: "host", Group: "host", Summary: "install gvm on this host (host init)", Run: runHost},
+	{Name: "edge", Group: "host", Summary: "plan and apply the reverse-proxy config", Run: runEdge},
+	{Name: "ca", Group: "host", Summary: "export the internal CA certificate (ca export)", Run: runCA},
 	{Name: "firewall", Group: "host", Summary: "manage host firewall rules",
 		Avail: avail.Unbuilt("gvm does not manage the firewall in this build"), Run: runFirewall},
 	{Name: "doctor", Group: "host", Summary: "check the host for problems", Run: runDoctor},

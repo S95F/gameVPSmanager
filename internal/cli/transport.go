@@ -235,6 +235,8 @@ var routes = map[string]Route{
 	"update":   RouteHostOp,
 	"rebuild":  RouteHostOp,
 	"adopt":    RouteHostOp,
+	"edge":     RouteHostOp,
+	"ca":       RouteHostOp,
 	"firewall": RouteHostOp,
 	"doctor":   RouteHostOp,
 	"user":     RouteHostOp,

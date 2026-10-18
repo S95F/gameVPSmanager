@@ -122,39 +122,45 @@ gvm adopt discover --unit zomboid
 
 ### gvm user
 
-manage dashboard users and roles _(not in this build: dashboard users are not in this build)_
+manage dashboard users, invites and roles
 
 Subcommands:
 
+- `create` — create an owner or admin account (password + TOTP at the terminal)
+- `invite` — invite an operator or viewer by single-use URL
 - `list` — list dashboard users
-- `create` — create a dashboard user
-- `show` — show one user
-- `set-role` — set a user's global role
-- `set-password` — set a user's password
-- `disable` — disable a user
-- `enable` — enable a user
-- `reset-totp` — clear a user's TOTP enrolment
+- `show` — show one account and its grants
+- `roles` — print what each role may do
+- `grant` — give a user a role on one instance
+- `revoke-grant` — remove a user's grant on one instance
+- `disable` — disable an account and revoke its sessions and tokens
+- `enable` — re-enable a disabled account
+- `reset` — clear factors and revoke sessions, so the user re-enrols
+- `sessions` — list live dashboard sessions
+- `revoke-sessions` — revoke a user's live sessions
 
 Examples:
 
 ```
-gvm user create --email ops@example.com --role operator
+sudo gvm user create --email you@example.com --role owner
+sudo gvm user grant alice@example.com pz1 operator
+sudo gvm user reset alice@example.com --totp
 ```
 
 ### gvm token
 
-manage API tokens _(not in this build: API tokens are not in this build)_
+manage API tokens
 
 Subcommands:
 
-- `create` — mint an API token
+- `create` — mint an API token, shown once
 - `list` — list API tokens
-- `revoke` — revoke an API token
+- `revoke` — revoke an API token by name or prefix
 
 Examples:
 
 ```
-gvm token create --name ci-bot --role operator
+sudo gvm token create --user you@example.com --name ci-bot --role operator --expires 90d
 ```
 
 ### gvm secret
@@ -182,6 +188,14 @@ Subcommands:
 ### gvm host
 
 install gvm on this host (host init)
+
+### gvm edge
+
+plan and apply the reverse-proxy config
+
+### gvm ca
+
+export the internal CA certificate (ca export)
 
 ### gvm firewall
 

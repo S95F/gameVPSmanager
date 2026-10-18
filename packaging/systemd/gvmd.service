@@ -1,0 +1,24 @@
+# gvmd — the privileged verb gateway (ARCHITECTURE.md 3.2, Phase 48).
+#
+# Deliberately NO Requires/Wants/After on postgresql, gvm-web or any game
+# unit: gvmd serves with Postgres down (the auth verb answers degraded), and
+# rule 1 applies to the control plane too — ci/control-plane-dead.sh asserts
+# the game units never depend on THIS unit either.
+
+[Unit]
+Description=gvm privileged verb gateway
+Documentation=https://github.com/S95F/gameVPSmanager
+
+[Service]
+Type=simple
+# Root by design: the closed verb set over /run/gvm/admin.sock is the
+# boundary, not the account (hostops' enum, D-10's peer credentials).
+ExecStart=/usr/bin/gvm gvmd
+Restart=on-failure
+RestartSec=2
+
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -41,11 +41,14 @@ success.
 | `gvm content sync` | **partial** — `--dry-run` decides; applying mod changes is not in this build |
 | `gvm restore` | **partial** — `--list` works; restoring a world is not in this build |
 | `gvm adopt discover` · `adopt finalize` | **works**; `adopt cutover` and `rollback` are not in this build |
+| `gvm user` · `token` | **works** — accounts (password + TOTP), single-use invites with self-enrolment, grants, and API tokens |
+| `gvm gvmd` · `gvm web` | **works** — the privileged verb gateway and the dashboard service (installed by `host init --dashboard`) |
+| `gvm edge plan` · `edge apply` · `ca export` | **works** — render, validate, swap and reload the host's own Caddy config, with rollback |
 | `gvm install` · `update` · `rebuild` | **not built** — installing, updating and rebuilding game files land later |
 | `gvm firewall` | **not built** — gvm does not manage the firewall in this build |
-| `gvm user` · `token` · `secret` · `audit` | **not built** — these land with the dashboard |
+| `gvm secret` · `audit` | **not built** — the secret store and audit reader land later |
 
-**Not available in this build:** `audit`, `firewall`, `install`, `rebuild`, `secret`, `token`, `update`, `user`.
+**Not available in this build:** `audit`, `firewall`, `install`, `rebuild`, `secret`, `update`.
 
 (That list is checked against the command registry by a test, so this table
 cannot drift from what the binary actually refuses.)
@@ -64,6 +67,9 @@ are the code-level foundation those journeys build on.
 | [`docs/ARCHITECTURE.md` §19](docs/ARCHITECTURE.md) | **The Project Zomboid adopt runbook** — importing the live server without touching the world |
 | [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) | Phases 0–19 (**target design**): the dependency-ordered foundation, each with a definition of done |
 | [`docs/USABILITY-PLAN.md`](docs/USABILITY-PLAN.md) | Phases 20–55: the operator-journey plan (J1–J5) that turns the foundation into a usable product |
+| [`docs/admin-guide.md`](docs/admin-guide.md) | Standing up the dashboard: Postgres, `host init --dashboard`, accounts, tokens |
+| [`docs/dashboard.md`](docs/dashboard.md) | The dashboard for moderators: signing in, roles, what the buttons do |
+| [`docs/deploy-behind-servergitupdater.md`](docs/deploy-behind-servergitupdater.md) | Serving the dashboard behind a foreign proxy, e.g. a [serverGitUpdater](https://github.com/S95F/serverGitUpdater)-managed Caddy |
 | [`docs/research/`](docs/research/) | Primary-source research behind the decisions |
 
 ## Building

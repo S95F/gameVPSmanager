@@ -317,6 +317,47 @@ func TestEveryHostJobUnitNamesAJobTheJobLayerCanRun(t *testing.T) {
 	}
 }
 
+// TestControlPlaneUnitsCarryNoControlPlaneDeps is Phase 48 item 8's portable
+// half, on top of ci/control-plane-dead.sh's game-unit checks: the one rule
+// says kill gvmd, kill the dashboard, kill Postgres and everything comes
+// back — which requires that none of the three control-plane units drags
+// another up or down with it. A `Requires=postgresql.service` on gvmd would
+// take the verb gateway down with a database restart; an `After=` would stall
+// the dashboard's degraded page behind a database that is never coming up.
+// (The VM kill test — stop all three, assert the game's pid and starttime are
+// unchanged — needs the fresh-Debian runner and remains with it.)
+func TestControlPlaneUnitsCarryNoControlPlaneDeps(t *testing.T) {
+	units := []string{
+		"systemd/gvmd.service",
+		"systemd/gvm-web.service",
+		"systemd/gvm-db-migrate.service",
+	}
+	banned := []string{"postgresql", "gvmd.service", "gvm-web.service", "gvm@", "gvm-job@"}
+	keys := []string{"Requires=", "Wants=", "BindsTo=", "After=", "Before=", "PartOf="}
+	for _, name := range units {
+		b, err := FS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			for _, key := range keys {
+				if !strings.HasPrefix(trimmed, key) {
+					continue
+				}
+				for _, target := range banned {
+					if strings.Contains(trimmed, target) {
+						t.Errorf("%s: %q couples the control plane together; rule 1 forbids it", name, trimmed)
+					}
+				}
+			}
+		}
+	}
+}
+
 // TestEveryShippedFileIsEmbedded guards against the one mistake that is
 // invisible: adding a unit file and not noticing that //go:embed did not take
 // it (a name beginning with '_' or '.' is excluded from a directory embed).
