@@ -123,10 +123,8 @@ type Command struct {
 var commands = []Command{
 	{Name: "version", Group: "general", Summary: "print the version banner", Run: runVersion},
 
-	{Name: "gvmd", Group: "roles", Summary: "run the privileged verb gateway (root)", Hidden: true,
-		Avail: avail.Unbuilt("the privileged verb gateway is not in this build"), Run: notImplemented},
-	{Name: "web", Group: "roles", Summary: "run the dashboard and API", Hidden: true,
-		Avail: avail.Unbuilt("the dashboard and API are not in this build"), Run: notImplemented},
+	{Name: "gvmd", Group: "roles", Summary: "run the privileged verb gateway (root)", Hidden: true, Run: runGvmd},
+	{Name: "web", Group: "roles", Summary: "run the dashboard and API", Hidden: true, Run: runWeb},
 	{Name: "run", Group: "roles", Summary: "supervise one instance", Hidden: true, Run: runRun},
 	// The three roles below are invoked by the unit and by gvmd, never typed.
 	// run-shutdown in particular is the layer-3 recovery path of section 11.8:
@@ -177,9 +175,8 @@ var commands = []Command{
 		Avail: avail.Partialf("`gvm adopt discover` and `finalize` work; cutover and rollback are not in this build"), Run: runAdopt},
 
 	{Name: "user", Group: "admin", Summary: "manage dashboard users and roles",
-		Avail: avail.Unbuilt("dashboard users are not in this build"), Run: runUser},
-	{Name: "token", Group: "admin", Summary: "manage API tokens",
-		Avail: avail.Unbuilt("API tokens are not in this build"), Run: runToken},
+		Avail: avail.Partialf("`gvm user invite` is not in this build; create, grant, reset, sessions and the rest work"), Run: runUser},
+	{Name: "token", Group: "admin", Summary: "manage API tokens", Run: runToken},
 	{Name: "secret", Group: "admin", Summary: "manage instance secrets",
 		Avail: avail.Unbuilt("setting instance secrets is not in this build"), Run: runSecret},
 	{Name: "audit", Group: "admin", Summary: "view audit log records",

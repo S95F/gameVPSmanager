@@ -2,11 +2,13 @@ package hostinit
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
 	"time"
 
+	"github.com/S95F/gameVPSmanager/internal/secrets"
 	"github.com/S95F/gameVPSmanager/internal/spec"
 	"github.com/S95F/gameVPSmanager/internal/version"
 	"github.com/S95F/gameVPSmanager/packaging"
@@ -53,6 +55,11 @@ type Options struct {
 	// before the leap, and the converged-box check the DoD asserts prints 0
 	// changes.
 	Diff bool
+	// Dashboard also installs the control plane (DashboardManifest: gvmd,
+	// gvm-web, the migrate oneshot, the caddy-group tmpfiles), creates
+	// master.key if absent, and prints the postgresql setup lines. It starts
+	// nothing (Phase 48 item 3).
+	Dashboard bool
 }
 
 // marker is written to MarkerPath after the first successful init. Its presence
@@ -72,9 +79,12 @@ type marker struct {
 // binary, then the units and a single reload.
 func Run(ctx context.Context, sys System, out io.Writer, opt Options) error {
 	files := Manifest()
+	if opt.Dashboard {
+		files = append(files, DashboardManifest()...)
+	}
 
 	if opt.Diff {
-		return diff(ctx, sys, out, files)
+		return diff(ctx, sys, out, files, opt)
 	}
 
 	fmt.Fprintln(out, "gvm host init")
@@ -163,15 +173,67 @@ func Run(ctx context.Context, sys System, out io.Writer, opt Options) error {
 		fmt.Fprintf(out, "  config    %s kept (already present)\n", ConfigPath)
 	}
 
+	// 7. The dashboard extras: the master key (0400 root, created once and
+	//    never rewritten — rewriting it would orphan every sealed TOTP secret)
+	//    and the postgresql guidance. Units are installed above with the rest;
+	//    nothing is started (the operator enables gvmd and gvm-web themselves).
+	if opt.Dashboard {
+		hasKey, err := sys.Exists(secrets.MasterKeyPath)
+		if err != nil {
+			return fmt.Errorf("check %s: %w", secrets.MasterKeyPath, err)
+		}
+		if !hasKey {
+			key := make([]byte, secrets.MasterKeySize)
+			if _, err := rand.Read(key); err != nil {
+				return fmt.Errorf("generate master key: %w", err)
+			}
+			if err := sys.WriteRoot(secrets.MasterKeyPath, key, uint32(secrets.MasterKeyMode)); err != nil {
+				return fmt.Errorf("write %s: %w", secrets.MasterKeyPath, err)
+			}
+			fmt.Fprintf(out, "  key       %s created (0400 root; losing it costs every TOTP enrolment)\n",
+				secrets.MasterKeyPath)
+		} else {
+			fmt.Fprintf(out, "  key       %s kept (already present)\n", secrets.MasterKeyPath)
+		}
+		printDashboardHints(out)
+		printAptHints(out)
+		fmt.Fprintln(out, "\nnext: sudo gvm db migrate")
+		return nil
+	}
+
 	printAptHints(out)
 	fmt.Fprintln(out, "\nnext: sudo gvm doctor")
 	return nil
 }
 
+// printDashboardHints prints what gvm will not do for the operator: the apt
+// packages and the postgresql peer-auth lines (printed, never run — D-41's
+// spirit applies to Postgres too).
+func printDashboardHints(out io.Writer) {
+	fmt.Fprintln(out, "\nThe dashboard needs postgresql and (for caddy_managed) Caddy — gvm installs neither:")
+	fmt.Fprintln(out, "  sudo apt-get install postgresql")
+	fmt.Fprintln(out, "  # Caddy, from its official repository: https://caddyserver.com/docs/install#debian-ubuntu-raspbian")
+	fmt.Fprintln(out, "\nCreate the database and its roles once:")
+	fmt.Fprintln(out, "  sudo -u postgres psql -c \"CREATE ROLE gvm_migrate LOGIN; CREATE ROLE gvm_ops LOGIN; CREATE ROLE gvm_web LOGIN;\"")
+	fmt.Fprintln(out, "  sudo -u postgres psql -c \"CREATE DATABASE gvm OWNER gvm_migrate;\"")
+	fmt.Fprintln(out, "\nPeer auth, in /etc/postgresql/*/main/pg_hba.conf — insert above `local all all peer`:")
+	fmt.Fprintln(out, "  local  gvm  gvm_migrate  peer map=gvm")
+	fmt.Fprintln(out, "  local  gvm  gvm_ops      peer map=gvm")
+	fmt.Fprintln(out, "  local  gvm  gvm_web      peer map=gvm")
+	fmt.Fprintln(out, "and in pg_ident.conf:")
+	fmt.Fprintln(out, "  gvm  root  gvm_migrate")
+	fmt.Fprintln(out, "  gvm  root  gvm_ops")
+	fmt.Fprintln(out, "  gvm  gvm   gvm_web")
+	fmt.Fprintln(out, "then: sudo systemctl reload postgresql")
+	fmt.Fprintln(out, "\nAfter `gvm db migrate`:")
+	fmt.Fprintln(out, "  sudo systemctl enable --now gvmd gvm-web")
+	fmt.Fprintln(out, "  sudo gvm user create --email you@example.com --role owner")
+}
+
 // diff prints what a real run would write and changes nothing. Every line it
 // prints is a line Run would act on, read from the same Manifest, so the
 // preview cannot drift from the act.
-func diff(ctx context.Context, sys System, out io.Writer, files []File) error {
+func diff(ctx context.Context, sys System, out io.Writer, files []File, opt Options) error {
 	fmt.Fprintln(out, "gvm host init --diff (nothing will be changed)")
 	fmt.Fprintf(out, "  would install binary    %s\n", BinaryPath)
 	for _, f := range files {
@@ -204,6 +266,17 @@ func diff(ctx context.Context, sys System, out io.Writer, files []File) error {
 		fmt.Fprintf(out, "  would write   config    %s from defaults\n", ConfigPath)
 	} else {
 		fmt.Fprintf(out, "  config    %s already present; would keep it\n", ConfigPath)
+	}
+	if opt.Dashboard {
+		hasKey, err := sys.Exists(secrets.MasterKeyPath)
+		if err != nil {
+			return fmt.Errorf("check %s: %w", secrets.MasterKeyPath, err)
+		}
+		if !hasKey {
+			fmt.Fprintf(out, "  would write   key       %s (0400 root)\n", secrets.MasterKeyPath)
+		} else {
+			fmt.Fprintf(out, "  key       %s already present; would keep it\n", secrets.MasterKeyPath)
+		}
 	}
 	printAptHints(out)
 	return nil

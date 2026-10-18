@@ -31,12 +31,12 @@ func TestVersionSucceeds(t *testing.T) {
 // An unbuilt phase must never look like success to a shell script.
 //
 // `run` and `console` left this list when Phase 4 built them, `apply` left it
-// when Phase 7 did, and `content` left it when Phase 9 did. Moving a name out
-// as it is implemented is the point: weakening the assertion to "non-zero"
-// would keep passing for a command that had grown a usage error instead of a
-// working body.
+// when Phase 7 did, `content` when Phase 9 did, and `gvmd` and `web` when
+// Phase 48 did. Moving a name out as it is implemented is the point:
+// weakening the assertion to "non-zero" would keep passing for a command that
+// had grown a usage error instead of a working body.
 func TestUnimplementedCommandExitsNonZero(t *testing.T) {
-	for _, name := range []string{"gvmd", "web", "firewall"} {
+	for _, name := range []string{"firewall"} {
 		code, _, errb := run(t, name)
 		if code == 0 {
 			t.Errorf("%s: exit 0, want non-zero while unimplemented", name)

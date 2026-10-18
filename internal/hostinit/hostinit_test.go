@@ -85,7 +85,10 @@ func TestManifestCoversEveryPackagedFile(t *testing.T) {
 		t.Fatalf("only %d embedded files; the walk is broken", len(embedded))
 	}
 
-	m := Manifest()
+	// The base manifest and the dashboard manifest PARTITION the embed: every
+	// packaged file is installed by exactly one of them, and a dashboard file
+	// never leaks into a games-only install (onboarding-1).
+	m := append(Manifest(), DashboardManifest()...)
 	srcSeen := map[string]int{}
 	destSeen := map[string]int{}
 	for _, f := range m {
@@ -100,7 +103,7 @@ func TestManifestCoversEveryPackagedFile(t *testing.T) {
 	}
 	for _, src := range embedded {
 		if srcSeen[src] != 1 {
-			t.Errorf("%s appears %d times in the manifest, want 1", src, srcSeen[src])
+			t.Errorf("%s appears %d times across the two manifests, want 1", src, srcSeen[src])
 		}
 	}
 	for d, n := range destSeen {
@@ -109,7 +112,84 @@ func TestManifestCoversEveryPackagedFile(t *testing.T) {
 		}
 	}
 	if len(m) != len(embedded) {
-		t.Errorf("manifest has %d entries, %d files are embedded", len(m), len(embedded))
+		t.Errorf("manifests have %d entries, %d files are embedded", len(m), len(embedded))
+	}
+
+	for _, f := range Manifest() {
+		if dashboardSrcs[f.Src] {
+			t.Errorf("%s is a dashboard file but is in the games-only manifest", f.Src)
+		}
+	}
+	for _, f := range DashboardManifest() {
+		if !dashboardSrcs[f.Src] {
+			t.Errorf("%s is in the dashboard manifest but not declared dashboard-only", f.Src)
+		}
+	}
+}
+
+// TestDashboardInstallsExtras: --dashboard writes the control-plane units and
+// a 0400 master key, points at `gvm db migrate` next, and never rewrites an
+// existing key — rewriting it would orphan every sealed TOTP secret.
+func TestDashboardInstallsExtras(t *testing.T) {
+	f := newFake()
+	var out bytes.Buffer
+	if err := Run(context.Background(), f, &out, Options{Dashboard: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, dest := range []string{
+		"/usr/lib/systemd/system/gvmd.service",
+		"/usr/lib/systemd/system/gvm-web.service",
+		"/usr/lib/systemd/system/gvm-db-migrate.service",
+		"/usr/lib/tmpfiles.d/gvm-web.conf",
+	} {
+		if _, ok := f.writes[dest]; !ok {
+			t.Errorf("--dashboard did not install %s", dest)
+		}
+	}
+	key, ok := f.writes["/etc/gvm/master.key"]
+	if !ok {
+		t.Fatal("--dashboard did not create master.key")
+	}
+	if len(key) != 32 {
+		t.Errorf("master.key is %d bytes, want 32", len(key))
+	}
+	if !strings.Contains(out.String(), "next: sudo gvm db migrate") {
+		t.Error("--dashboard should end with the migrate step")
+	}
+	if !strings.Contains(out.String(), "pg_hba.conf") {
+		t.Error("--dashboard should print the postgresql peer-auth lines")
+	}
+	// Nothing is STARTED: no enable call names the dashboard units.
+	for _, c := range f.calls {
+		if c == "enable:gvmd.service" || c == "enable:gvm-web.service" {
+			t.Errorf("--dashboard enabled %s; starting the dashboard is the operator's move", c)
+		}
+	}
+
+	// A second run keeps the existing key.
+	f2 := newFake()
+	f2.exists["/etc/gvm/master.key"] = true
+	var out2 bytes.Buffer
+	if err := Run(context.Background(), f2, &out2, Options{Dashboard: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, rewrote := f2.writes["/etc/gvm/master.key"]; rewrote {
+		t.Error("a re-init rewrote master.key")
+	}
+}
+
+// TestGamesOnlyInstallSkipsTheDashboard: without the flag, no dashboard file
+// lands — a games-only host converges with no caddy group (onboarding-1).
+func TestGamesOnlyInstallSkipsTheDashboard(t *testing.T) {
+	f := newFake()
+	var out bytes.Buffer
+	if err := Run(context.Background(), f, &out, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	for dest := range f.writes {
+		if strings.Contains(dest, "gvm-web") || strings.Contains(dest, "gvmd") || strings.Contains(dest, "master.key") {
+			t.Errorf("games-only install wrote %s", dest)
+		}
 	}
 }
 

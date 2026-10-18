@@ -1,8 +1,10 @@
 package web
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/auth"
+	"github.com/S95F/gameVPSmanager/internal/authz"
 	"github.com/S95F/gameVPSmanager/internal/webapi"
 )
 
@@ -27,10 +30,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = enc.Encode(v)
 }
 
-// storeDown returns true when an expected "unavailable" error is returned.
+// storeDown returns true when the failure means "a backend is down, the game
+// servers are fine" — the cases that get the single degraded template rather
+// than a 500 or a 404.
 func storeDown(err error) bool {
-	return err != nil && (strings.Contains(err.Error(), "unavailable") ||
-		strings.Contains(err.Error(), "store"))
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrControlUnavailable) || errors.Is(err, ErrIdentityUnavailable) {
+		return true
+	}
+	return strings.Contains(err.Error(), "unavailable") || strings.Contains(err.Error(), "store")
 }
 
 // ── Flash messages ───────────────────────────────────────────────────────────
@@ -57,11 +67,17 @@ func takeFlash(w http.ResponseWriter, r *http.Request) string {
 		return ""
 	}
 	http.SetCookie(w, &http.Cookie{Name: flashCookie, Value: "", Path: "/", MaxAge: -1})
-	msg, err := base64.RawURLEncoding.DecodeString(c.Value)
+	msg, err := decodeFlash(c.Value)
 	if err != nil {
 		return ""
 	}
-	return string(msg)
+	return msg
+}
+
+// decodeFlash decodes a flash cookie's value.
+func decodeFlash(v string) (string, error) {
+	b, err := base64.RawURLEncoding.DecodeString(v)
+	return string(b), err
 }
 
 // ── Health endpoints (no auth) ────────────────────────────────────────────────
@@ -114,7 +130,7 @@ func (s *Server) handleInstanceDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess, _ := auth.FromContext(r.Context())
-	renderInstanceDetailPage(w, sess, takeFlash(w, r), inst)
+	renderInstanceDetailPage(w, sess, takeFlash(w, r), inst, s.cfg.Dispatcher != nil)
 }
 
 // handleConsoleView renders the console page, 404ing an unknown instance so a
@@ -134,14 +150,86 @@ func (s *Server) handleConsoleView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, _ := auth.FromContext(r.Context())
-	renderConsolePage(w, sess, name)
+	renderConsolePage(w, sess, name, s.cfg.Hub != nil)
+}
+
+// ── Lifecycle mutations, shared plumbing ─────────────────────────────────────
+
+// permForVerb maps a lifecycle verb to its §15.2 permission.
+func permForVerb(verb string) authz.Permission {
+	switch verb {
+	case "start":
+		return authz.PermInstanceStart
+	case "stop":
+		return authz.PermInstanceStop
+	default:
+		return authz.PermInstanceRestart
+	}
+}
+
+// effectiveRole resolves what the actor's base role (a session's global role,
+// or a token's ceiling-capped role) becomes for one instance: grants only
+// ever add (§15.2), and a token's ceiling caps the result again.
+func (s *Server) effectiveRole(r *http.Request, instance string) (authz.Role, error) {
+	if sess, ok := auth.FromContext(r.Context()); ok {
+		base, err := authz.ParseRole(sess.Role)
+		if err != nil {
+			return "", err
+		}
+		if s.cfg.Authorizer == nil {
+			return base, nil
+		}
+		eff, err := s.cfg.Authorizer.EffectiveRole(r.Context(), sess.UserID, instance)
+		if err != nil {
+			return "", err
+		}
+		return authz.Greatest(base, eff), nil
+	}
+	if actor, ok := auth.TokenActorFromContext(r.Context()); ok {
+		eff := actor.Role
+		if s.cfg.Authorizer != nil {
+			granted, err := s.cfg.Authorizer.EffectiveRole(r.Context(), actor.UserID, instance)
+			if err != nil {
+				return "", err
+			}
+			// A grant may raise the user, never the token: re-apply the cap.
+			if granted.Rank() > eff.Rank() && granted.Rank() <= actor.Ceiling.Rank() {
+				eff = granted
+			}
+		}
+		return eff, nil
+	}
+	return "", fmt.Errorf("web: no authenticated actor in context")
+}
+
+// actorLabel is the audit identity handed to gvmd.
+func actorLabel(r *http.Request) string {
+	if sess, ok := auth.FromContext(r.Context()); ok {
+		return "user:" + sess.Email
+	}
+	if actor, ok := auth.TokenActorFromContext(r.Context()); ok {
+		return "api_token:" + actor.TokenName
+	}
+	return "unknown"
+}
+
+// dispatchFor returns the Dispatcher method for verb. Callers have already
+// checked that a Dispatcher is wired.
+func (s *Server) dispatchFor(verb string) func(context.Context, string, string) (string, error) {
+	switch verb {
+	case "start":
+		return s.cfg.Dispatcher.Start
+	case "stop":
+		return s.cfg.Dispatcher.Stop
+	default:
+		return s.cfg.Dispatcher.Restart
+	}
 }
 
 // ── Browser form POSTs ───────────────────────────────────────────────────────
 //
-// Answered with 303 and a flash (§16.3 full-page form POST). Dispatch is not
-// in this build, the pages render no start/stop/restart buttons, and these
-// routes exist so a stale page's POST gets an honest answer rather than a 404.
+// Answered with 303 and a flash (§16.3 full-page form POST): the refusal, the
+// lease line, or the acknowledged dispatch — never a silent success.
 
 func (s *Server) handleFormStart(w http.ResponseWriter, r *http.Request) {
 	s.formLifecycle(w, r, "start")
@@ -155,18 +243,39 @@ func (s *Server) handleFormRestart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) formLifecycle(w http.ResponseWriter, r *http.Request, verb string) {
 	name := r.PathValue("name")
-	// U3: never a 2xx without a dispatch, and nothing dispatches in this
-	// build — s.cfg.Dispatcher is deliberately not consulted.
-	setFlash(w, notImplementedMessage(verb, name))
-	http.Redirect(w, r, "/i/"+url.PathEscape(name), http.StatusSeeOther)
-}
+	back := "/i/" + url.PathEscape(name)
 
-// notImplementedMessage is the one honest sentence for an unbuilt mutation
-// (web-dashboard-2, day2-ops-6).
-func notImplementedMessage(verb, name string) string {
-	return strings.ToUpper(verb[:1]) + verb[1:] +
-		" from the dashboard is not in this release; on the host run: sudo gvm " +
-		verb + " " + name
+	// U3: never a 2xx (or a cheerful flash) without a dispatch. With no gvmd
+	// client wired, the honest answer is the CLI command.
+	if s.cfg.Dispatcher == nil {
+		setFlash(w, notImplementedMessage(verb, name))
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
+
+	role, err := s.effectiveRole(r, name)
+	if err != nil {
+		webapi.ServeDegraded(w, r)
+		return
+	}
+	if err := authz.Check(role, permForVerb(verb)); err != nil {
+		http.Error(w, "your role may not "+verb+" this server", http.StatusForbidden)
+		return
+	}
+
+	opID, err := s.dispatchFor(verb)(r.Context(), name, actorLabel(r))
+	var lease *LeaseHeldError
+	switch {
+	case err == nil:
+		setFlash(w, strings.ToUpper(verb[:1])+verb[1:]+" dispatched ("+opID+").")
+	case errors.As(err, &lease):
+		setFlash(w, "Refused — a job holds this server: "+lease.Line)
+	case errors.Is(err, ErrControlUnavailable):
+		setFlash(w, "Refused — the control daemon is not reachable. Your game servers are unaffected.")
+	default:
+		setFlash(w, "Refused — "+err.Error())
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // ── API endpoints ─────────────────────────────────────────────────────────────
@@ -261,9 +370,10 @@ func (s *Server) handleConsoleStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// API lifecycle mutations: 501 with the envelope, never a 2xx without a
-// dispatch (U3). s.cfg.Dispatcher is deliberately not consulted — wiring it
-// is Phase 48's work, behind authz.
+// API lifecycle mutations: 202 with the operation id only after gvmd has
+// acknowledged the dispatch, 409 with the lease line while a job holds the
+// instance, and 501 while no Dispatcher is wired — never a 2xx without a real
+// dispatch (U3).
 
 func (s *Server) handleAPIStart(w http.ResponseWriter, r *http.Request) {
 	s.apiLifecycle(w, r, "start")
@@ -275,8 +385,47 @@ func (s *Server) handleAPIRestart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiLifecycle(w http.ResponseWriter, r *http.Request, verb string) {
 	name := r.PathValue("name")
-	webapi.WriteError(w, r, http.StatusNotImplemented, webapi.CodeNotImplemented,
-		notImplementedMessage(verb, name), nil)
+	if s.cfg.Dispatcher == nil {
+		webapi.WriteError(w, r, http.StatusNotImplemented, webapi.CodeNotImplemented,
+			notImplementedMessage(verb, name), nil)
+		return
+	}
+
+	role, err := s.effectiveRole(r, name)
+	if err != nil {
+		webapi.WriteError(w, r, http.StatusInternalServerError, webapi.CodeInternal, "internal error", nil)
+		return
+	}
+	if err := authz.Check(role, permForVerb(verb)); err != nil {
+		webapi.WriteError(w, r, http.StatusForbidden, webapi.CodeForbidden,
+			"role "+string(role)+" may not "+verb+" this server", nil)
+		return
+	}
+
+	opID, err := s.dispatchFor(verb)(r.Context(), name, actorLabel(r))
+	var lease *LeaseHeldError
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusAccepted, map[string]string{
+			"name": name, "action": verb, "status": "accepted", "op_id": opID,
+		})
+	case errors.As(err, &lease):
+		webapi.WriteError(w, r, http.StatusConflict, webapi.CodeConflict,
+			"a job holds this server: "+lease.Line, map[string]any{"lease": lease.Line})
+	case errors.Is(err, ErrControlUnavailable):
+		webapi.WriteError(w, r, http.StatusServiceUnavailable, webapi.CodeDegraded,
+			"the control daemon is not reachable; game servers are not affected", nil)
+	default:
+		webapi.WriteError(w, r, http.StatusInternalServerError, webapi.CodeInternal, err.Error(), nil)
+	}
+}
+
+// notImplementedMessage is the one honest sentence for an unwired mutation
+// (web-dashboard-2, day2-ops-6).
+func notImplementedMessage(verb, name string) string {
+	return strings.ToUpper(verb[:1]) + verb[1:] +
+		" from the dashboard is not in this release; on the host run: sudo gvm " +
+		verb + " " + name
 }
 
 // ── Page renderers ────────────────────────────────────────────────────────────
@@ -320,7 +469,7 @@ func renderInstanceListPage(w http.ResponseWriter, sess *auth.Session, flash str
 	fmt.Fprint(w, `</main></body></html>`)
 }
 
-func renderInstanceDetailPage(w http.ResponseWriter, sess *auth.Session, flash string, inst *InstanceDetail) {
+func renderInstanceDetailPage(w http.ResponseWriter, sess *auth.Session, flash string, inst *InstanceDetail, canAct bool) {
 	pageHead(w, "gvm — "+inst.Name)
 	fmt.Fprint(w, renderNav(sess))
 	fmt.Fprintf(w, `<main><h1>%s</h1>`, htmlEscape(inst.Name))
@@ -329,15 +478,29 @@ func renderInstanceDetailPage(w http.ResponseWriter, sess *auth.Session, flash s
 		htmlEscape(inst.Game), htmlEscape(inst.Status))
 	fmt.Fprintf(w, `<p><a href="/i/%s/console">Open console &rarr;</a></p>`,
 		htmlEscape(inst.Name))
-	// No start/stop/restart buttons: dispatch is not in this release, and a
-	// button that cannot act must not render (U3, web-dashboard-2).
+	// The lifecycle buttons render only when a gvmd client is wired: a button
+	// that cannot act must not render (U3, web-dashboard-2).
+	if canAct {
+		for _, verb := range []string{"start", "stop", "restart"} {
+			fmt.Fprintf(w, `<form method="post" action="/i/%s/%s">`, htmlEscape(inst.Name), verb)
+			fmt.Fprintf(w, `<button type="submit">%s</button></form> `, verb)
+		}
+	}
 	fmt.Fprint(w, `</main></body></html>`)
 }
 
-func renderConsolePage(w http.ResponseWriter, sess *auth.Session, name string) {
+func renderConsolePage(w http.ResponseWriter, sess *auth.Session, name string, live bool) {
 	pageHead(w, "gvm — console: "+name)
 	fmt.Fprint(w, renderNav(sess))
 	fmt.Fprintf(w, `<main><h1>Console: %s</h1>`, htmlEscape(name))
+	if !live {
+		// No hub, no stream: say so instead of rendering a pane that looks
+		// broken (U3). The CLI path always works.
+		fmt.Fprintf(w, `<p class="flash">The live console stream is not wired in this build; on the host run: sudo gvm console %s</p>`,
+			htmlEscape(name))
+		fmt.Fprint(w, `</main></body></html>`)
+		return
+	}
 	// console.js reads the stream URL from the data attribute; no inline JS.
 	fmt.Fprintf(w, `<div id="console" data-stream="/stream/i/%s/console"></div>`,
 		htmlEscape(name))

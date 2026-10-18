@@ -67,7 +67,8 @@ func TestHintsResolve(t *testing.T) {
 	// Enum flags and their value sets. A value outside the set is a dead hint
 	// the same way a missing verb is.
 	enums := map[string]map[string]bool{
-		"role":       set("viewer", "operator", "admin"),
+		// owner joined the role_t enum with the §15.2 matrix (Phase 47).
+		"role":       set("viewer", "operator", "admin", "owner"),
 		"on-failure": set("fail", "start_anyway", "warn"),
 	}
 

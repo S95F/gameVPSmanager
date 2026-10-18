@@ -123,6 +123,16 @@ func ValidateHost(file string, h *HostConfig) Diags {
 		add("spec.edge.tls.mode", "external TLS means another proxy terminates it; a Caddy gvm manages must manage certificates too",
 			"use auto, acme_http, acme_dns or internal — or edge.mode caddy_snippet / proxy_external")
 	}
+	// edge.listen is plain HTTP for a proxy on the same box; off loopback it
+	// would be a public dashboard with no TLS (rule 7 / Phase 48 item 7).
+	if l := h.Spec.Edge.Listen; l != "" {
+		hostPart, _, err := net.SplitHostPort(l)
+		ip := net.ParseIP(hostPart)
+		if err != nil || (hostPart != "localhost" && (ip == nil || !ip.IsLoopback())) {
+			add("spec.edge.listen", fmt.Sprintf("%q is not a loopback listener", l),
+				"use 127.0.0.1:<port> (the reverse proxy is the public face), or remove listen for the unix socket")
+		}
+	}
 
 	for i, c := range h.Spec.Firewall.AdminCIDRs {
 		if _, _, err := net.ParseCIDR(c); err != nil {

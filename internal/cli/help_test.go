@@ -18,7 +18,7 @@ func TestEveryHelpPathExitsZero(t *testing.T) {
 		"job":     {"run", "list", "clear"},
 		"backup":  {"verify", "prune", "list", "delete"},
 		"control": {"caps", "status", "verb", "probe"},
-		"user":    {"list", "create", "show", "set-role", "set-password", "disable", "enable", "reset-totp"},
+		"user":    {"list", "create", "invite", "show", "roles", "grant", "revoke-grant", "disable", "enable", "reset", "sessions", "revoke-sessions"},
 		"token":   {"create", "list", "revoke"},
 		"secret":  {"list", "set", "rotate", "show-path"},
 		"audit":   {"tail", "search"},

@@ -63,7 +63,7 @@ func TestGroupSubcommandRequiredExitsTwo(t *testing.T) {
 	if code != 2 {
 		t.Errorf("exit %d, want 2", code)
 	}
-	if !strings.Contains(errb, "set-role") {
+	if !strings.Contains(errb, "revoke-sessions") {
 		t.Errorf("the required-subcommand usage did not list the subcommands:\n%s", errb)
 	}
 }

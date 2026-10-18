@@ -7,10 +7,11 @@ a systemd unit for the binary, and writes a Caddy site snippet to
 port. gvm's web tier is designed so that pipeline can serve the dashboard
 without either tool fighting the other.
 
-> **Status:** `gvm web` is not in this build — it exits 3 with
-> `not available in this build; nothing was changed.` The web tier is
-> library code hardened in Phase 47; Phase 48 links it. This page documents
-> the supported shape so the pieces built today line up with it.
+> **Status:** `gvm web` and `gvm gvmd` run in this build (Phase 48 — see
+> [admin-guide.md](admin-guide.md) for the full setup: Postgres, `sudo gvm
+> host init --dashboard`, `gvm db migrate`, `gvm user create`). `gvm edge
+> apply` is still to come, which is exactly why the two shapes below — where
+> something else owns Caddy — are the supported deployments today.
 
 ## The shape
 
@@ -91,7 +92,7 @@ never touches `caddy.service` in this mode.
 | Branch | `main` |
 | Build | `make build` (or `go build ./cmd/gvm`; auto-detect picks Go) |
 | Port | `8130` (must match `edge.listen`) |
-| Service | a unit running `gvm web` (Phase 48 ships `gvm-web.service`; prefer installing that over generating one, so `User=gvm` and the hardening come along) |
+| Service | `gvm-web.service`, installed by `sudo gvm host init --dashboard` — prefer it over a generated unit, so `User=gvm` and the hardening come along; let serverGitUpdater's post-update hook run `sudo systemctl restart gvm-web gvmd` |
 | Caddy | domain `gvm.example.com` → upstream `127.0.0.1:8130` (mode A), or disabled when gvm renders the snippet (mode B) |
 
 Post-update hook worth setting: `sudo gvm doctor`, so every deploy ends with

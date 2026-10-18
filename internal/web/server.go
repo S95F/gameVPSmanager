@@ -13,6 +13,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -50,15 +51,27 @@ type InstanceDetail struct {
 	Port   int    `json:"port,omitempty"`
 }
 
-// Dispatcher is the gvmd client the mutation routes will drive once Phase 48
-// wires it. In this build nothing constructs one and the handlers refuse with
-// 501 before consulting it — TestNoMutationReturns2xxWithoutDispatch holds
-// them to that (U3: no fake success).
+// Dispatcher is the gvmd client behind start/stop/restart. A dispatch returns
+// only after gvmd acknowledged it, with the operation id for the audit trail;
+// a held instance returns *LeaseHeldError. With no Dispatcher wired the
+// handlers answer 501 before consulting anything — a 2xx without a real
+// dispatch is fake success (U3), and TestMutationsNeedDispatchAndRole holds
+// both sides of that.
 type Dispatcher interface {
-	Start(ctx context.Context, name string) error
-	Stop(ctx context.Context, name string) error
-	Restart(ctx context.Context, name string) error
+	Start(ctx context.Context, name, actor string) (opID string, err error)
+	Stop(ctx context.Context, name, actor string) (opID string, err error)
+	Restart(ctx context.Context, name, actor string) (opID string, err error)
 }
+
+// LeaseHeldError is a refusal because a job holds the instance; Line is the
+// holder's one-line description, rendered verbatim (409 on the API).
+type LeaseHeldError struct{ Line string }
+
+func (e *LeaseHeldError) Error() string { return "a job holds this server: " + e.Line }
+
+// ErrControlUnavailable is the gvmd gateway not answering. Game servers are
+// unaffected; the dashboard says so with the degraded answer.
+var ErrControlUnavailable = errors.New("web: the control daemon is not reachable")
 
 // Config holds everything the web server needs at construction time.
 type Config struct {
@@ -78,9 +91,20 @@ type Config struct {
 	// When nil the server serves the single degraded template.
 	InstanceQuerier InstanceQuerier
 
-	// Dispatcher is the gvmd client for start/stop/restart. Not consulted in
-	// this build; see the Dispatcher type.
+	// Dispatcher is the gvmd client for start/stop/restart; nil answers 501.
 	Dispatcher Dispatcher
+
+	// Identity backs the login engine; nil keeps /login an honest 501.
+	Identity Identity
+
+	// Authorizer resolves per-instance effective roles; nil falls back to the
+	// session's or token's own role (global only).
+	Authorizer Authorizer
+
+	// InsecureCookies drops the Secure attribute for plain-HTTP development
+	// (`gvm web --dev`); a Secure cookie over http://localhost is silently
+	// dropped and the first login "succeeds" but never sticks (§16.2).
+	InsecureCookies bool
 
 	// Hub multiplexes Ring subscriptions to SSE connections.
 	// When nil the console SSE endpoints send one comment and close.
@@ -97,6 +121,7 @@ type Server struct {
 	cfg      Config
 	sessions *auth.Middleware
 	bearer   *auth.BearerMiddleware
+	pending  *pendingStore
 }
 
 // New creates a Server from cfg. It errs on a malformed trusted origin rather
@@ -111,6 +136,7 @@ func New(cfg Config) (*Server, error) {
 		cfg:      cfg,
 		sessions: auth.NewMiddleware(cfg.SessionQuerier),
 		bearer:   auth.NewBearer(cfg.TokenQuerier),
+		pending:  newPendingStore(),
 	}, nil
 }
 

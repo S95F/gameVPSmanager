@@ -115,6 +115,11 @@ func TestValidateHostEdgeRequiredFields(t *testing.T) {
 			h.Spec.Edge.Site = "gvm.example.com"
 			h.Spec.Edge.TLS.Mode = "external"
 		}, "another proxy terminates"},
+		{"non-loopback listen refused", func(h *HostConfig) {
+			h.Spec.Edge.Mode = "proxy_external"
+			h.Spec.Edge.TrustedOrigins = []string{"https://gvm.example.com"}
+			h.Spec.Edge.Listen = "0.0.0.0:8080"
+		}, "not a loopback listener"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

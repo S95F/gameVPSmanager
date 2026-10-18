@@ -16,8 +16,12 @@ import (
 
 // ── Shared stubs ─────────────────────────────────────────────────────────────
 
-// testToken is the plaintext bearer token the stub querier accepts.
-const testToken = "gvmt_test-token"
+// testToken is the plaintext bearer token the stub querier accepts (operator
+// ceiling); testViewerToken is its viewer-ceiling sibling for RBAC tests.
+const (
+	testToken       = "gvmt_test-token"
+	testViewerToken = "gvmt_viewer-token"
+)
 
 type recordingSessions struct {
 	lookups int
@@ -25,8 +29,11 @@ type recordingSessions struct {
 
 func (s *recordingSessions) LookupSession(_ context.Context, id string) (*auth.Session, error) {
 	s.lookups++
-	if id == "s1" {
+	switch id {
+	case "s1":
 		return &auth.Session{ID: "s1", UserID: "u1", Email: "op@example.com", Role: "operator"}, nil
+	case "s2":
+		return &auth.Session{ID: "s2", UserID: "u2", Email: "viewer@example.com", Role: "viewer"}, nil
 	}
 	return nil, auth.ErrSessionNotFound
 }
@@ -34,10 +41,16 @@ func (s *recordingSessions) LookupSession(_ context.Context, id string) (*auth.S
 type stubTokens struct{}
 
 func (stubTokens) LookupAPIToken(_ context.Context, sha []byte) (*auth.APIToken, error) {
-	if string(sha) == string(identity.HashToken(testToken)) {
+	switch string(sha) {
+	case string(identity.HashToken(testToken)):
 		return &auth.APIToken{
 			ID: "tok1", UserID: "u1", Name: "ci",
 			RoleCeiling: authz.RoleOperator, UserRole: authz.RoleOperator,
+		}, nil
+	case string(identity.HashToken(testViewerToken)):
+		return &auth.APIToken{
+			ID: "tok2", UserID: "u2", Name: "watcher",
+			RoleCeiling: authz.RoleViewer, UserRole: authz.RoleOperator,
 		}, nil
 	}
 	return nil, auth.ErrTokenNotFound
@@ -60,21 +73,28 @@ func (stubInstances) GetInstance(_ context.Context, name string) (*InstanceDetai
 
 type recordingDispatcher struct {
 	calls []string
+	// err, when set, is what every dispatch returns (e.g. *LeaseHeldError).
+	err error
 }
 
-func (d *recordingDispatcher) Start(_ context.Context, name string) error {
-	d.calls = append(d.calls, "start "+name)
-	return nil
+func (d *recordingDispatcher) dispatch(verb, name, actor string) (string, error) {
+	if d.err != nil {
+		return "", d.err
+	}
+	d.calls = append(d.calls, verb+" "+name+" by "+actor)
+	return "op_test", nil
 }
 
-func (d *recordingDispatcher) Stop(_ context.Context, name string) error {
-	d.calls = append(d.calls, "stop "+name)
-	return nil
+func (d *recordingDispatcher) Start(_ context.Context, name, actor string) (string, error) {
+	return d.dispatch("start", name, actor)
 }
 
-func (d *recordingDispatcher) Restart(_ context.Context, name string) error {
-	d.calls = append(d.calls, "restart "+name)
-	return nil
+func (d *recordingDispatcher) Stop(_ context.Context, name, actor string) (string, error) {
+	return d.dispatch("stop", name, actor)
+}
+
+func (d *recordingDispatcher) Restart(_ context.Context, name, actor string) (string, error) {
+	return d.dispatch("restart", name, actor)
 }
 
 // newTestServer builds a Server on the standard stubs; mutate overrides cfg.

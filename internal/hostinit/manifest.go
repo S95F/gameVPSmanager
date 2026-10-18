@@ -70,15 +70,41 @@ const (
 	MarkerPath = "/var/lib/gvm/host-init.json"
 )
 
-// Manifest is every packaged file this build installs, with where it goes.
+// dashboardSrcs are the packaged files that belong to the dashboard alone,
+// installed only by `host init --dashboard` (Phase 48 item 3): the two
+// daemons, the explicit migration oneshot, and the caddy-group tmpfiles lines
+// whose group would otherwise fail `systemd-tmpfiles --create` on a
+// games-only host (onboarding-1).
+var dashboardSrcs = map[string]bool{
+	"systemd/gvmd.service":           true,
+	"systemd/gvm-web.service":        true,
+	"systemd/gvm-db-migrate.service": true,
+	"tmpfiles/gvm-web.conf":          true,
+}
+
+// Manifest is every packaged file a games-only install writes, with where it
+// goes. DashboardManifest returns the rest.
 //
 // It is derived from packaging.FS by walking it, so a unit added to
 // packaging/systemd appears here the moment it is embedded — there is no
-// second list of unit names to keep in step. The order is stable (sorted by
-// destination) so `--diff` and the install log read the same every time.
+// second list of unit names to keep in step (a DASHBOARD unit is the one
+// deliberate exception: it must also be named in dashboardSrcs, and
+// TestManifestCoversEveryPackagedFile fails when the two sets do not
+// partition the embed). The order is stable (sorted by destination) so
+// `--diff` and the install log read the same every time.
 func Manifest() []File {
+	return walkManifest(func(src string) bool { return !dashboardSrcs[src] })
+}
+
+// DashboardManifest is the dashboard-only remainder, installed with
+// `host init --dashboard`.
+func DashboardManifest() []File {
+	return walkManifest(func(src string) bool { return dashboardSrcs[src] })
+}
+
+func walkManifest(keep func(src string) bool) []File {
 	var out []File
-	add := func(dir, kind string, k Kind) {
+	add := func(dir string, k Kind) {
 		entries, err := packaging.FS.ReadDir(dir)
 		if err != nil {
 			// packaging.FS is embedded at build time; a missing directory is a
@@ -100,17 +126,21 @@ func Manifest() []File {
 			if e.IsDir() {
 				continue
 			}
+			src := path.Join(dir, e.Name())
+			if !keep(src) {
+				continue
+			}
 			out = append(out, File{
-				Src:  path.Join(dir, e.Name()),
+				Src:  src,
 				Dest: path.Join(destDir, e.Name()),
 				Mode: 0o644,
 				Kind: k,
 			})
 		}
 	}
-	add("systemd", "unit", KindUnit)
-	add("tmpfiles", "tmpfiles", KindTmpfiles)
-	add("sysusers.d", "sysusers", KindSysusers)
+	add("systemd", KindUnit)
+	add("tmpfiles", KindTmpfiles)
+	add("sysusers.d", KindSysusers)
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Dest < out[j].Dest })
 	return out

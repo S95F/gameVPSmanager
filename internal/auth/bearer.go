@@ -65,6 +65,10 @@ type TokenActor struct {
 	// token's role_ceiling. A viewer-ceiling token held by an admin acts as a
 	// viewer.
 	Role authz.Role
+	// Ceiling is the token's role_ceiling itself, so a caller folding in
+	// per-instance grants can re-apply the cap: a grant may raise the user,
+	// never the token.
+	Ceiling authz.Role
 }
 
 // tokenActorKey is the unexported context key for the token actor.
@@ -152,6 +156,7 @@ func (b *BearerMiddleware) Wrap(next http.Handler) http.Handler {
 			TokenName: tok.Name,
 			UserID:    tok.UserID,
 			Role:      role,
+			Ceiling:   tok.RoleCeiling,
 		}
 		ctx := context.WithValue(r.Context(), tokenActorKey{}, actor)
 		next.ServeHTTP(w, r.WithContext(ctx))

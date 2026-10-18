@@ -38,22 +38,28 @@ func runHost(ctx context.Context, env *Env, args []string) error {
 }
 
 func runHostInit(ctx context.Context, env *Env, args []string) error {
-	var diff, printManifest bool
+	var diff, printManifest, dashboard bool
 	fs := flag.NewFlagSet("gvm host init", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	fs.Usage = func() {
-		fmt.Fprint(env.Stderr, "Usage: sudo gvm host init [--diff]\n\n"+
+		fmt.Fprint(env.Stderr, "Usage: sudo gvm host init [--diff] [--dashboard]\n\n"+
 			"Installs gvm on this host: this binary at /usr/bin/gvm, the systemd units,\n"+
 			"the tmpfiles and sysusers fragments, and a default /etc/gvm/gvm.yaml if none\n"+
 			"exists. It is idempotent — run it again and it converges — runs systemd's own\n"+
 			"tools by absolute path, and never runs apt or touches the firewall. It prints\n"+
 			"the apt line each game family needs; you run those.\n\n"+
+			"--dashboard additionally installs the control plane: gvmd.service,\n"+
+			"gvm-web.service, gvm-db-migrate.service and the caddy-group tmpfiles lines,\n"+
+			"creates /etc/gvm/master.key if absent, and prints the postgresql lines to\n"+
+			"paste. It does NOT start anything.\n\n"+
 			"Examples:\n"+
 			"  sudo gvm host init\n"+
-			"  sudo gvm host init --diff   # show every change, make none\n\n")
+			"  sudo gvm host init --diff        # show every change, make none\n"+
+			"  sudo gvm host init --dashboard   # games + the dashboard control plane\n\n")
 		fs.PrintDefaults()
 	}
 	fs.BoolVar(&diff, "diff", false, "print every change and make none")
+	fs.BoolVar(&dashboard, "dashboard", false, "also install the dashboard control plane (gvmd, gvm-web, master.key)")
 	fs.BoolVar(&printManifest, "print-manifest", false,
 		"print the install table (source, destination, mode) and exit; what `make install` reads")
 	if err := fs.Parse(args); err != nil {
@@ -63,7 +69,11 @@ func runHostInit(ctx context.Context, env *Env, args []string) error {
 	// --print-manifest is a read of the build's own table and needs no root and
 	// no host: `make install` runs it to learn what to copy where.
 	if printManifest {
-		for _, f := range hostinit.Manifest() {
+		files := hostinit.Manifest()
+		if dashboard {
+			files = append(files, hostinit.DashboardManifest()...)
+		}
+		for _, f := range files {
 			fmt.Fprintf(env.Stdout, "%s\t%s\t%04o\n", f.Src, f.Dest, f.Mode)
 		}
 		return nil
@@ -80,5 +90,5 @@ func runHostInit(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 	defer func() { _ = closeSys() }()
-	return hostinit.Run(ctx, sys, env.Stdout, hostinit.Options{Diff: diff})
+	return hostinit.Run(ctx, sys, env.Stdout, hostinit.Options{Diff: diff, Dashboard: dashboard})
 }

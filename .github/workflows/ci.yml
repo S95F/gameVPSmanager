@@ -105,18 +105,19 @@ jobs:
           fi
           echo "OK: no bare /api/v1 routes"
 
-      - name: dashboard-not-linked
-        # Phase 47's definition of done: the web tier stays library code until
-        # Phase 48 links it, so `gvm web` cannot half-ship.
+      - name: dashboard-linked-whole
+        # Phase 48 linked the web tier; what must now hold is that it came in
+        # WHOLE: `gvm web`, `gvm gvmd` and the muxes ship together, so a build
+        # cannot carry the dashboard's routes without its auth.
         run: |
           deps="$(go list -deps ./cmd/gvm)"
-          for pkg in internal/web internal/auth internal/authz internal/webapi; do
-            if echo "$deps" | grep -q "gameVPSmanager/${pkg}\$"; then
-              echo "FAIL: cmd/gvm links ${pkg}; that is Phase 48's work"
+          for pkg in internal/web internal/auth internal/authz internal/webapi internal/gvmd internal/webstore; do
+            if ! echo "$deps" | grep -q "gameVPSmanager/${pkg}\$"; then
+              echo "FAIL: cmd/gvm no longer links ${pkg}; the dashboard must ship whole"
               exit 1
             fi
           done
-          echo "OK: cmd/gvm does not link the web tier"
+          echo "OK: cmd/gvm links the whole web tier"
 
   caddy-validate:
     # Phase 47 item 6: the real Caddy must accept every golden Caddyfile.
