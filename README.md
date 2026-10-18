@@ -44,11 +44,12 @@ success.
 | `gvm user` · `token` | **works** — accounts (password + TOTP), single-use invites with self-enrolment, grants, and API tokens |
 | `gvm gvmd` · `gvm web` | **works** — the privileged verb gateway and the dashboard service (installed by `host init --dashboard`) |
 | `gvm edge plan` · `edge apply` · `ca export` | **works** — render, validate, swap and reload the host's own Caddy config, with rollback |
+| `gvm secret set/list/show/rotate/show-path` | **works** — set, rotate, list and read back instance and host secrets, locally as root |
 | `gvm install` · `update` · `rebuild` | **not built** — installing, updating and rebuilding game files land later |
 | `gvm firewall` | **not built** — gvm does not manage the firewall in this build |
-| `gvm secret` · `audit` | **not built** — the secret store and audit reader land later |
+| `gvm audit` | **not built** — the audit-log reader lands later |
 
-**Not available in this build:** `audit`, `firewall`, `install`, `rebuild`, `secret`, `update`.
+**Not available in this build:** `audit`, `firewall`, `install`, `rebuild`, `update`.
 
 (That list is checked against the command registry by a test, so this table
 cannot drift from what the binary actually refuses.)

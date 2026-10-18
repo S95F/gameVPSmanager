@@ -133,6 +133,8 @@ var instanceBanReason = map[byte]string{
 	'=':  "an equals sign, a key/value separator",
 	' ':  "a space, which splits a value in argv and many config formats",
 	'\t': "a tab, which splits a value in argv and many config formats",
+	'\v': "a vertical tab, whitespace that splits a value in some config formats",
+	'\f': "a form feed, whitespace that splits a value in some config formats",
 }
 
 // ValidateInstanceValue is ValidateValue plus the rule-10 ban on characters a

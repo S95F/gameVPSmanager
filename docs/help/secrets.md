@@ -28,8 +28,17 @@ How gvm handles a value
   value.
 
 gvm never alters or invents an adopted instance's secrets; its values arrive
-only through the adoption import.
+only through the adoption import, and `gvm secret rotate` refuses to touch one.
 
-Setting, reading and rotating secrets from the CLI is not in this build; it
-lands in a later release. Until then, `gvm game show <id>` tells you which
-secrets a game will need.
+Setting, reading and rotating secrets (root, on the host)
+  sudo gvm secret set <instance> <name>      prompt, pipe, --from-file or --generate
+  sudo gvm secret set --host <name>          a box-wide key (e.g. curseforge)
+  sudo gvm secret list <instance>            names, lengths and fingerprints
+  sudo gvm secret show <instance> <name>     print one value, at a terminal only
+  sudo gvm secret rotate <instance> <name>   replace it with a fresh password
+  sudo gvm secret show-path <instance> <name>  where the file lives
+
+A stored value does nothing until the game reads it, and nothing restarts on
+its own: `set` and `rotate` print the `sudo gvm restart <instance>` that puts a
+new value in force. Generating missing secrets during `gvm create` and writing
+them into a game's own config files land in later phases.
