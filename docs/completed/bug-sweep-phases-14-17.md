@@ -1,5 +1,7 @@
 # Bug sweep — phases 14–17
 
+> **Archived 2026-10-17 — reviewed and closed.** All nine findings are resolved: seven fixed in `2807117`, two documented below as accepted will-not-fix decisions. No pending items left; nothing moved to [`docs/backlog.md`](../backlog.md).
+
 Sweep performed after phases 14 (datastore), 15 (identity/authz), 16 (web tier), and 17 (hardening) were committed. Nine findings were confirmed; seven were fixed in commit `2807117`. The remaining two are documented below as accepted / will-not-fix.
 
 ---

@@ -1,8 +1,10 @@
 # gvm — Implementation Plan
 
-> **Target design; see the [README](../README.md) for what works today.** This plan describes how Phases 0–19 build the foundation; not every component it lists is wired into the current build. The README "What works in this build" table is the authority on what runs now, and [`USABILITY-PLAN.md`](./USABILITY-PLAN.md) (Phases 20+) is what turns the foundation into a usable product.
+> **Archived 2026-10-17 — reviewed and closed.** Phases 0–19 are committed with `make check` green (see [`USABILITY-PLAN.md`](../USABILITY-PLAN.md) "Where gvm stands" and the bug sweeps in this directory). The per-phase definition-of-done checkboxes below were never ticked as the phases landed; they do not mark pending work. Foundation surface that is built but not yet wired is tracked by the usability plan (Phases 20–55), and this plan's leftover pending items — the "Definition of done for v1 as a whole" — moved to [`docs/backlog.md`](../backlog.md).
 
-Dependency-ordered build plan for the architecture in [`ARCHITECTURE.md`](./ARCHITECTURE.md). Every `D-nn` reference points at that document's decision register.
+> **Target design; see the [README](../../README.md) for what works today.** This plan describes how Phases 0–19 build the foundation; not every component it lists is wired into the current build. The README "What works in this build" table is the authority on what runs now, and [`USABILITY-PLAN.md`](../USABILITY-PLAN.md) (Phases 20+) is what turns the foundation into a usable product.
+
+Dependency-ordered build plan for the architecture in [`ARCHITECTURE.md`](../ARCHITECTURE.md). Every `D-nn` reference points at that document's decision register.
 
 **Module:** `github.com/S95F/gameVPSmanager` · **Binary:** `gvm` · **Go 1.26, `CGO_ENABLED=0`.**
 
