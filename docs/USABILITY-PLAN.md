@@ -257,7 +257,7 @@ The review praised these. The plan builds on them rather than around them, and e
 | 52 🟡 | Packaged gvm: .deb, migrations, rollback policy | `apt install ./gvm.deb` with worlds live | I | L | 35, 48 |
 | 53 🟡 | Remove a server, or gvm itself, cleanly | LEFT IN PLACE block; guarded uninstall keeps backups | I | L | 40, 50, 52 |
 | 54 🟡 | Off-box backups that really leave the box | pinned SFTP + age push; `backup remote check/list/pull` | B | L | 36, 38 |
-| 55 | Move to a new host · **J5** | `create --from-archive`; DR drill passes | B | L | 38, 46, 53, 54 |
+| 55 🟡 | Move to a new host · **J5** | `create --from-archive`; DR drill passes | B | L | 38, 46, 53, 54 |
 
 The **J1 critical path** is 20 → 22 → 23 → 24 → 27 → 28 → 31 → 32 → 34. The branch 24 → 29 → 30 → 31 is co-critical: it is the same length (L + L), and Phase 31 needs both. Phases 26 and 33 run alongside. Phase 21 depends only on Phase 19, so it runs first or in parallel with Phase 20, and Phase 34 (the first public release) waits for it. Phase 25 hangs off Phase 22 and gates nothing in J1.
 
@@ -3971,6 +3971,23 @@ The one piece that decides whether a push is safe and that can be proven without
 - **Rule 5:** restore archives first.
 - **Rule 1:** the drill needs no Postgres.
 - **Pin-only trust:** `pull --target` takes a host-key pin, never TOFU. gvm never decrypts an off-box archive itself and never stores an age identity.
+
+### 🟡 Partial — `create --from-archive`'s untrusted-input gate (item 2's core, DoD step 5's refusal) landed 2026-10-17; the rebuild body, the pull-onto-a-bare-host path, secret escrow and the DR drill remain
+
+The part of a rebuild that decides whether the file in front of it is safe to rebuild from, and that can be proven without a VM, a registry or a network — `archive.InspectRebuildSource` — is in. It is the pure half of item 2: it treats the archive as untrusted, refuses an age-encrypted file with the exact `age -d` line (the "gvm never decrypts" rule made concrete), and re-validates the archive's own description of itself before anything is created. It reuses the Phase 52 schema refusal and writes nothing. fmt and vet are clean, the full suite passes under `go test ./... -race` (CGO on), and the module cross-compiles clean for `linux/amd64`.
+
+**Landed, with tests:**
+- **Item 2 (core) — `archive.InspectRebuildSource(path)` (`rebuild.go`), the untrusted-input gate `gvm create --from-archive` runs before any instance exists.** It refuses an age-encrypted file — recognised by the `.age` name (without opening it) or by age's `age-encryption.org/v1`/armor header (so a renamed one is still caught) — with `ErrEncrypted` and the exact `decrypt it first: age -d -i <identity> <file> > <decrypted> (see docs/backups-and-restore.md)` line; refuses anything that is not a gvm archive with the package's own specific sentinel; re-validates the head manifest the way every reader does (the Phase 52 schema refusal included); and parses the embedded, secret-redacted instance spec so a corrupt one is caught here rather than part-way through a rebuild. `rebuild_test.go` covers all five outcomes, both age headers, and the decrypt message.
+- **DoD step 5 (refusal half) — given a `.age` file, `create --from-archive` refuses and prints the decrypt line.** That refusal is exactly what `InspectRebuildSource` returns; the gate consults no host and no registry, so it is proven on the development box.
+
+**Remaining (a dedicated runtime session should take these — they need the host, the game registry, the Phase 54 transport, age wired, and a VM for the drill):**
+- **Item 1 — the additive archive-manifest field carrying the pinned game-manifest bytes and, for an override, the override itself** (under the Phase 35 N-1 rule), so a rebuild can re-run the template guard against the manifest it actually pinned. `SpecYAML` and `ContentLock` are already carried; the manifest bytes are not, and the head's 6 KiB budget means they likely travel as a member rather than in the head.
+- **Item 2 (the rebuild body) — `sudo gvm create <name> --from-archive <file> [--dry-run]`** wiring `InspectRebuildSource`, then the ledger gate (Phase 32), the game-manifest template guard (needs item 1), `ValidateInstance` with the registry, the port-occupancy check, the adopted-path normalisation, the copy-into-the-backup-dir-and-index, and the printed checklist; `--dry-run` is the gate plus the plan with nothing written.
+- **Item 3 — `gvm backup remote pull <instance> --target <sftp-url> --host-key '<pin>'`** onto a host with no instance file, into `/var/backups/gvm/incoming/<instance>/` (needs the Phase 54 transport; the pin reuses `HostKey.Callback`).
+- **Item 4 — `gvm secret export --to <age-recipient>` / `secret import`** (needs age wired; the identity is read from stdin and never stored).
+- **Item 5 — the "Moving to a new VPS" runbook** in `docs/backups-and-restore.md`, and the J5 DR drill in `ci/golden-journey.sh` with the README "What works" row.
+
+**Effort for this task:** the untrusted-input gate (`InspectRebuildSource`) and its tests implemented by Claude (Opus 4.8) on 2026-10-17. The rebuild body, the bare-host pull, secret escrow, the runbook and the destroy-the-VM drill are the networked, host-bound and registry-bound remainder of the phase — and of milestone J5.
 
 ---
 
