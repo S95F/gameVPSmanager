@@ -7,6 +7,12 @@
 /gvm.exe
 /gvmd
 /gvmd.exe
+# ci/journey.sh builds these at the repo root; `go build ./tools/fixturegame`
+# drops /fixturegame(.exe) there too.
+/fixture
+/fixture.exe
+/fixturegame
+/fixturegame.exe
 *.test
 
 # Go

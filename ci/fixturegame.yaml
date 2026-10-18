@@ -1,0 +1,73 @@
+# The journey CI test's fixture game.
+#
+# provider: none means gvm fetches nothing — the journey pre-places a small
+# prebuilt binary at the instance's install dir, so the whole test runs without
+# the (unbuilt) install engine. Readiness is a single log_marker, so the fixture
+# needs no bound port and no a2s responder: it only has to print the marker and
+# stay alive. Shutdown is a plain SIGINT the fixture handles and exits 0, so the
+# stop is clean rather than a degraded SIGKILL.
+apiVersion: gvm/v1
+kind: Game
+metadata:
+  id: fixturegame
+  name: Journey Fixture Game
+  revision: 1
+  tags: [test]
+
+spec:
+  driverABI: 1
+
+  provider:
+    kind: none
+
+  runtime:
+    exec: ./fixture
+    cwd: "{{ .Install }}"
+    args:
+      - "-data"
+      - "{{ .Data }}"
+      - "-port"
+      - "{{ .Port.game }}"
+    env:
+      HOME: "{{ .Home }}"
+    console: {mode: pipe, charset: utf8, echo_input: true}
+    process_group: true
+    arch: native
+    jit: false
+    limits: {nofile: 65535, tasks_max: 2048}
+
+  readiness:
+    hard_deadline: 60s
+    stall_timeout: 30s
+    probes:
+      - {kind: log_marker, pattern: "SERVER STARTED", timeout: 60s}
+
+  shutdown:
+    budget: 30s
+    steps:
+      - {via: signal, signal: SIGINT, scope: process_group, wait: 20s}
+
+  control: null
+  verbs: {}
+
+  port_stride: {fx: 10}
+  ports:
+    - {name: game, proto: udp, default: 27500, group: fx, expose: none}
+
+  config_files: []
+  content: []
+
+  backup:
+    include: ["{{ .Data }}/worlds"]
+    world_paths: ["{{ .Data }}/worlds"]
+    freeze: {before: none, after: none, lease_budget: 30s}
+
+  vars:
+    world_name: {type: string, default: gvm, immutable: true, apply: rebuild}
+
+  sizing:
+    memory_model: flat
+    native_headroom: 512M
+    high_margin: 256M
+    ram_floor_mb: 2048
+    disk_floor_gb: 4
