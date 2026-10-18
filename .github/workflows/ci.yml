@@ -158,3 +158,30 @@ jobs:
           ./caddy version
           CF_API_TOKEN="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
             ./caddy validate --config internal/caddyconf/testdata/acme-dns.golden --adapter caddyfile
+
+  smoke:
+    # A rendered-page smoke test of the dashboard — login, instance list and the
+    # live console — at a desktop and a phone viewport, via Playwright against
+    # tools/devpreview (the web tier on in-memory stubs: no Postgres, no gvmd).
+    # The mobile/tablet layout had no rendered-page test; this is it. Playwright
+    # starts and stops devpreview itself (see ci/smoke/playwright.config.ts).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: '1.26'
+          cache: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: install smoke-test deps
+        working-directory: ci/smoke
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: playwright smoke test
+        working-directory: ci/smoke
+        run: npx playwright test

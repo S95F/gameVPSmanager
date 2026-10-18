@@ -7,7 +7,16 @@
 /gvm.exe
 /gvmd
 /gvmd.exe
+# `go build ./tools/devpreview` drops this at the repo root.
+/devpreview
+/devpreview.exe
 *.test
+
+# Playwright smoke test (ci/smoke)
+/ci/smoke/node_modules/
+/ci/smoke/test-results/
+/ci/smoke/playwright-report/
+/ci/smoke/.playwright/
 
 # Go
 /vendor/

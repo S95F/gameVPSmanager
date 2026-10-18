@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/S95F/gameVPSmanager/internal/auth"
@@ -104,8 +105,12 @@ func main() {
 	}
 	h := s.Handler()
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Auto-authenticate: every request carries a dev session cookie.
-		r.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: "dev"})
+		// Auto-authenticate every request with a dev session cookie EXCEPT the
+		// login pages, so those still render their logged-out forms (the smoke
+		// test renders /login; an injected session would just redirect it away).
+		if !strings.HasPrefix(r.URL.Path, "/login") {
+			r.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: "dev"})
+		}
 		h.ServeHTTP(w, r)
 	})
 	log.Println("devpreview on http://127.0.0.1:8130/instances")
