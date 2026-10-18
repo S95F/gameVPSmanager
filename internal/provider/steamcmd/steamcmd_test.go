@@ -34,9 +34,21 @@ type harness struct {
 	slept      []time.Duration
 }
 
+// realTempDir is t.TempDir() with 8.3 short names resolved. On a host whose
+// TEMP is spelled with one (the GitHub Windows runner's RUNNER~1), fixture
+// paths would otherwise disagree with what EvalSymlinks returns.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		return r
+	}
+	return dir
+}
+
 func newHarness(t *testing.T, managed bool, opts ...Option) *harness {
 	t.Helper()
-	base := t.TempDir()
+	base := realTempDir(t)
 	install := filepath.Join(base, "opt", "pzserver")
 	data := filepath.Join(base, "home", "pzserver", "Zomboid")
 	home := filepath.Join(base, "home", "pzserver")

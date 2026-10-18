@@ -19,9 +19,22 @@ import (
 //	<root>/data/db/
 //	<neighbour>/data/            a second instance's tree, beside this one
 //	<outside>/                   somewhere the jail must never reach
+//
+// realTempDir is t.TempDir() with 8.3 short names resolved. On a host whose
+// TEMP is spelled with one (the GitHub Windows runner's RUNNER~1), fixture
+// paths would otherwise disagree with what EvalSymlinks returns.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		return r
+	}
+	return dir
+}
+
 func tree(t *testing.T) (root, neighbour, outside string) {
 	t.Helper()
-	base := t.TempDir()
+	base := realTempDir(t)
 	root = filepath.Join(base, "srv", "pz-main")
 	neighbour = filepath.Join(base, "srv", "pz-main-old")
 	outside = filepath.Join(base, "elsewhere")

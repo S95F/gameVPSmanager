@@ -26,9 +26,21 @@ type fixture struct {
 	base, root, install, downloads, world, props, saves, outside string
 }
 
+// realTempDir is t.TempDir() with 8.3 short names resolved. On a host whose
+// TEMP is spelled with one (the GitHub Windows runner's RUNNER~1), fixture
+// paths would otherwise disagree with what EvalSymlinks returns.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		return r
+	}
+	return dir
+}
+
 func contentTree(t *testing.T) fixture {
 	t.Helper()
-	f := fixture{base: t.TempDir()}
+	f := fixture{base: realTempDir(t)}
 	f.root = filepath.Join(f.base, "srv", "atm10")
 	f.install = filepath.Join(f.root, "install")
 	f.downloads = filepath.Join(f.root, "downloads")

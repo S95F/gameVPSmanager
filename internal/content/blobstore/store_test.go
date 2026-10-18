@@ -69,9 +69,21 @@ func put(t *testing.T, s blobstore.Store, b []byte) blobstore.Digest {
 
 // modsJail is the content jail a Minecraft mods directory gets, with section
 // 12.8's preserve list.
+// realTempDir is t.TempDir() with 8.3 short names resolved. On a host whose
+// TEMP is spelled with one (the GitHub Windows runner's RUNNER~1), fixture
+// paths would otherwise disagree with what EvalSymlinks returns.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		return r
+	}
+	return dir
+}
+
 func modsJail(t *testing.T) (*jail.Jail, string) {
 	t.Helper()
-	base := t.TempDir()
+	base := realTempDir(t)
 	root := filepath.Join(base, "srv", "atm10", "install")
 	if err := os.MkdirAll(filepath.Join(root, "mods"), 0o755); err != nil {
 		t.Fatal(err)

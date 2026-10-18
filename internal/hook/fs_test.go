@@ -148,7 +148,7 @@ func TestFSLocate(t *testing.T) {
 // that lives INSIDE the install tree has to resolve to the data root, or every
 // hook addressing it would be writing through the install jail instead.
 func TestLocatePrefersTheLongestRoot(t *testing.T) {
-	root := t.TempDir()
+	root := realTempDir(t)
 	install := filepath.Join(root, "pzserver")
 	data := filepath.Join(install, "Zomboid")
 	home := filepath.Join(root, "home")
