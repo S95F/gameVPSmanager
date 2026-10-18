@@ -9,7 +9,7 @@
 - **Module:** `github.com/S95F/gameVPSmanager` — binary `gvm`, built from `./cmd/gvm`.
 - **Targets:** Debian 12, Ubuntu 22.04, Ubuntu 24.04. amd64 (arm64 secondary). systemd, root install.
 - **Dev host:** Windows 11. `go build ./... && go vet ./... && go test ./...` must stay green there.
-- **Status:** this document is the contract the implementation is built from. `docs/IMPLEMENTATION-PLAN.md` is the build order.
+- **Status:** this document is the contract the implementation is built from. `docs/completed/IMPLEMENTATION-PLAN.md` is the build order.
 
 ---
 

@@ -1,5 +1,7 @@
 # Bug sweep — phases 18–19
 
+> **Archived 2026-10-17 — reviewed and closed.** All nine findings were fixed in the sweep commit. No pending items left; nothing moved to [`docs/backlog.md`](../backlog.md).
+
 Sweep performed after phases 18 (Minecraft providers, Modrinth, telnet/mcmgmt) and 19 (CurseForge, nftables, Proton, btrfs/ZFS, egress) were committed. Nine findings were confirmed; all nine were fixed in this sweep commit.
 
 ---

@@ -56,7 +56,7 @@ cannot drift from what the binary actually refuses.)
 A journey counts as done only when its whole row works end to end; see
 [`docs/USABILITY-PLAN.md`](docs/USABILITY-PLAN.md) for the order — J1 (first
 joinable server) through J5 (adopt, package, recover). The earlier
-milestones A–D in [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md)
+milestones A–D in [`docs/completed/IMPLEMENTATION-PLAN.md`](docs/completed/IMPLEMENTATION-PLAN.md)
 are the code-level foundation those journeys build on.
 
 ## Documentation
@@ -65,7 +65,7 @@ are the code-level foundation those journeys build on.
 | --- | --- |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The full **target design**: process topology, manifest schema, instance model, control channel, SQL schema, RBAC, security model. Describes the finished system, not this build — see the table above for what works today. |
 | [`docs/ARCHITECTURE.md` §19](docs/ARCHITECTURE.md) | **The Project Zomboid adopt runbook** — importing the live server without touching the world |
-| [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) | Phases 0–19 (**target design**): the dependency-ordered foundation, each with a definition of done |
+| [`docs/completed/IMPLEMENTATION-PLAN.md`](docs/completed/IMPLEMENTATION-PLAN.md) | Phases 0–19 (**target design**, archived — built and committed): the dependency-ordered foundation, each with a definition of done |
 | [`docs/USABILITY-PLAN.md`](docs/USABILITY-PLAN.md) | Phases 20–55: the operator-journey plan (J1–J5) that turns the foundation into a usable product |
 | [`docs/admin-guide.md`](docs/admin-guide.md) | Standing up the dashboard: Postgres, `host init --dashboard`, accounts, tokens |
 | [`docs/dashboard.md`](docs/dashboard.md) | The dashboard for moderators: signing in, roles, what the buttons do |
