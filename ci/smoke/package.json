@@ -1,0 +1,12 @@
+{
+  "name": "gvm-dashboard-smoke",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Playwright smoke test for the gvm dashboard (login, instance list, live console) at desktop and phone viewports. Runs against tools/devpreview.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.1"
+  }
+}
