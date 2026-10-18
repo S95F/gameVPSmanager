@@ -20,8 +20,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.26'
           cache: true
@@ -48,10 +48,34 @@ jobs:
           GOOS=linux GOARCH=amd64 go build -o /dev/null ./cmd/...
           GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/...
 
+  analysis:
+    # Supply-chain and static analysis. Linux-only: these tools need to run on
+    # just one OS, and the deploy target is Linux. govulncheck fails only on
+    # vulnerabilities on a reachable code path; the standard-library findings it
+    # would otherwise raise are cleared by the runner's latest 1.26.x toolchain.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - name: staticcheck
+        # Config lives in staticcheck.conf at the repo root.
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          "$(go env GOPATH)/bin/staticcheck" ./...
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: shellcheck the vendored bash suite
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
@@ -64,8 +88,8 @@ jobs:
     # Phase 17 hardening gates. Run on Linux only (bash + file paths).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.26'
           cache: true
@@ -129,7 +153,7 @@ jobs:
     env:
       CADDY_VERSION: "2.11.1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: download pinned caddy
         run: |

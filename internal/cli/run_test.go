@@ -487,20 +487,17 @@ func TestVerbRecorderRecordsARedactedCommandAsIs(t *testing.T) {
 func TestAVerbIsRefusedWhileTheShutdownLadderIsRunning(t *testing.T) {
 	p := testPaths(t, "pz-main")
 	writeInstance(t, p, adoptedPZ, "", "")
-	ld, err := loadRunSpec("pz-main", p, noEnv)
-	if err != nil {
-		t.Fatalf("loadRunSpec: %v", err)
-	}
 	credDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(credDir, "rcon"), []byte("hunter2\n"), 0o600); err != nil {
 		t.Fatalf("write credential: %v", err)
 	}
-	if ld, err = loadRunSpec("pz-main", p, func(k string) string {
+	ld, err := loadRunSpec("pz-main", p, func(k string) string {
 		if k == "CREDENTIALS_DIRECTORY" {
 			return credDir
 		}
 		return ""
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("loadRunSpec: %v", err)
 	}
 

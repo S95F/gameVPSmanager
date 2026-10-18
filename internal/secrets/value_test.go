@@ -152,6 +152,9 @@ func TestSecretInAnUnexportedFieldIsNotWalkedIntoPlaintext(t *testing.T) {
 		}
 	}
 
+	// hidden deliberately has no exported fields and no custom marshaling: the
+	// whole point is that json.Marshal cannot reach the plaintext behind it.
+	//lint:ignore SA9005 the empty marshal output is exactly what this asserts
 	j, err := json.Marshal(h)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
