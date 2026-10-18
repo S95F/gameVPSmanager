@@ -140,6 +140,9 @@ jobs:
 
       - name: validate stock goldens at the minimum supported version
         run: |
+          # validate provisions the site's log writer, which mkdirs the
+          # configured directory — give it one it may write.
+          sudo install -d -m 0777 /var/log/caddy
           for f in internal/caddyconf/testdata/acme-http.golden \
                    internal/caddyconf/testdata/internal-bareip.golden \
                    internal/caddyconf/testdata/snippet-import.golden; do
