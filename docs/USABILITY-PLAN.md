@@ -394,11 +394,11 @@ These are sub-items of findings, or ideas raised in the review, left out on purp
 
 Every phase's status section (✅/🟡/⏸️) was checked against the tree at this commit: each claim of landed work was looked up by its named package, symbol, message or test, and each Remaining list was spot-checked for over- and under-statement. `go vet ./...` is clean, and `go test ./...` (without `-race`; see below) passes every package except the two clean-checkout failures noted first. Claims that need a live VM, a CI journey or the race detector were not checked.
 
-**Needs attention first — a clean checkout fails.** The two untracked files Phase 20's completion notes already name are both gitignored, so they exist only in the main working copy and in no clone or worktree:
+**Clean-checkout defects — found and fixed 2026-10-17.** Two files the build and tests need were gitignored and existed only in the main working copy, and `make check` could not pass as written:
 
-- `.gitignore:4` (`gvm`, meant for the built binary) also matches the directory `cmd/gvm/`, so the entrypoint `cmd/gvm/main.go` has never been committed. In a fresh checkout `make build` has nothing to build and `internal/secrets.TestRevealHasAlmostNoCallSites` fails. Fix: anchor the pattern (`/gvm`) and commit `cmd/gvm/`.
-- `.gitignore:16` (`*.env`) hides the fixture `internal/adopt/testdata/live-pz/rootfs/opt/pzserver/config.env`, so seven `internal/adopt` discover tests fail in a fresh checkout. Fix: a negation scoped to testdata (the `.gitignore:17` comment rules out a blanket one), or rename the fixture.
-- `make test` and `make check` run `go test -race`, but the Makefile exports `CGO_ENABLED := 0` and `-race` needs cgo, so `make check` fails where the environment does not override it. The suite passes as `make test-short`.
+- `.gitignore`'s bare `gvm` pattern (meant for the built binary) also matched the directory `cmd/gvm/`, so the entrypoint `cmd/gvm/main.go` had never been committed: in a fresh checkout `make build` had nothing to build and `internal/secrets.TestRevealHasAlmostNoCallSites` failed. **Fixed:** the binary patterns are anchored (`/gvm`, `/gvmd`, …) and `cmd/gvm/main.go` is committed.
+- `.gitignore`'s `*.env` hid the fixture `internal/adopt/testdata/live-pz/rootfs/opt/pzserver/config.env`, so seven `internal/adopt` discover tests failed in a fresh checkout. **Fixed:** a negation scoped to `internal/adopt/testdata/**/config.env` tracks the fixture; the no-blanket-negation rule for real `config.env` files stands.
+- `make test` (and so `make check`) ran `go test -race` under the Makefile's exported `CGO_ENABLED := 0`, which `-race` refuses. **Fixed:** the test target sets `CGO_ENABLED=1` for itself; release builds stay static.
 
 **Sentinel tests** (from [When the plan is done](#when-the-plan-is-done)): 6 of 10 exist and are green — `TestHintsResolve`, `TestEveryHelpPathExitsZero`, `TestAvailabilityMatchesBehaviour`, `TestDoctorFixesNameRealThings`, `TestJobUnitExitCodes`, `TestNoUfwEnableAdvice`. The other four belong to phases still pending (32, 37, 47–49).
 
@@ -603,7 +603,7 @@ Phase 20 is implemented and `make check` is green on Windows 11 (fmt-check + vet
 - Hiding the already-inert `--yes`/`--no-boot`/`--allow-ambiguous` on `content sync` was left as-is: they stay accepted and the command already prints that it did not act on them (U3-honest).
 - Deeper per-package U6 identifier scrubbing in engine refusals is Phase 22's lint, not here.
 
-Two repo files needed by the build are untracked in `main` and were copied into the worktree for local runs only, **not committed**: `cmd/gvm/main.go` (the entrypoint, untracked in `main`) and `internal/adopt/testdata/.../config.env` (a fixture matched by the `*.env` gitignore).
+~~Two repo files needed by the build are untracked in `main` and were copied into the worktree for local runs only, **not committed**: `cmd/gvm/main.go` (the entrypoint, untracked in `main`) and `internal/adopt/testdata/.../config.env` (a fixture matched by the `*.env` gitignore).~~ Fixed 2026-10-17: both files are tracked now — the gitignore binary patterns are anchored (`/gvm`) and the fixture has a testdata-scoped negation (see the [Status review](#status-review--2026-10-17-verified-against-the-code)).
 
 **Effort for this task:** implemented by Claude (Opus 4.8) in one session on 2026-10-15, ~70 minutes of wall-clock (01:26–02:35 UTC). Usage on the Max plan at the end of the task: the 5-hour window at ~5%, the weekly (all-models) window at ~11% — this phase was one slice of that week's work, not the whole 11%. The session itself used ~561K of its 1M-token context window (~56%).
 

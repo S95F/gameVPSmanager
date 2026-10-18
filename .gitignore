@@ -1,10 +1,12 @@
 # Build output
+# Binary names are anchored to the repo root: a bare `gvm` would also match
+# the source directory cmd/gvm/.
 /bin/
 /dist/
-gvm
-gvm.exe
-gvmd
-gvmd.exe
+/gvm
+/gvm.exe
+/gvmd
+/gvmd.exe
 *.test
 
 # Go
@@ -16,6 +18,9 @@ coverage.html
 *.env
 # No negation for the vendored copy: it is config.env.example precisely so
 # that a real config.env can never be un-ignored back into a commit.
+# Test fixtures are the one exception: fake values by construction, and
+# `go test ./internal/adopt` fails without them.
+!internal/adopt/testdata/**/config.env
 config.local.*
 /data/
 /run/
