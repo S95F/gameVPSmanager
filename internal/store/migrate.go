@@ -13,7 +13,7 @@ import (
 
 // SchemaVersion is the expected migration version that this binary requires.
 // It equals the highest migration file number.
-const SchemaVersion = 10
+const SchemaVersion = 11
 
 // gooseMu guards goose's package-level globals (SetBaseFS, SetDialect).
 var gooseMu sync.Mutex

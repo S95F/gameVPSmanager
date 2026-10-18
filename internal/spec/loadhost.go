@@ -98,6 +98,32 @@ func ValidateHost(file string, h *HostConfig) Diags {
 			"use auto, acme_http, acme_dns, internal or external")
 	}
 
+	// The edge enums are only half the contract; each mode has a field it
+	// cannot work without, and a missing one must fail here, at load, not as
+	// a Caddy error at apply time (web-dashboard-11).
+	switch h.Spec.Edge.Mode {
+	case "caddy_managed", "caddy_snippet":
+		if h.Spec.Edge.Site == "" {
+			add("spec.edge.site", fmt.Sprintf("edge mode %s needs a site", h.Spec.Edge.Mode),
+				"set spec.edge.site to the dashboard's domain or IP")
+		}
+	case "proxy_external":
+		if len(h.Spec.Edge.TrustedOrigins) == 0 {
+			add("spec.edge.trusted_origins",
+				"proxy_external needs at least one trusted origin, or a proxy that rewrites "+
+					"Host makes cross-origin protection refuse every form POST",
+				`add the dashboard's public origin, e.g. "https://gvm.example.com"`)
+		}
+	}
+	if h.Spec.Edge.TLS.Mode == "acme_dns" && h.Spec.Edge.TLS.DNSProvider == "" {
+		add("spec.edge.tls.dns_provider", "tls mode acme_dns needs a dns provider",
+			"set spec.edge.tls.dns_provider, e.g. cloudflare")
+	}
+	if h.Spec.Edge.TLS.Mode == "external" && h.Spec.Edge.Mode == "caddy_managed" {
+		add("spec.edge.tls.mode", "external TLS means another proxy terminates it; a Caddy gvm manages must manage certificates too",
+			"use auto, acme_http, acme_dns or internal — or edge.mode caddy_snippet / proxy_external")
+	}
+
 	for i, c := range h.Spec.Firewall.AdminCIDRs {
 		if _, _, err := net.ParseCIDR(c); err != nil {
 			add(fmt.Sprintf("spec.firewall.admin_cidrs[%d]", i),

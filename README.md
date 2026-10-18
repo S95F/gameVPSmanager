@@ -64,6 +64,7 @@ are the code-level foundation those journeys build on.
 | [`docs/ARCHITECTURE.md` §19](docs/ARCHITECTURE.md) | **The Project Zomboid adopt runbook** — importing the live server without touching the world |
 | [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) | Phases 0–19 (**target design**): the dependency-ordered foundation, each with a definition of done |
 | [`docs/USABILITY-PLAN.md`](docs/USABILITY-PLAN.md) | Phases 20–55: the operator-journey plan (J1–J5) that turns the foundation into a usable product |
+| [`docs/deploy-behind-servergitupdater.md`](docs/deploy-behind-servergitupdater.md) | Serving the planned dashboard behind a foreign proxy, e.g. a [serverGitUpdater](https://github.com/S95F/serverGitUpdater)-managed Caddy |
 | [`docs/research/`](docs/research/) | Primary-source research behind the decisions |
 
 ## Building

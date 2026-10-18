@@ -1,61 +1,81 @@
 package web
 
+// The BROWSER mux: sessions, cross-origin protection, RequireAuth (D-40).
+// Its twin, the bearer-only /api/v1 mux, lives in apimux.go; nothing in this
+// file registers an /api/ path and nothing in that file reads a cookie.
+
 import (
 	"net/http"
+
+	"github.com/S95F/gameVPSmanager/internal/auth"
 )
 
-// buildMux constructs the root http.Handler with all routes wired up.
-//
-// Routing notes:
-//   - The auth middleware wraps all routes so session context is always set.
-//   - SSE endpoint sets Content-Type: text/event-stream — the Caddy
-//     encode matcher must NEVER include text/* (would buffer SSE frames).
-//     The encode matcher should use application/x-www-form-urlencoded
-//     for compressed responses on form POSTs.
-//   - No text/* appears in any route matcher; only exact content-types.
-func buildMux(s *Server) http.Handler {
+// browserRoute is one row of the browser route table. The table exists as
+// data — not just mux registrations — so tests can walk it:
+// TestBrowserRoutesRequireSession hits every non-public row anonymously, and
+// TestSSERoutesLiveUnderStreamPrefix holds every SSE row under /stream/.
+type browserRoute struct {
+	method  string
+	pattern string
+	// public routes are reachable without a session: the login pages and
+	// /static only (web-dashboard-3; /healthz is registered outside the mux).
+	public bool
+	// sse routes serve text/event-stream and must live under /stream/ so the
+	// Caddy stream matcher can never drift (D-38).
+	sse     bool
+	handler func(s *Server, w http.ResponseWriter, r *http.Request)
+}
+
+var browserRoutes = []browserRoute{
+	// ── Public: login and static assets ─────────────────────────────────────
+	{method: "GET", pattern: "/login", public: true, handler: (*Server).handleLoginForm},
+	{method: "POST", pattern: "/login", public: true, handler: (*Server).handleLoginSubmit},
+	{method: "GET", pattern: "/login/totp", public: true, handler: (*Server).handleTOTPForm},
+	{method: "POST", pattern: "/login/totp", public: true, handler: (*Server).handleTOTPSubmit},
+	{method: "GET", pattern: "/static/{file}", public: true, handler: (*Server).handleStatic},
+
+	// ── Session required ────────────────────────────────────────────────────
+	{method: "POST", pattern: "/logout", handler: (*Server).handleLogout},
+	{method: "GET", pattern: "/{$}", handler: (*Server).handleRoot},
+	{method: "GET", pattern: "/instances", handler: (*Server).handleInstanceList},
+	{method: "GET", pattern: "/i/{name}", handler: (*Server).handleInstanceDetail},
+	{method: "GET", pattern: "/i/{name}/console", handler: (*Server).handleConsoleView},
+	{method: "GET", pattern: "/stream/i/{name}/console", sse: true, handler: (*Server).handleConsoleStream},
+
+	// Form POSTs are answered with 303 and a flash; nothing dispatches in
+	// this build (U3 — see handleFormLifecycle).
+	{method: "POST", pattern: "/i/{name}/start", handler: (*Server).handleFormStart},
+	{method: "POST", pattern: "/i/{name}/stop", handler: (*Server).handleFormStop},
+	{method: "POST", pattern: "/i/{name}/restart", handler: (*Server).handleFormRestart},
+}
+
+// buildBrowserMux assembles the browser handler chain, outermost first:
+// LoadSession → CrossOriginProtection → (per-route) RequireAuth → handler
+// (§16.2). CrossOriginProtection replaces per-form CSRF tokens: it compares
+// Origin against Host, which works unchanged behind Caddy and needs
+// cfg.TrustedOrigins behind a proxy that rewrites Host (§17.3).
+func buildBrowserMux(s *Server) http.Handler {
 	mux := http.NewServeMux()
-
-	// ── Browser pages ──────────────────────────────────────────────────────
-
-	// GET / → redirect to instance list.
-	mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
+	for _, rt := range browserRoutes {
+		rt := rt
+		var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rt.handler(s, w, r)
+		})
+		if !rt.public {
+			h = auth.RequireAuth(h)
 		}
-		http.Redirect(w, r, "/instances", http.StatusFound)
-	}))
+		mux.Handle(rt.method+" "+rt.pattern, h)
+	}
 
-	// GET /instances → dashboard instance list.
-	mux.Handle("GET /instances", http.HandlerFunc(s.handleInstanceList))
+	protection := http.NewCrossOriginProtection()
+	for _, origin := range s.cfg.TrustedOrigins {
+		// Validated in New; an error here would be a programming error.
+		_ = protection.AddTrustedOrigin(origin)
+	}
+	return s.sessions.LoadSession(protection.Handler(mux))
+}
 
-	// GET /instances/{name} → instance detail page.
-	mux.Handle("GET /instances/{name}", http.HandlerFunc(s.handleInstanceDetail))
-
-	// GET /instances/{name}/console → console SSE viewer page.
-	mux.Handle("GET /instances/{name}/console", http.HandlerFunc(s.handleConsoleView))
-
-	// ── Health (unauthenticated) ───────────────────────────────────────────
-
-	// GET /healthz → plain "OK" (used by load balancers / uptime monitors).
-	mux.Handle("GET /healthz", http.HandlerFunc(s.handleHealthz))
-
-	// GET /api/v1/health → JSON {"ok": true}.
-	mux.Handle("GET /api/v1/health", http.HandlerFunc(s.handleAPIHealth))
-
-	// ── API v1 (wrapped by auth middleware) ───────────────────────────────
-
-	mux.Handle("GET /api/v1/instances", s.mw.Wrap(http.HandlerFunc(s.handleAPIInstanceList)))
-	mux.Handle("GET /api/v1/instances/{name}/status", s.mw.Wrap(http.HandlerFunc(s.handleAPIInstanceStatus)))
-
-	// Console SSE stream — sets text/event-stream, never buffered by Caddy.
-	mux.Handle("GET /api/v1/instances/{name}/console/events", s.mw.Wrap(http.HandlerFunc(s.handleAPIConsoleEvents)))
-
-	// Lifecycle mutations — CSRF required on POST.
-	mux.Handle("POST /api/v1/instances/{name}/start", s.mw.Wrap(http.HandlerFunc(s.handleAPIStart)))
-	mux.Handle("POST /api/v1/instances/{name}/stop", s.mw.Wrap(http.HandlerFunc(s.handleAPIStop)))
-	mux.Handle("POST /api/v1/instances/{name}/restart", s.mw.Wrap(http.HandlerFunc(s.handleAPIRestart)))
-
-	return mux
+// handleRoot redirects / to the instance list.
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/instances", http.StatusFound)
 }

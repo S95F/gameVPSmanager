@@ -33,14 +33,14 @@ func checkRunGvmDirsImpl() lifecycle.CheckFinding {
 		}
 	}
 
-	if fi, err := os.Stat("/run/gvm/web"); err != nil {
-		if os.IsNotExist(err) {
-			issues = append(issues, "/run/gvm/web does not exist")
-		}
-	} else {
-		mode := fi.Mode()
-		if mode&0o7777 != 0o2750 {
-			issues = append(issues, "/run/gvm/web mode "+octal(mode&0o7777)+", want 02750")
+	// /run/gvm/web comes from gvm-web.conf, installed only with the dashboard
+	// (Phase 48), so on a games-only host its absence is correct, not a
+	// problem. Wrong ownership on an EXISTING dir is still a problem.
+	webMsg := "/run/gvm/web absent (dashboard not installed)"
+	if fi, err := os.Stat("/run/gvm/web"); err == nil {
+		webMsg = "/run/gvm/web " + octal(fi.Mode()&0o7777)
+		if fi.Mode()&0o7777 != 0o2750 {
+			issues = append(issues, "/run/gvm/web mode "+octal(fi.Mode()&0o7777)+", want 02750")
 		}
 	}
 
@@ -48,7 +48,7 @@ func checkRunGvmDirsImpl() lifecycle.CheckFinding {
 		return lifecycle.CheckFinding{
 			ID:       "HOST-009",
 			Severity: lifecycle.CheckOK,
-			Message:  "/run/gvm 0755 root:root; /run/gvm/web 2750 gvm:caddy",
+			Message:  "/run/gvm 0755 root:root; " + webMsg,
 		}
 	}
 	return lifecycle.CheckFinding{

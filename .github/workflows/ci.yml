@@ -104,3 +104,53 @@ jobs:
             exit 1
           fi
           echo "OK: no bare /api/v1 routes"
+
+      - name: dashboard-not-linked
+        # Phase 47's definition of done: the web tier stays library code until
+        # Phase 48 links it, so `gvm web` cannot half-ship.
+        run: |
+          deps="$(go list -deps ./cmd/gvm)"
+          for pkg in internal/web internal/auth internal/authz internal/webapi; do
+            if echo "$deps" | grep -q "gameVPSmanager/${pkg}\$"; then
+              echo "FAIL: cmd/gvm links ${pkg}; that is Phase 48's work"
+              exit 1
+            fi
+          done
+          echo "OK: cmd/gvm does not link the web tier"
+
+  caddy-validate:
+    # Phase 47 item 6: the real Caddy must accept every golden Caddyfile.
+    # The stock goldens are validated at spec.edge.caddy.min_version. The
+    # acme-dns golden needs the cloudflare DNS module, which add-package
+    # fetches from Caddy's build service — that binary tracks Caddy's current
+    # release, the same thing an operator's `caddy add-package` gets.
+    runs-on: ubuntu-latest
+    env:
+      CADDY_VERSION: "2.11.1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: download pinned caddy
+        run: |
+          curl -fsSL -o caddy.tar.gz \
+            "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+          tar -xzf caddy.tar.gz caddy
+          ./caddy version
+
+      - name: validate stock goldens at the minimum supported version
+        run: |
+          for f in internal/caddyconf/testdata/acme-http.golden \
+                   internal/caddyconf/testdata/internal-bareip.golden \
+                   internal/caddyconf/testdata/snippet-import.golden; do
+            echo "== $f"
+            ./caddy validate --config "$f" --adapter caddyfile
+          done
+
+      - name: validate the acme-dns golden with the cloudflare module
+        # The token is a well-formed placeholder: the provider checks its
+        # shape at provision time, and validate never contacts Cloudflare.
+        run: |
+          ./caddy add-package github.com/caddy-dns/cloudflare
+          ./caddy version
+          CF_API_TOKEN="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
+            ./caddy validate --config internal/caddyconf/testdata/acme-dns.golden --adapter caddyfile
